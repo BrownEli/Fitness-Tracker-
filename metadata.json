@@ -1,0 +1,6 @@
+{
+  "name": "Fitness Tracker",
+  "description": "A high-performance personal fitness and nutrition tracking dashboard designed to optimize muscle growth and protein intake with smart analytics and custom hypertrophy insights.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
