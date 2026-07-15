@@ -21,17 +21,13 @@ jobs:
 
     - name: Set up Gradle Build Environment
       uses: gradle/actions/setup-gradle@v3
-
-    - name: Generate Gradle Wrapper
-      run: |
-        cd android
-        gradle wrapper
+      with:
+        gradle-version: '8.5'
 
     - name: Compile Debug APK
       run: |
         cd android
-        chmod +x gradlew
-        ./gradlew assembleDebug
+        gradle assembleDebug
 
     - name: Upload Completed APK Artifact
       uses: actions/upload-artifact@v4
