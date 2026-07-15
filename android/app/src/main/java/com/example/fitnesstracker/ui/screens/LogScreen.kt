@@ -33,7 +33,7 @@ fun LogScreen(viewModel: LogViewModel) {
             containerColor = Color.White,
             contentColor = Emerald600,
             indicator = { tabPositions ->
-                TabRowDefaults.SecondaryIndicator(
+                TabRowDefaults.Indicator(
                     modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
                     color = Emerald500
                 )
@@ -290,7 +290,7 @@ fun WorkoutsLogForm(viewModel: LogViewModel) {
                         }
                     }
 
-                    HorizontalDivider(color = Slate100, thickness = 1.dp)
+                    Divider(color = Slate100, thickness = 1.dp)
 
                     // Add Sets Entry Sub-section
                     Text("Add Active Sets Details", fontWeight = FontWeight.Bold, color = Slate900)

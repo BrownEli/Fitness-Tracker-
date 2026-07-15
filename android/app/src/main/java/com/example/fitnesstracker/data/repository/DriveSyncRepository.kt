@@ -24,7 +24,7 @@ class DriveSyncRepository(private val context: Context) {
             .setConstraints(constraints)
             .setBackoffCriteria(
                 androidx.work.BackoffPolicy.EXPONENTIAL,
-                OneTimeWorkRequestBuilder<DriveSyncWorker>().MIN_BACKOFF_MILLIS,
+                androidx.work.WorkRequest.MIN_BACKOFF_MILLIS,
                 TimeUnit.MILLISECONDS
             )
             .build()

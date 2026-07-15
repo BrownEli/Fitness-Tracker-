@@ -35,7 +35,7 @@ fun MainScreen(
                         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                     ) {
                         Box(
-                            modifier = androidx.compose.foundation.layout.size(36.dp)
+                            modifier = Modifier.size(36.dp)
                                 .background(Slate900, RoundedCornerShape(10.dp)),
                             contentAlignment = androidx.compose.ui.Alignment.Center
                         ) {
