@@ -74,7 +74,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                                 Text("Edit Goals", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                         }
-                        Divider(color = Color.White.copy(alpha = 0.15f), thickness = 1.dp)
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.15f), thickness = 1.dp)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween

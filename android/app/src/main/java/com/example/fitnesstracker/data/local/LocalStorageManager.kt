@@ -107,11 +107,15 @@ class LocalStorageManager(private val context: Context) {
         if (dates.isEmpty()) return 0
         
         var streak = 0
-        val sdf = SimpleDateFormat("yyyy-MM-DD", Locale.US)
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
         
         // Simple sequential date checker
         // Just counts non-empty logged days
         return dates.size
+    }
+
+    fun getBackupFile(): File {
+        return backupFile
     }
 
     private fun createEmptyBackup(): FitnessBackup {

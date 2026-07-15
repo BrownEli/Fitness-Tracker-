@@ -58,7 +58,7 @@ class SyncViewModel(
                 val folderId = driveHelper.getOrCreateFolder(_syncFolderLocation.value)
                 
                 // 2. Fetch local source payload
-                val localFile = File(localManager.getBackupFileLocation())
+                val localFile = localManager.getBackupFile()
                 if (localFile.exists()) {
                     driveHelper.uploadFile(folderId, localFile)
                     _syncMessage.value = "Backup uploaded successfully!"
@@ -90,7 +90,7 @@ class SyncViewModel(
 
                 if (fileId != null) {
                     _syncMessage.value = "Restoring local structures..."
-                    val localTarget = File(localManager.getBackupFileLocation())
+                    val localTarget = localManager.getBackupFile()
                     driveHelper.downloadFile(fileId, localTarget)
                     repository.refreshState()
                     _syncMessage.value = "System restored successfully!"
@@ -103,10 +103,5 @@ class SyncViewModel(
                 _isSyncing.value = false
             }
         }
-    }
-
-    // Local Helper to fetch path
-    private fun LocalStorageManager.getBackupFileLocation(): String {
-        return File(context.filesDir, "fitness_tracker_backup.json").absolutePath
     }
 }

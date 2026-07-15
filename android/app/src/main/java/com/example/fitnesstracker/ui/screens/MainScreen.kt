@@ -1,9 +1,12 @@
 package com.example.fitnesstracker.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -94,8 +97,3 @@ fun MainScreen(
         }
     }
 }
-
-// Background utility matching composable rules
-@Composable
-fun Modifier.background(color: Color, shape: androidx.compose.ui.graphics.Shape) =
-    this.clip(shape).background(color)

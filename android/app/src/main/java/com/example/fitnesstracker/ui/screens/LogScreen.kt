@@ -9,6 +9,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -289,7 +290,7 @@ fun WorkoutsLogForm(viewModel: LogViewModel) {
                         }
                     }
 
-                    Divider(color = Slate100, thickness = 1.dp)
+                    HorizontalDivider(color = Slate100, thickness = 1.dp)
 
                     // Add Sets Entry Sub-section
                     Text("Add Active Sets Details", fontWeight = FontWeight.Bold, color = Slate900)
