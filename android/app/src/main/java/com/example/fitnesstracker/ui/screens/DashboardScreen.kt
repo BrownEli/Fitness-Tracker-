@@ -30,7 +30,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
     
     var showGoalDialog by remember { mutableStateOf(false) }
 
-    Box(modifier = Modifier.fillMaxSize().background(Slate50)) {
+    Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(16.dp),
@@ -62,13 +62,16 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                                 text = todayLog?.weight?.let { "$it kg" } ?: "Weight Unlogged",
                                 color = Color.White,
                                 fontWeight = FontWeight.Black,
-                                fontSize = 28.sp
+                                fontSize = 26.sp,
+                                modifier = Modifier.weight(1f)
                             )
+                            Spacer(modifier = Modifier.width(8.dp))
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(Color.White.copy(alpha = 0.2f))
                                     .clickable { showGoalDialog = true }
+                                    .pressClickEffect()
                                     .padding(horizontal = 12.dp, vertical = 6.dp)
                             ) {
                                 Text("Edit Goals", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -103,15 +106,15 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Card(
-                        modifier = Modifier.weight(1f),
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        modifier = Modifier.weight(1f).pressClickEffect(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         shape = RoundedCornerShape(20.dp)
                     ) {
                         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("Avg Calories", color = Slate700, fontSize = 12.sp)
+                            Text("Avg Calories", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), fontSize = 12.sp)
                             Text(
                                 "${backupState.analytics.cachedStats.averageCalories} kcal",
-                                color = Slate900,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 20.sp
                             )
@@ -119,21 +122,21 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                                 progress = (backupState.analytics.cachedStats.averageCalories.toFloat() / backupState.goals.caloriesTarget.toFloat()).coerceIn(0f, 1f),
                                 modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
                                 color = Emerald500,
-                                trackColor = Slate100
+                                trackColor = MaterialTheme.colorScheme.surfaceVariant
                             )
                         }
                     }
 
                     Card(
-                        modifier = Modifier.weight(1f),
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        modifier = Modifier.weight(1f).pressClickEffect(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         shape = RoundedCornerShape(20.dp)
                     ) {
                         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("Avg Protein", color = Slate700, fontSize = 12.sp)
+                            Text("Avg Protein", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), fontSize = 12.sp)
                             Text(
                                 "${backupState.analytics.cachedStats.averageProtein}g",
-                                color = Slate900,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 20.sp
                             )
@@ -141,7 +144,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                                 progress = (backupState.analytics.cachedStats.averageProtein.toFloat() / backupState.goals.proteinTarget.toFloat()).coerceIn(0f, 1f),
                                 modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
                                 color = Indigo500,
-                                trackColor = Slate100
+                                trackColor = MaterialTheme.colorScheme.surfaceVariant
                             )
                         }
                     }
@@ -154,7 +157,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                     text = "TODAY'S WORKOUTS",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Slate700,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                     modifier = Modifier.padding(top = 8.dp)
                 )
             }
@@ -166,19 +169,19 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(20.dp))
-                            .background(Color.White)
+                            .background(MaterialTheme.colorScheme.surface)
                             .padding(24.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("No exercises logged for today yet.", color = Slate700, fontSize = 14.sp)
+                        Text("No exercises logged for today yet.", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), fontSize = 14.sp)
                     }
                 }
             } else {
                 items(todayWorkouts) { workout ->
                     Card(
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         shape = RoundedCornerShape(20.dp),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().pressClickEffect()
                     ) {
                         Row(
                             modifier = Modifier.padding(16.dp).fillMaxWidth(),
@@ -197,14 +200,14 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                                     Text(
                                         text = workout.name,
                                         fontWeight = FontWeight.Bold,
-                                        color = Slate900,
+                                        color = MaterialTheme.colorScheme.onSurface,
                                         fontSize = 16.sp
                                     )
                                 }
                                 Text(
                                     text = "${workout.category} • ${workout.sets.size} sets",
                                     fontSize = 12.sp,
-                                    color = Slate700
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                                 )
                             }
                             Checkbox(
@@ -229,7 +232,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                         text = "JOURNAL NOTES",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Slate700,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                         modifier = Modifier.padding(top = 8.dp)
                     )
                 }
@@ -238,12 +241,12 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(20.dp))
-                            .background(Color.White)
+                            .background(MaterialTheme.colorScheme.surface)
                             .padding(16.dp)
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("💡 Today\'s Session Notes", color = Slate900, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text(noteText, color = Slate700, fontSize = 13.sp, lineHeight = 18.sp)
+                            Text("💡 Today\'s Session Notes", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(noteText, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f), fontSize = 13.sp, lineHeight = 18.sp)
                         }
                     }
                 }

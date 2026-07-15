@@ -1,5 +1,6 @@
 package com.example.fitnesstracker.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -8,9 +9,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.fitnesstracker.R
 import com.example.fitnesstracker.ui.theme.*
 import com.example.fitnesstracker.ui.viewmodel.DashboardViewModel
 import com.example.fitnesstracker.ui.viewmodel.LogViewModel
@@ -34,29 +37,29 @@ fun MainScreen(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier.size(36.dp)
-                                .background(Slate900, RoundedCornerShape(10.dp)),
-                            contentAlignment = androidx.compose.ui.Alignment.Center
-                        ) {
-                            Text("🏋️", fontSize = 18.sp)
-                        }
+                        Image(
+                            painter = painterResource(id = R.drawable.ic_launcher),
+                            contentDescription = "App Icon",
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                        )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
                             text = "My Fitness companion",
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 18.sp,
-                            color = Slate900
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )
         },
         bottomBar = {
             NavigationBar(
-                containerColor = Color.White,
-                contentColor = Emerald600
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.primary
             ) {
                 screens.forEachIndexed { index, name ->
                     NavigationBarItem(
@@ -74,11 +77,12 @@ fun MainScreen(
                             )
                         },
                         colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Emerald600,
-                            selectedTextColor = Emerald600,
-                            indicatorColor = Emerald50.copy(alpha = 0.5f),
-                            unselectedTextColor = Slate700
-                        )
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                            unselectedTextColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        ),
+                        modifier = Modifier.pressClickEffect()
                     )
                 }
             }

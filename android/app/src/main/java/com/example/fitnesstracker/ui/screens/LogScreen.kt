@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -27,15 +29,15 @@ fun LogScreen(viewModel: LogViewModel) {
     var selectedTab by remember { mutableIntStateOf(0) }
     val tabs = listOf("Weight & Notes", "Log Meals", "Log Workouts")
 
-    Column(modifier = Modifier.fillMaxSize().background(Slate50)) {
+    Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         TabRow(
             selectedTabIndex = selectedTab,
-            containerColor = Color.White,
-            contentColor = Emerald600,
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.primary,
             indicator = { tabPositions ->
                 TabRowDefaults.Indicator(
                     modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
-                    color = Emerald500
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
         ) {
@@ -44,8 +46,8 @@ fun LogScreen(viewModel: LogViewModel) {
                     selected = selectedTab == index,
                     onClick = { selectedTab = index },
                     text = { Text(title, fontWeight = FontWeight.Bold, fontSize = 13.sp) },
-                    selectedContentColor = Emerald600,
-                    unselectedContentColor = Slate700
+                    selectedContentColor = MaterialTheme.colorScheme.primary,
+                    unselectedContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
             }
         }
@@ -72,12 +74,12 @@ fun WeightAndNotesForm(viewModel: LogViewModel) {
     ) {
         item {
             Card(
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Today's Scale Weight", fontWeight = FontWeight.Bold, color = Slate900)
+                    Text("Today's Scale Weight", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                     OutlinedTextField(
                         value = weightInput,
                         onValueChange = { weightInput = it },
@@ -96,7 +98,7 @@ fun WeightAndNotesForm(viewModel: LogViewModel) {
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Emerald500),
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().pressClickEffect(),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Text("Log Weight", fontWeight = FontWeight.Bold)
@@ -107,12 +109,12 @@ fun WeightAndNotesForm(viewModel: LogViewModel) {
 
         item {
             Card(
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Training Journal Notes", fontWeight = FontWeight.Bold, color = Slate900)
+                    Text("Training Journal Notes", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                     OutlinedTextField(
                         value = notesInput,
                         onValueChange = { notesInput = it },
@@ -129,7 +131,7 @@ fun WeightAndNotesForm(viewModel: LogViewModel) {
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Indigo500),
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().pressClickEffect(),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Text("Save Journal Note", fontWeight = FontWeight.Bold)
@@ -154,12 +156,12 @@ fun MealsLogForm(viewModel: LogViewModel) {
     var snackbarMessage by remember { mutableStateOf("") }
 
     Card(
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(20.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Track a Meal Item", fontWeight = FontWeight.Bold, color = Slate900)
+            Text("Track a Meal Item", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
             
             OutlinedTextField(
                 value = mealName,
@@ -200,7 +202,7 @@ fun MealsLogForm(viewModel: LogViewModel) {
                     }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = Emerald500),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().pressClickEffect(),
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Text("Log Meal", fontWeight = FontWeight.Bold)
@@ -231,12 +233,12 @@ fun WorkoutsLogForm(viewModel: LogViewModel) {
     ) {
         item {
             Card(
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Add Active Workout Exercise", fontWeight = FontWeight.Bold, color = Slate900)
+                    Text("Add Active Workout Exercise", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                     
                     OutlinedTextField(
                         value = exerciseName,
@@ -246,54 +248,35 @@ fun WorkoutsLogForm(viewModel: LogViewModel) {
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    // Simple category buttons
-                    Text("Select Muscle Category", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Slate700)
-                    Row(
+                    // Beautiful horizontal categories selection list
+                    Text("Select Muscle Category", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                    LazyRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (category == "Legs") Emerald500 else Slate100)
-                                .clickable { category = "Legs" }
-                                .padding(horizontal = 12.dp, vertical = 6.dp)
-                        ) {
-                            Text("Legs", color = if (category == "Legs") Color.White else Slate900, fontSize = 12.sp)
-                        }
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (category == "Chest") Emerald500 else Slate100)
-                                .clickable { category = "Chest" }
-                                .padding(horizontal = 12.dp, vertical = 6.dp)
-                        ) {
-                            Text("Chest", color = if (category == "Chest") Color.White else Slate900, fontSize = 12.sp)
-                        }
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (category == "Back") Emerald500 else Slate100)
-                                .clickable { category = "Back" }
-                                .padding(horizontal = 12.dp, vertical = 6.dp)
-                        ) {
-                            Text("Back", color = if (category == "Back") Color.White else Slate900, fontSize = 12.sp)
-                        }
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (category == "Shoulders") Emerald500 else Slate100)
-                                .clickable { category = "Shoulders" }
-                                .padding(horizontal = 12.dp, vertical = 6.dp)
-                        ) {
-                            Text("Shoulders", color = if (category == "Shoulders") Color.White else Slate900, fontSize = 12.sp)
+                        items(categories) { cat ->
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (category == cat) Emerald500 else MaterialTheme.colorScheme.surfaceVariant)
+                                    .clickable { category = cat }
+                                    .pressClickEffect()
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = cat,
+                                    color = if (category == cat) Color.White else MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
 
-                    Divider(color = Slate100, thickness = 1.dp)
+                    Divider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 1.dp)
 
                     // Add Sets Entry Sub-section
-                    Text("Add Active Sets Details", fontWeight = FontWeight.Bold, color = Slate900)
+                    Text("Add Active Sets Details", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -320,7 +303,8 @@ fun WorkoutsLogForm(viewModel: LogViewModel) {
                                     repsInput = ""
                                     weightInput = ""
                                 }
-                            }
+                            },
+                            modifier = Modifier.pressClickEffect()
                         ) {
                             Icon(Icons.Default.Add, contentDescription = "Add Set", tint = Emerald600)
                         }
@@ -328,14 +312,14 @@ fun WorkoutsLogForm(viewModel: LogViewModel) {
 
                     // Render currently added sets
                     if (currentSets.isNotEmpty()) {
-                        Text("Current added sets list:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Slate700)
+                        Text("Current added sets list:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
                         currentSets.forEachIndexed { index, set ->
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Set #${index + 1}: ${set.first} reps @ ${set.second} kg", fontSize = 13.sp, color = Slate900)
+                                Text("Set #${index + 1}: ${set.first} reps @ ${set.second} kg", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
                                 IconButton(onClick = { currentSets.removeAt(index) }) {
                                     Icon(Icons.Default.Delete, contentDescription = "Remove Set", tint = Coral500)
                                 }
@@ -357,7 +341,7 @@ fun WorkoutsLogForm(viewModel: LogViewModel) {
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Emerald500),
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().pressClickEffect(),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Text("Submit Exercise Log", fontWeight = FontWeight.Bold)

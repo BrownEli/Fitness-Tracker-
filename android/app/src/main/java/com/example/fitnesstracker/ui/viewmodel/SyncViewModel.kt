@@ -22,6 +22,9 @@ class SyncViewModel(
     private val _isGoogleAccountConnected = MutableStateFlow(false)
     val isGoogleAccountConnected: StateFlow<Boolean> = _isGoogleAccountConnected.asStateFlow()
 
+    private val _driveService = MutableStateFlow<Drive?>(null)
+    val driveService: StateFlow<Drive?> = _driveService.asStateFlow()
+
     private val _syncFolderLocation = MutableStateFlow("MyFitnessTracker")
     val syncFolderLocation: StateFlow<String> = _syncFolderLocation.asStateFlow()
 
@@ -35,6 +38,40 @@ class SyncViewModel(
         _isGoogleAccountConnected.value = connected
     }
 
+    fun setGoogleAccount(account: android.accounts.Account?, context: android.content.Context) {
+        if (account != null) {
+            try {
+                val credential = com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential.usingOAuth2(
+                    context,
+                    listOf("https://www.googleapis.com/auth/drive.file")
+                )
+                credential.selectedAccount = account
+                
+                val drive = com.google.api.services.drive.Drive.Builder(
+                    com.google.api.client.http.javanet.NetHttpTransport(),
+                    com.google.api.client.json.gson.GsonFactory.getDefaultInstance(),
+                    credential
+                )
+                .setApplicationName("FitnessTracker")
+                .build()
+                
+                _driveService.value = drive
+                _isGoogleAccountConnected.value = true
+                com.example.fitnesstracker.worker.DriveSyncWorker.driveServiceInstance = drive
+                _syncMessage.value = "Google Account connected!"
+            } catch (e: Exception) {
+                _syncMessage.value = "Failed to initialize Drive client: ${e.localizedMessage}"
+                _isGoogleAccountConnected.value = false
+                _driveService.value = null
+            }
+        } else {
+            _driveService.value = null
+            _isGoogleAccountConnected.value = false
+            com.example.fitnesstracker.worker.DriveSyncWorker.driveServiceInstance = null
+            _syncMessage.value = "Google Account disconnected."
+        }
+    }
+
     fun updateFolderLocation(newFolderName: String) {
         if (newFolderName.isNotBlank()) {
             _syncFolderLocation.value = newFolderName
@@ -42,8 +79,9 @@ class SyncViewModel(
     }
 
     // Trigger immediate manual backup
-    fun triggerManualBackup(driveService: Drive?) {
-        if (driveService == null) {
+    fun triggerManualBackup() {
+        val service = _driveService.value
+        if (service == null) {
             _syncMessage.value = "Google Drive client not authorized!"
             return
         }
@@ -52,7 +90,7 @@ class SyncViewModel(
             _isSyncing.value = true
             _syncMessage.value = "Initializing cloud transfer..."
             try {
-                val driveHelper = DriveServiceHelper(driveService)
+                val driveHelper = DriveServiceHelper(service)
                 
                 // 1. Resolve folder path
                 val folderId = driveHelper.getOrCreateFolder(_syncFolderLocation.value)
@@ -62,6 +100,7 @@ class SyncViewModel(
                 if (localFile.exists()) {
                     driveHelper.uploadFile(folderId, localFile)
                     _syncMessage.value = "Backup uploaded successfully!"
+                    syncRepository.scheduleBackgroundSync() // Run verification sync
                 } else {
                     _syncMessage.value = "No local backup data to sync yet."
                 }
@@ -74,8 +113,9 @@ class SyncViewModel(
     }
 
     // Restore from Drive backup file
-    fun triggerManualRestore(driveService: Drive?) {
-        if (driveService == null) {
+    fun triggerManualRestore() {
+        val service = _driveService.value
+        if (service == null) {
             _syncMessage.value = "Google Drive client not authorized!"
             return
         }
@@ -84,7 +124,7 @@ class SyncViewModel(
             _isSyncing.value = true
             _syncMessage.value = "Searching for cloud backups..."
             try {
-                val driveHelper = DriveServiceHelper(driveService)
+                val driveHelper = DriveServiceHelper(service)
                 val folderId = driveHelper.getOrCreateFolder(_syncFolderLocation.value)
                 val fileId = driveHelper.findBackupFile(folderId, "fitness_tracker_backup.json")
 

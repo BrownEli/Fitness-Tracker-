@@ -1,5 +1,7 @@
 package com.example.fitnesstracker.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -9,15 +11,20 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.fitnesstracker.ui.theme.*
 import com.example.fitnesstracker.ui.viewmodel.SyncViewModel
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.Scope
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SyncConfigScreen(viewModel: SyncViewModel) {
+    val context = LocalContext.current
     val isConnected by viewModel.isGoogleAccountConnected.collectAsState()
     val syncFolder by viewModel.syncFolderLocation.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
@@ -25,21 +32,55 @@ fun SyncConfigScreen(viewModel: SyncViewModel) {
 
     var folderInput by remember { mutableStateOf(syncFolder) }
 
+    // Set up standard Google Sign-In options with requested cloud drive scopes
+    val gso = remember {
+        GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestEmail()
+            .requestScopes(Scope("https://www.googleapis.com/auth/drive.file"))
+            .build()
+    }
+    val googleSignInClient = remember { GoogleSignIn.getClient(context, gso) }
+
+    // Activity launcher for Sign In Flow
+    val signInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+        try {
+            val account = task.getResult(com.google.android.gms.common.api.ApiException::class.java)
+            if (account != null) {
+                viewModel.setGoogleAccount(account.account, context)
+            } else {
+                viewModel.setGoogleAccount(null, context)
+            }
+        } catch (e: Exception) {
+            viewModel.setGoogleAccount(null, context)
+        }
+    }
+
+    // Auto check if account is already connected
+    LaunchedEffect(Unit) {
+        val lastAccount = GoogleSignIn.getLastSignedInAccount(context)
+        if (lastAccount != null) {
+            viewModel.setGoogleAccount(lastAccount.account, context)
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Slate50)
+            .background(MaterialTheme.colorScheme.background)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // Sign-in Status Card
         Card(
-            colors = CardDefaults.cardColors(containerColor = Color.White),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             shape = RoundedCornerShape(20.dp),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth().pressClickEffect()
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Google Drive Connection Status", fontWeight = FontWeight.Bold, color = Slate900)
+                Text("Google Drive Connection Status", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -54,15 +95,25 @@ fun SyncConfigScreen(viewModel: SyncViewModel) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = if (isConnected) "Connected" else "Disconnected",
-                            color = Slate900,
+                            color = MaterialTheme.colorScheme.onSurface,
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp
                         )
                     }
                     Button(
-                        onClick = { viewModel.setAccountConnected(!isConnected) },
+                        onClick = {
+                            if (isConnected) {
+                                googleSignInClient.signOut().addOnCompleteListener {
+                                    viewModel.setGoogleAccount(null, context)
+                                }
+                            } else {
+                                val signInIntent = googleSignInClient.signInIntent
+                                signInLauncher.launch(signInIntent)
+                            }
+                        },
                         colors = ButtonDefaults.buttonColors(containerColor = if (isConnected) Coral500 else Emerald500),
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.pressClickEffect()
                     ) {
                         Text(if (isConnected) "Sign Out" else "Connect Google Drive")
                     }
@@ -72,12 +123,12 @@ fun SyncConfigScreen(viewModel: SyncViewModel) {
 
         // Folder Location Target Configuration
         Card(
-            colors = CardDefaults.cardColors(containerColor = Color.White),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             shape = RoundedCornerShape(20.dp),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth().pressClickEffect()
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Remote Sync Target Folder", fontWeight = FontWeight.Bold, color = Slate900)
+                Text("Remote Sync Target Folder", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                 OutlinedTextField(
                     value = folderInput,
                     onValueChange = { folderInput = it },
@@ -87,8 +138,8 @@ fun SyncConfigScreen(viewModel: SyncViewModel) {
                 )
                 Button(
                     onClick = { viewModel.updateFolderLocation(folderInput) },
-                    colors = ButtonDefaults.buttonColors(containerColor = Slate900),
-                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                    modifier = Modifier.fillMaxWidth().pressClickEffect(),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text("Apply Path Location", fontWeight = FontWeight.Bold)
@@ -99,21 +150,21 @@ fun SyncConfigScreen(viewModel: SyncViewModel) {
         // Action Trigger Buttons (Sync & Restore)
         AnimatedVisibility(visible = isConnected) {
             Card(
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Synchronize Records", fontWeight = FontWeight.Bold, color = Slate900)
+                    Text("Synchronize Records", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                     
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Button(
-                            onClick = { viewModel.triggerManualBackup(null) /* Pass actual authorized Drive service object */ },
+                            onClick = { viewModel.triggerManualBackup() },
                             colors = ButtonDefaults.buttonColors(containerColor = Emerald500),
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).pressClickEffect(),
                             shape = RoundedCornerShape(12.dp),
                             enabled = !isSyncing
                         ) {
@@ -121,9 +172,9 @@ fun SyncConfigScreen(viewModel: SyncViewModel) {
                         }
 
                         Button(
-                            onClick = { viewModel.triggerManualRestore(null) /* Pass actual authorized Drive service object */ },
+                            onClick = { viewModel.triggerManualRestore() },
                             colors = ButtonDefaults.buttonColors(containerColor = Indigo500),
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).pressClickEffect(),
                             shape = RoundedCornerShape(12.dp),
                             enabled = !isSyncing
                         ) {
@@ -138,14 +189,14 @@ fun SyncConfigScreen(viewModel: SyncViewModel) {
                             modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                         ) {
                             CircularProgressIndicator(color = Emerald500, modifier = Modifier.size(24.dp))
-                            Text("Executing cloud procedures...", fontSize = 13.sp, color = Slate700)
+                            Text("Executing cloud procedures...", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
                         }
                     }
 
                     if (syncMessage.isNotBlank()) {
                         Text(
                             text = syncMessage,
-                            color = Slate900,
+                            color = MaterialTheme.colorScheme.onSurface,
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp,
                             modifier = Modifier.padding(top = 4.dp)
