@@ -87,7 +87,7 @@ export default function MealLogger({ onAddMeal }: MealLoggerProps) {
       {/* 1. Direct clear input card */}
       <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-10 shadow-sm">
         <div className="flex items-center gap-4 mb-8">
-          <div className="p-3.5 bg-emerald-50 text-emerald-600 rounded-2xl">
+          <div className="p-3.5 bg-indigo-50 text-indigo-600 rounded-2xl">
             <Utensils className="w-7 h-7" />
           </div>
           <div>
@@ -108,7 +108,7 @@ export default function MealLogger({ onAddMeal }: MealLoggerProps) {
                 placeholder="e.g. Scrambled eggs and whole-wheat toast"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white rounded-2xl px-5 py-3.5 text-base text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-emerald-500/5 transition-all"
+                className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-2xl px-5 py-3.5 text-base text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-500/5 transition-all"
                 id="meal-name-input"
               />
             </div>
@@ -125,7 +125,7 @@ export default function MealLogger({ onAddMeal }: MealLoggerProps) {
                   placeholder="e.g. 25"
                   value={protein}
                   onChange={(e) => setProtein(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white rounded-2xl pl-5 pr-10 py-3.5 text-base text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-emerald-500/5 transition-all font-mono font-bold"
+                  className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-2xl pl-5 pr-10 py-3.5 text-base text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-500/5 transition-all font-mono font-bold"
                   id="meal-protein-input"
                 />
                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-black text-slate-400 font-mono">g</span>
@@ -144,7 +144,7 @@ export default function MealLogger({ onAddMeal }: MealLoggerProps) {
                   placeholder="e.g. 400"
                   value={calories}
                   onChange={(e) => setCalories(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white rounded-2xl pl-5 pr-12 py-3.5 text-base text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-emerald-500/5 transition-all font-mono font-bold"
+                  className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-2xl pl-5 pr-12 py-3.5 text-base text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-500/5 transition-all font-mono font-bold"
                   id="meal-calories-input"
                 />
                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-black text-slate-400 font-mono">kcal</span>
@@ -160,7 +160,7 @@ export default function MealLogger({ onAddMeal }: MealLoggerProps) {
                   required
                   value={timestamp}
                   onChange={(e) => setTimestamp(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white rounded-2xl pl-12 pr-5 py-3.5 text-base text-slate-900 focus:outline-none focus:ring-4 focus:ring-emerald-500/5 transition-all font-mono font-bold cursor-pointer"
+                  className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-2xl pl-12 pr-5 py-3.5 text-base text-slate-900 focus:outline-none focus:ring-4 focus:ring-indigo-500/5 transition-all font-mono font-bold cursor-pointer"
                   id="meal-time-input"
                 />
                 <Clock className="w-5 h-5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
@@ -183,7 +183,7 @@ export default function MealLogger({ onAddMeal }: MealLoggerProps) {
             
             <button
               type="submit"
-              className="w-full px-8 py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-base rounded-2xl shadow-md hover:shadow-lg transition-all cursor-pointer active:scale-95 flex items-center justify-center gap-2"
+              className="w-full px-8 py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-base rounded-2xl shadow-md hover:shadow-lg transition-all cursor-pointer active:scale-95 flex items-center justify-center gap-2"
               id="submit-custom-meal-btn"
             >
               <Plus className="w-5.5 h-5.5 stroke-[3]" />
@@ -207,7 +207,7 @@ export default function MealLogger({ onAddMeal }: MealLoggerProps) {
             <button
               key={index}
               onClick={() => handlePresetClick(preset)}
-              className="group relative flex text-left p-5 rounded-2xl bg-white hover:bg-emerald-50/20 border border-slate-200 hover:border-emerald-500/30 transition-all duration-200 overflow-hidden cursor-pointer shadow-sm active:scale-98"
+              className="group relative flex text-left p-5 rounded-2xl bg-white hover:bg-indigo-50/20 border border-slate-200 hover:border-indigo-500/30 transition-all duration-200 overflow-hidden cursor-pointer shadow-sm active:scale-98"
             >
               {/* Giant watermarked Emoji back-layer */}
               <span className="absolute right-3 bottom-0 text-6xl opacity-10 select-none pointer-events-none group-hover:scale-110 transition-transform duration-300">
@@ -220,10 +220,10 @@ export default function MealLogger({ onAddMeal }: MealLoggerProps) {
                 </div>
                 
                 <div className="flex-1 min-w-0 pr-6">
-                  <span className="text-[11px] font-black uppercase tracking-wider text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-md">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-md">
                     {preset.category}
                   </span>
-                  <h4 className="text-base font-black text-slate-800 mt-2 group-hover:text-emerald-950 transition-colors truncate">
+                  <h4 className="text-base font-black text-slate-800 mt-2 group-hover:text-indigo-950 transition-colors truncate">
                     {preset.name}
                   </h4>
                   <p className="text-xs text-slate-400 mt-1 leading-tight font-medium line-clamp-1">
@@ -231,7 +231,7 @@ export default function MealLogger({ onAddMeal }: MealLoggerProps) {
                   </p>
 
                   <div className="flex items-center gap-3 mt-4">
-                    <span className="text-xs bg-slate-100 group-hover:bg-emerald-500/10 group-hover:text-emerald-700 px-2.5 py-1 rounded-md font-black font-mono transition-colors">
+                    <span className="text-xs bg-slate-100 group-hover:bg-indigo-500/10 group-hover:text-indigo-700 px-2.5 py-1 rounded-md font-black font-mono transition-colors">
                       {preset.protein}g Protein
                     </span>
                     <span className="text-xs text-slate-500 font-mono font-bold flex items-center gap-1">
@@ -243,7 +243,7 @@ export default function MealLogger({ onAddMeal }: MealLoggerProps) {
               </div>
 
               {/* Instant Tap Icon */}
-              <PlusCircle className="absolute top-5 right-5 w-5.5 h-5.5 text-slate-300 group-hover:text-emerald-650 transition-colors" />
+              <PlusCircle className="absolute top-5 right-5 w-5.5 h-5.5 text-slate-300 group-hover:text-indigo-600 transition-colors" />
             </button>
           ))}
         </div>

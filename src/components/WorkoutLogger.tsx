@@ -293,7 +293,7 @@ export default function WorkoutLogger({ onAddWorkout, weightUnit }: WorkoutLogge
                     key={setIdx}
                     className={`grid grid-cols-12 gap-3 items-center p-3 rounded-xl border transition-all ${
                       setProgress.completed
-                        ? 'bg-emerald-50/20 border-emerald-200/70'
+                        ? 'bg-indigo-50/20 border-indigo-200/70'
                         : 'bg-slate-50 border-slate-200'
                     }`}
                   >
@@ -304,8 +304,8 @@ export default function WorkoutLogger({ onAddWorkout, weightUnit }: WorkoutLogge
                         onClick={() => handleToggleSetCompleted(exName, setIdx)}
                         className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all cursor-pointer ${
                           setProgress.completed
-                            ? 'bg-emerald-500 border-emerald-500 text-white'
-                            : 'bg-white border-slate-300 hover:border-emerald-500'
+                            ? 'bg-indigo-600 border-indigo-600 text-white'
+                            : 'bg-white border-slate-300 hover:border-indigo-500'
                         }`}
                       >
                         {setProgress.completed && <Check className="w-4 h-4 stroke-[3]" />}
@@ -314,7 +314,7 @@ export default function WorkoutLogger({ onAddWorkout, weightUnit }: WorkoutLogge
 
                     {/* Label */}
                     <div className="col-span-3 sm:col-span-2">
-                      <span className={`text-xs font-bold font-mono ${setProgress.completed ? 'text-emerald-700' : 'text-slate-400'}`}>
+                      <span className={`text-xs font-bold font-mono ${setProgress.completed ? 'text-indigo-700' : 'text-slate-400'}`}>
                         Working Set {setIdx + 1}
                       </span>
                     </div>
@@ -392,7 +392,7 @@ export default function WorkoutLogger({ onAddWorkout, weightUnit }: WorkoutLogge
             <button
               type="button"
               onClick={handleFinishAndSaveWorkout}
-              className="w-full flex items-center justify-center gap-2 px-8 py-4.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-base rounded-2xl transition-all shadow-md hover:shadow-lg shadow-emerald-150 cursor-pointer active:scale-95 border border-emerald-500"
+              className="w-full flex items-center justify-center gap-2 px-8 py-4.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-base rounded-2xl transition-all shadow-md hover:shadow-lg shadow-indigo-150 cursor-pointer active:scale-95 border border-indigo-500"
               id="finish-workout-log-btn"
             >
               <CheckCircle2 className="w-5.5 h-5.5" />

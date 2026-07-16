@@ -374,12 +374,12 @@ export default function WorkspaceHub({
     <div className="space-y-12" id="workspace-hub-view">
       
       {/* Intro banner */}
-      <div className="bg-gradient-to-r from-indigo-700 to-sky-700 text-white p-8 sm:p-10 rounded-3xl shadow-xl">
+      <div className="bg-slate-900 border border-slate-800 text-white p-8 sm:p-10 rounded-3xl shadow-md">
         <h2 className="text-2xl sm:text-3xl font-black tracking-tight flex items-center gap-3">
           <Cloud className="w-8 h-8 text-sky-300 animate-pulse" />
           Workspace Hub
         </h2>
-        <p className="text-base sm:text-lg text-indigo-100 mt-3 max-w-3xl leading-relaxed">
+        <p className="text-base sm:text-lg text-slate-300 mt-3 max-w-3xl leading-relaxed">
           Unlock maximum hypertrophy progression by integrating Google Workspace. Automate backups directly to your personal 
           Google Drive and import custom nutrition strategies or workout routines directly from your Google Docs!
         </p>
@@ -400,7 +400,7 @@ export default function WorkspaceHub({
                 <p className="text-slate-500 text-sm mt-1">Keep your muscle history synchronized and safe</p>
               </div>
               <span className={`px-3 py-1 rounded-full text-xs font-bold font-mono uppercase ${
-                token ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-amber-50 text-amber-700 border border-amber-100'
+                token ? 'bg-indigo-50 text-indigo-700 border border-indigo-100' : 'bg-amber-50 text-amber-700 border border-amber-100'
               }`}>
                 {token ? 'Connected' : 'Offline'}
               </span>
@@ -467,6 +467,12 @@ export default function WorkspaceHub({
                   <p className="text-sm text-slate-500 mt-2 leading-relaxed">
                     Connecting your Google account provides secure direct access to your personal files for backup storage and Google Docs plans. Your credentials are never stored externally.
                   </p>
+                </div>
+
+                {/* Friendly Help Information Callout for Preview Iframe limits */}
+                <div className="max-w-md mx-auto text-left bg-amber-50/75 border border-amber-200 rounded-2xl p-4.5 text-xs text-amber-800 leading-relaxed shadow-xs">
+                  <span className="font-extrabold text-amber-900 block mb-1">💡 Sandbox Iframe Notice</span>
+                  Standard Google popup sign-in may be blocked inside the builder's preview pane due to browser safety policies regarding third-party frames. If you encounter any login blocks, simply click the <span className="font-bold">"Open in New Tab"</span> icon on the top right of your builder to open the full app directly.
                 </div>
 
                 {/* Official Google Button */}
@@ -577,7 +583,7 @@ export default function WorkspaceHub({
         <a
           href="/api/download-blueprint"
           download="android_blueprint.md"
-          className="flex items-center justify-center gap-2.5 px-6 py-4 bg-emerald-500 hover:bg-emerald-600 active:scale-[0.98] text-slate-950 font-bold rounded-2xl text-sm transition-all shadow-lg shadow-emerald-500/10 shrink-0 w-full md:w-auto"
+          className="flex items-center justify-center gap-2.5 px-6 py-4 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white font-bold rounded-2xl text-sm transition-all shadow-lg shadow-indigo-500/10 shrink-0 w-full md:w-auto"
         >
           <Download className="w-4.5 h-4.5" />
           Download Android Blueprint (.md)
@@ -656,13 +662,13 @@ export default function WorkspaceHub({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-4 border-t border-slate-100">
             <div className="space-y-4">
               <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                <Flame className="w-4 h-4 text-emerald-500" />
+                <Flame className="w-4 h-4 text-indigo-500" />
                 Foods to Eat Plan
               </h4>
               <button
                 onClick={handleFetchFoodsDoc}
                 disabled={isLoadingFoodsDoc}
-                className="w-full py-3 px-4 bg-emerald-50 hover:bg-emerald-100 disabled:bg-slate-50 border border-emerald-200 hover:border-emerald-300 disabled:border-slate-100 text-emerald-700 text-xs font-bold rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-all"
+                className="w-full py-3 px-4 bg-indigo-55 hover:bg-indigo-100 disabled:bg-slate-50 border border-indigo-200 hover:border-indigo-300 disabled:border-slate-100 text-indigo-700 text-xs font-bold rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-all"
               >
                 {isLoadingFoodsDoc ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                 Sync Foods list from Google Doc
@@ -671,13 +677,13 @@ export default function WorkspaceHub({
 
             <div className="space-y-4">
               <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                <Dumbbell className="w-4 h-4 text-violet-500" />
+                <Dumbbell className="w-4 h-4 text-indigo-500" />
                 Workout Plans
               </h4>
               <button
                 onClick={handleFetchWorkoutsDoc}
                 disabled={isLoadingWorkoutsDoc}
-                className="w-full py-3 px-4 bg-violet-50 hover:bg-violet-100 disabled:bg-slate-50 border border-violet-200 hover:border-violet-300 disabled:border-slate-100 text-violet-700 text-xs font-bold rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-all"
+                className="w-full py-3 px-4 bg-indigo-55 hover:bg-indigo-100 disabled:bg-slate-50 border border-indigo-200 hover:border-indigo-300 disabled:border-slate-100 text-indigo-700 text-xs font-bold rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-all"
               >
                 {isLoadingWorkoutsDoc ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                 Sync Workouts from Google Doc
@@ -699,7 +705,7 @@ export default function WorkspaceHub({
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
                   <h4 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                    <Flame className="w-4 h-4 text-emerald-500" />
+                    <Flame className="w-4 h-4 text-indigo-500" />
                     Foods list from Doc ({parsedFoods.length})
                   </h4>
                   <span className="text-[10px] text-slate-400 font-extrabold uppercase bg-slate-100 px-2 py-0.5 rounded-md">Click to Eat / Log</span>
@@ -710,15 +716,15 @@ export default function WorkspaceHub({
                     <div
                       key={`parsed-food-${idx}`}
                       onClick={() => handleLogParsedMeal(food)}
-                      className="flex justify-between items-center p-3.5 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-200 rounded-xl cursor-pointer transition-all group"
+                      className="flex justify-between items-center p-3.5 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 rounded-xl cursor-pointer transition-all group"
                     >
                       <div>
-                        <h5 className="text-xs font-bold text-slate-800 group-hover:text-emerald-900">{food.name}</h5>
+                        <h5 className="text-xs font-bold text-slate-800 group-hover:text-indigo-900">{food.name}</h5>
                         <p className="text-[11px] text-slate-500 mt-1">
                           {food.protein}g protein • {food.calories} kcal
                         </p>
                       </div>
-                      <button className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-400 group-hover:text-emerald-600 group-hover:border-emerald-300 transition-colors">
+                      <button className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-400 group-hover:text-indigo-600 group-hover:border-indigo-300 transition-colors">
                         <Plus className="w-3.5 h-3.5" />
                       </button>
                     </div>
@@ -732,7 +738,7 @@ export default function WorkspaceHub({
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
                   <h4 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                    <Dumbbell className="w-4 h-4 text-violet-500" />
+                    <Dumbbell className="w-4 h-4 text-indigo-500" />
                     Exercise routines from Doc ({parsedWorkouts.length})
                   </h4>
                   <span className="text-[10px] text-slate-400 font-extrabold uppercase bg-slate-100 px-2 py-0.5 rounded-md">Click to Log Exercise</span>
@@ -743,20 +749,20 @@ export default function WorkspaceHub({
                     <div
                       key={`parsed-workout-${idx}`}
                       onClick={() => handleLogParsedWorkout(workout)}
-                      className="flex justify-between items-center p-3.5 bg-slate-50 hover:bg-violet-50 border border-slate-200 hover:border-violet-200 rounded-xl cursor-pointer transition-all group"
+                      className="flex justify-between items-center p-3.5 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 rounded-xl cursor-pointer transition-all group"
                     >
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-100">
+                          <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">
                             {workout.category}
                           </span>
-                          <h5 className="text-xs font-bold text-slate-800 group-hover:text-violet-900">{workout.name}</h5>
+                          <h5 className="text-xs font-bold text-slate-800 group-hover:text-indigo-900">{workout.name}</h5>
                         </div>
                         <p className="text-[11px] text-slate-500 mt-1">
                           {workout.sets.length} sets • target: {workout.sets[0]?.reps || 10} reps @ {workout.sets[0]?.weight || 135} {goals.weightUnit}
                         </p>
                       </div>
-                      <button className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-400 group-hover:text-violet-600 group-hover:border-violet-300 transition-colors">
+                      <button className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-400 group-hover:text-indigo-600 group-hover:border-indigo-300 transition-colors">
                         <Plus className="w-3.5 h-3.5" />
                       </button>
                     </div>

@@ -373,19 +373,12 @@ export default function App() {
         <div className="flex items-center gap-4.5">
           <div className="w-12 h-12 rounded-2xl overflow-hidden shadow-md flex-shrink-0">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" className="w-full h-full">
-              <rect width="512" height="512" rx="112" fill="#0f172a"/>
-              <defs>
-                <linearGradient id="headerFitnessGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#10b981" />
-                  <stop offset="100%" stop-color="#6366f1" />
-                </linearGradient>
-              </defs>
-              <g transform="translate(106, 106) scale(0.585)">
-                <rect x="40" y="160" width="60" height="180" rx="25" fill="url(#headerFitnessGrad)" />
-                <rect x="400" y="160" width="60" height="180" rx="25" fill="url(#headerFitnessGrad)" />
-                <rect x="80" y="230" width="340" height="40" rx="12" fill="url(#headerFitnessGrad)" />
-                <polygon points="290,60 150,280 250,280 222,440 362,220 262,220" fill="#f59e0b" stroke="#0f172a" stroke-width="24" stroke-linejoin="round" />
-              </g>
+              <rect width="512" height="512" rx="120" fill="#0f172a"/>
+              <circle cx="256" cy="256" r="140" stroke="#4f46e5" strokeWidth="24" fill="none" opacity="0.3" />
+              <circle cx="256" cy="256" r="100" stroke="#6366f1" strokeWidth="24" fill="none" strokeDasharray="400" strokeDashoffset="100" strokeLinecap="round" />
+              <path d="M 200 256 L 312 256" stroke="#ffffff" strokeWidth="28" strokeLinecap="round" />
+              <rect x="176" y="216" width="24" height="80" rx="12" fill="#ffffff" />
+              <rect x="312" y="216" width="24" height="80" rx="12" fill="#ffffff" />
             </svg>
           </div>
           <div>
@@ -431,19 +424,12 @@ export default function App() {
                   <div className="flex items-center gap-3">
                     <div className="w-11 h-11 rounded-xl overflow-hidden shadow-md flex-shrink-0">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" className="w-full h-full">
-                        <rect width="512" height="512" rx="112" fill="#0f172a"/>
-                        <defs>
-                          <linearGradient id="sidebarFitnessGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                            <stop offset="0%" stop-color="#10b981" />
-                            <stop offset="100%" stop-color="#6366f1" />
-                          </linearGradient>
-                        </defs>
-                        <g transform="translate(106, 106) scale(0.585)">
-                          <rect x="40" y="160" width="60" height="180" rx="25" fill="url(#sidebarFitnessGrad)" />
-                          <rect x="400" y="160" width="60" height="180" rx="25" fill="url(#sidebarFitnessGrad)" />
-                          <rect x="80" y="230" width="340" height="40" rx="12" fill="url(#sidebarFitnessGrad)" />
-                          <polygon points="290,60 150,280 250,280 222,440 362,220 262,220" fill="#f59e0b" stroke="#0f172a" stroke-width="24" stroke-linejoin="round" />
-                        </g>
+                        <rect width="512" height="512" rx="120" fill="#0f172a"/>
+                        <circle cx="256" cy="256" r="140" stroke="#4f46e5" strokeWidth="24" fill="none" opacity="0.3" />
+                        <circle cx="256" cy="256" r="100" stroke="#6366f1" strokeWidth="24" fill="none" strokeDasharray="400" strokeDashoffset="100" strokeLinecap="round" />
+                        <path d="M 200 256 L 312 256" stroke="#ffffff" strokeWidth="28" strokeLinecap="round" />
+                        <rect x="176" y="216" width="24" height="80" rx="12" fill="#ffffff" />
+                        <rect x="312" y="216" width="24" height="80" rx="12" fill="#ffffff" />
                       </svg>
                     </div>
                     <div>
