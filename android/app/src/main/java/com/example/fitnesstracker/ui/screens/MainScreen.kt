@@ -37,20 +37,37 @@ fun MainScreen(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                     ) {
-                        Image(
-                            painter = painterResource(id = R.drawable.ic_launcher),
-                            contentDescription = "App Icon",
+                        // Branded Rounded Logo Box
+                        Box(
                             modifier = Modifier
-                                .size(36.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = "My Fitness companion",
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 18.sp,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Slate900),
+                            contentAlignment = androidx.compose.ui.Alignment.Center
+                        ) {
+                            Text(
+                                text = "⚡",
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "Fitness Tracker",
+                                fontWeight = FontWeight.Black,
+                                fontSize = 19.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "SIMPLE PERSONAL PROGRESSION & NUTRITION",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 8.sp,
+                                color = Indigo500,
+                                letterSpacing = 0.5.sp
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)

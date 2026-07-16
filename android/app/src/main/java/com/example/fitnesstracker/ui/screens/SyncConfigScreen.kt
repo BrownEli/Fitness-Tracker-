@@ -4,12 +4,15 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -32,7 +35,7 @@ fun SyncConfigScreen(viewModel: SyncViewModel) {
 
     var folderInput by remember { mutableStateOf(syncFolder) }
 
-    // Set up standard Google Sign-In options with requested cloud drive scopes
+    // Google Sign-In options with requested cloud drive scopes
     val gso = remember {
         GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestEmail()
@@ -66,40 +69,97 @@ fun SyncConfigScreen(viewModel: SyncViewModel) {
         }
     }
 
-    Column(
+    LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(16.dp),
+            .background(MaterialTheme.colorScheme.background),
+        contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Sign-in Status Card
-        Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            shape = RoundedCornerShape(20.dp),
-            modifier = Modifier.fillMaxWidth().pressClickEffect()
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Google Drive Connection Status", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+        // 1. Google Drive & Docs Sync Hub Header Card
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Slate900),
+                shape = RoundedCornerShape(24.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "WORKSPACE HUB",
+                        color = Indigo500,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 10.sp,
+                        letterSpacing = 0.5.sp
+                    )
+                    Text(
+                        text = "Google Drive & Docs Sync",
+                        color = Color.White,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 20.sp
+                    )
+                    Text(
+                        text = "Unlock maximum hypertrophy progression by integrating Google Workspace. Automate backups directly to your personal Google Drive and import custom nutrition strategies or workout routines directly from your Google Docs!",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        lineHeight = 16.sp,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+        }
+
+        // 2. Connection Status Card
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "GOOGLE CLOUD SYNC",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Black,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            letterSpacing = 0.5.sp
+                        )
+
+                        // Online / Offline Status Badge
                         Box(
                             modifier = Modifier
-                                .size(12.dp)
-                                .background(if (isConnected) Emerald500 else Coral500, RoundedCornerShape(6.dp))
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = if (isConnected) "Connected" else "Disconnected",
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp
-                        )
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isConnected) Emerald500.copy(alpha = 0.12f) else Coral500.copy(alpha = 0.12f))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = if (isConnected) "ONLINE" else "OFFLINE",
+                                color = if (isConnected) Emerald600 else Coral500,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Black
+                            )
+                        }
                     }
+
+                    Text(
+                        text = "Keep your muscle history synchronized and safe.",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+
+                    // Big screen-width connection button
                     Button(
                         onClick = {
                             if (isConnected) {
@@ -111,97 +171,174 @@ fun SyncConfigScreen(viewModel: SyncViewModel) {
                                 signInLauncher.launch(signInIntent)
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = if (isConnected) Coral500 else Emerald500),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.pressClickEffect()
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isConnected) Coral500 else Indigo500
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .pressClickEffect()
                     ) {
-                        Text(if (isConnected) "Sign Out" else "Connect Google Drive")
+                        Text(
+                            text = if (isConnected) "Disconnect Google Account" else "Connect Google Account",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
                     }
                 }
             }
         }
 
-        // Folder Location Target Configuration
-        Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            shape = RoundedCornerShape(20.dp),
-            modifier = Modifier.fillMaxWidth().pressClickEffect()
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Remote Sync Target Folder", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                OutlinedTextField(
-                    value = folderInput,
-                    onValueChange = { folderInput = it },
-                    label = { Text("Google Drive Folder Path") },
-                    placeholder = { Text("MyFitnessTracker") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Button(
-                    onClick = { viewModel.updateFolderLocation(folderInput) },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                    modifier = Modifier.fillMaxWidth().pressClickEffect(),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text("Apply Path Location", fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-
-        // Action Trigger Buttons (Sync & Restore)
-        AnimatedVisibility(visible = isConnected) {
+        // 3. Remote Folder Configuration Card
+        item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Synchronize Records", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                    
-                    Row(
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "TARGET SYNC LOCATION",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                        letterSpacing = 0.5.sp
+                    )
+
+                    OutlinedTextField(
+                        value = folderInput,
+                        onValueChange = { folderInput = it },
+                        label = { Text("Google Drive Folder") },
+                        placeholder = { Text("MyFitnessTracker") },
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        colors = TextFieldDefaults.outlinedTextFieldColors(focusedBorderColor = Indigo500)
+                    )
+
+                    Button(
+                        onClick = { viewModel.updateFolderLocation(folderInput) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(46.dp)
+                            .pressClickEffect()
                     ) {
-                        Button(
-                            onClick = { viewModel.triggerManualBackup() },
-                            colors = ButtonDefaults.buttonColors(containerColor = Emerald500),
-                            modifier = Modifier.weight(1f).pressClickEffect(),
-                            shape = RoundedCornerShape(12.dp),
-                            enabled = !isSyncing
-                        ) {
-                            Text("Backup to Drive", fontWeight = FontWeight.Bold)
-                        }
-
-                        Button(
-                            onClick = { viewModel.triggerManualRestore() },
-                            colors = ButtonDefaults.buttonColors(containerColor = Indigo500),
-                            modifier = Modifier.weight(1f).pressClickEffect(),
-                            shape = RoundedCornerShape(12.dp),
-                            enabled = !isSyncing
-                        ) {
-                            Text("Restore from Drive", fontWeight = FontWeight.Bold)
-                        }
+                        Text("Apply Path Location", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
+                }
+            }
+        }
 
-                    if (isSyncing) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                        ) {
-                            CircularProgressIndicator(color = Emerald500, modifier = Modifier.size(24.dp))
-                            Text("Executing cloud procedures...", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
-                        }
-                    }
-
-                    if (syncMessage.isNotBlank()) {
+        // 4. Synchronize Records Card (Visible only when connected)
+        item {
+            AnimatedVisibility(visible = isConnected) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
                         Text(
-                            text = syncMessage,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp,
-                            modifier = Modifier.padding(top = 4.dp)
+                            text = "SYNCHRONIZE RECORDS",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Black,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            letterSpacing = 0.5.sp
                         )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Button(
+                                onClick = { viewModel.triggerManualBackup() },
+                                colors = ButtonDefaults.buttonColors(containerColor = Emerald500),
+                                shape = RoundedCornerShape(12.dp),
+                                enabled = !isSyncing,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .pressClickEffect()
+                            ) {
+                                Text("Backup now", fontWeight = FontWeight.Black, fontSize = 13.sp)
+                            }
+
+                            Button(
+                                onClick = { viewModel.triggerManualRestore() },
+                                colors = ButtonDefaults.buttonColors(containerColor = Indigo500),
+                                shape = RoundedCornerShape(12.dp),
+                                enabled = !isSyncing,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .pressClickEffect()
+                            ) {
+                                Text("Restore now", fontWeight = FontWeight.Black, fontSize = 13.sp)
+                            }
+                        }
+
+                        if (isSyncing) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp)
+                            ) {
+                                CircularProgressIndicator(color = Emerald500, modifier = Modifier.size(18.dp))
+                                Text(
+                                    text = "Executing cloud procedures...",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                )
+                            }
+                        }
+
+                        if (syncMessage.isNotBlank()) {
+                            Text(
+                                text = syncMessage,
+                                color = Indigo500,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
                     }
+                }
+            }
+        }
+
+        // 5. Setup & Verification Instructions Card (At bottom)
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFEF3C7)),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "⚙️ Developer Setup Notice",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 13.sp,
+                        color = Color(0xFF92400E)
+                    )
+                    Text(
+                        text = "To enable Google Drive integration for your local build, make sure to add your signing key's SHA-1 certificate fingerprint and Android package name (com.example.fitnesstracker) to your project in the Google Cloud Console or Firebase console, and register the drive.file scope in your OAuth Consent screen. This guarantees secure, sandboxed cloud storage for your fitness records.",
+                        fontSize = 11.sp,
+                        color = Color(0xFFB45309),
+                        fontWeight = FontWeight.Bold,
+                        lineHeight = 15.sp
+                    )
                 }
             }
         }

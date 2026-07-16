@@ -56,4 +56,20 @@ class DashboardViewModel(private val repository: FitnessRepository) : ViewModel(
     fun deleteLog(logId: String) {
         repository.deleteDailyLog(logId)
     }
+
+    // Save/Update Scale Weight from inline Dashboard tracker
+    fun saveWeight(weightValue: Double) {
+        val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+        val backup = repository.backupState.value
+        val existing = backup.logs.values.find { it.date == todayStr }
+        val log = existing ?: DailyLog(
+            id = repository.generateUniqueId(),
+            date = todayStr,
+            weight = null,
+            meals = emptyList(),
+            workouts = emptyList(),
+            notes = ""
+        )
+        repository.saveDailyLog(log.copy(weight = weightValue))
+    }
 }

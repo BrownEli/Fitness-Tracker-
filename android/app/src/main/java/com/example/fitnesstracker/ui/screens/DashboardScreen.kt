@@ -29,6 +29,9 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
     val todayLog by viewModel.todayLog.collectAsState()
     
     var showGoalDialog by remember { mutableStateOf(false) }
+    var weightInputState by remember(todayLog?.weight) { 
+        mutableStateOf(todayLog?.weight?.toString() ?: "") 
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         LazyColumn(
@@ -36,70 +39,360 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Gradient Hero Card (Total Stats)
+            // Section: Active Logging Day
             item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(28.dp))
-                        .background(Brush.linearGradient(colors = listOf(Emerald500, Indigo500)))
-                        .padding(24.dp)
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    shape = RoundedCornerShape(24.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "TODAY\'S TRACKING STATUS",
-                            color = Color.White.copy(alpha = 0.8f),
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                        )
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(
-                                text = todayLog?.weight?.let { "$it kg" } ?: "Weight Unlogged",
-                                color = Color.White,
-                                fontWeight = FontWeight.Black,
-                                fontSize = 26.sp,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = "ACTIVE LOGGING DAY",
+                                    color = Indigo500,
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 11.sp,
+                                    letterSpacing = 0.5.sp
+                                )
+                                Text(
+                                    text = "Today, " + java.text.SimpleDateFormat("MMM dd, yyyy", java.util.Locale.getDefault()).format(java.util.Date()),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 20.sp,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(12.dp))
-                                    .background(Color.White.copy(alpha = 0.2f))
+                                    .background(Slate100)
                                     .clickable { showGoalDialog = true }
                                     .pressClickEffect()
                                     .padding(horizontal = 12.dp, vertical = 6.dp)
                             ) {
-                                Text("Edit Goals", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = "Configure Goals", 
+                                    color = Slate900, 
+                                    fontSize = 11.sp, 
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
-                        Divider(color = Color.White.copy(alpha = 0.15f), thickness = 1.dp)
+
+                        Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), thickness = 1.dp)
+
+                        // In-line Weight Input
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Column {
-                                Text("Meals Logged", color = Color.White.copy(0.7f), fontSize = 11.sp)
-                                Text("${todayLog?.meals?.size ?: 0} items", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                            }
-                            Column {
-                                Text("Workouts Done", color = Color.White.copy(0.7f), fontSize = 11.sp)
-                                Text("${todayLog?.workouts?.count { it.completed } ?: 0} exercises", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                            }
-                            Column {
-                                Text("Weekly Streak", color = Color.White.copy(0.7f), fontSize = 11.sp)
-                                Text("${backupState.analytics.cachedStats.streakDays} days 🔥", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            Text(
+                                text = "Scale Weight today:",
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                modifier = Modifier.weight(1f)
+                            )
+                            
+                            OutlinedTextField(
+                                value = weightInputState,
+                                onValueChange = { weightInputState = it },
+                                placeholder = { Text("0.0", fontSize = 13.sp) },
+                                modifier = Modifier
+                                    .width(90.dp)
+                                    .height(48.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                singleLine = true,
+                                colors = TextFieldDefaults.outlinedTextFieldColors(
+                                    focusedBorderColor = Indigo500,
+                                    unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                                )
+                            )
+
+                            Text(
+                                text = "kg",
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+
+                            Button(
+                                onClick = {
+                                    val wValue = weightInputState.toDoubleOrNull()
+                                    if (wValue != null) {
+                                        viewModel.saveWeight(wValue)
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Emerald500),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .height(40.dp)
+                                    .pressClickEffect()
+                            ) {
+                                Text("Save", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
                         }
                     }
                 }
             }
 
+            // Calculations for 3 Metric Cards
+            val proteinLogged = todayLog?.meals?.sumOf { it.protein } ?: 0
+            val proteinTarget = backupState.goals.proteinTarget.coerceAtLeast(1)
+            val proteinPercent = ((proteinLogged.toFloat() / proteinTarget.toFloat()) * 100).toInt().coerceIn(0, 100)
+
+            val caloriesLogged = todayLog?.meals?.sumOf { it.calories } ?: 0
+            val caloriesTarget = backupState.goals.caloriesTarget.coerceAtLeast(1)
+            val caloriesPercent = ((caloriesLogged.toFloat() / caloriesTarget.toFloat()) * 100).toInt().coerceIn(0, 100)
+
+            val workoutsLogged = todayLog?.workouts ?: emptyList()
+            val workoutsCompletedCount = workoutsLogged.count { it.completed }
+            val totalWorkoutsCount = workoutsLogged.size
+            val workoutsPercent = if (totalWorkoutsCount > 0) {
+                ((workoutsCompletedCount.toFloat() / totalWorkoutsCount.toFloat()) * 100).toInt().coerceIn(0, 100)
+            } else 0
+
+            // 1. TODAY'S PROTEIN CARD
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    shape = RoundedCornerShape(20.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Emerald50.copy(alpha = 0.4f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("🔥", fontSize = 16.sp)
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "TODAY'S PROTEIN",
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 11.sp,
+                                        color = Emerald600,
+                                        letterSpacing = 0.5.sp
+                                    )
+                                    Text(
+                                        text = "$proteinLogged g / $proteinTarget g",
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 17.sp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Emerald500.copy(alpha = 0.12f))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = "$proteinPercent%",
+                                    color = Emerald600,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        LinearProgressIndicator(
+                            progress = (proteinLogged.toFloat() / proteinTarget.toFloat()).coerceIn(0f, 1f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(CircleShape),
+                            color = Emerald500,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    }
+                }
+            }
+
+            // 2. CALORIES SURPLUS/BUDGET CARD
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    shape = RoundedCornerShape(20.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Slate100),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("⚡", fontSize = 16.sp)
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "CALORIE SURPLUS",
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 11.sp,
+                                        color = Indigo500,
+                                        letterSpacing = 0.5.sp
+                                    )
+                                    Text(
+                                        text = "$caloriesLogged / $caloriesTarget kcal",
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 17.sp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Indigo500.copy(alpha = 0.12f))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = "$caloriesPercent%",
+                                    color = Indigo500,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        LinearProgressIndicator(
+                            progress = (caloriesLogged.toFloat() / caloriesTarget.toFloat()).coerceIn(0f, 1f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(CircleShape),
+                            color = Indigo500,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    }
+                }
+            }
+
+            // 3. COMPLETED EXERCISES CARD
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    shape = RoundedCornerShape(20.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Gold500.copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("💪", fontSize = 16.sp)
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "COMPLETED EXERCISES",
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 11.sp,
+                                        color = Gold600,
+                                        letterSpacing = 0.5.sp
+                                    )
+                                    Text(
+                                        text = "$workoutsCompletedCount / $totalWorkoutsCount Lifts Today",
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 17.sp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Gold500.copy(alpha = 0.15f))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = "$workoutsPercent%",
+                                    color = Gold600,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        LinearProgressIndicator(
+                            progress = if (totalWorkoutsCount > 0) (workoutsCompletedCount.toFloat() / totalWorkoutsCount.toFloat()).coerceIn(0f, 1f) else 0f,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(CircleShape),
+                            color = Gold500,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    }
+                }
+            }
+
             // Stats row (Average nutrition & calorie metrics cached)
+            item {
+                Text(
+                    text = "WEEKLY PERFORMANCE AVERAGES",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -155,9 +448,9 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
             item {
                 Text(
                     text = "TODAY'S WORKOUTS",
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     modifier = Modifier.padding(top = 8.dp)
                 )
             }
@@ -230,9 +523,9 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                 item {
                     Text(
                         text = "JOURNAL NOTES",
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                         modifier = Modifier.padding(top = 8.dp)
                     )
                 }
@@ -245,7 +538,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                             .padding(16.dp)
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("💡 Today\'s Session Notes", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("💡 Today's Session Notes", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             Text(noteText, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f), fontSize = 13.sp, lineHeight = 18.sp)
                         }
                     }
@@ -262,7 +555,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
 
             AlertDialog(
                 onDismissRequest = { showGoalDialog = false },
-                title = { Text("Configure Fitness Goals") },
+                title = { Text("Configure Fitness Goals", fontWeight = FontWeight.Black) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         OutlinedTextField(
@@ -303,12 +596,12 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Emerald500)
                     ) {
-                        Text("Apply Goals")
+                        Text("Apply Goals", fontWeight = FontWeight.Bold)
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showGoalDialog = false }) {
-                        Text("Cancel", color = Slate900)
+                        Text("Cancel", color = Indigo500, fontWeight = FontWeight.Bold)
                     }
                 }
             )
