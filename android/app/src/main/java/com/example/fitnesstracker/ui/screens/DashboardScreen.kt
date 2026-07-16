@@ -115,8 +115,8 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                                 shape = RoundedCornerShape(10.dp),
                                 singleLine = true,
                                 colors = TextFieldDefaults.outlinedTextFieldColors(
-                                    focusedBorderColor = Indigo500,
-                                    unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                                    focusedIndicatorColor = Indigo500,
+                                    unfocusedIndicatorColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
                                 )
                             )
 

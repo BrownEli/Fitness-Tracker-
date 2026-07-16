@@ -176,7 +176,7 @@ fun WeightAndNotesForm(viewModel: LogViewModel) {
                         modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         colors = TextFieldDefaults.outlinedTextFieldColors(
-                            focusedBorderColor = Indigo500
+                            focusedIndicatorColor = Indigo500
                         )
                     )
                     Button(
@@ -215,7 +215,7 @@ fun WeightAndNotesForm(viewModel: LogViewModel) {
                         modifier = Modifier.fillMaxWidth(),
                         minLines = 3,
                         colors = TextFieldDefaults.outlinedTextFieldColors(
-                            focusedBorderColor = Indigo500
+                            focusedIndicatorColor = Indigo500
                         )
                     )
                     Button(
@@ -286,7 +286,7 @@ fun MealsLogForm(viewModel: LogViewModel) {
                         label = { Text("What did you eat?") },
                         placeholder = { Text("e.g. Egg White Scramble") },
                         modifier = Modifier.fillMaxWidth(),
-                        colors = TextFieldDefaults.outlinedTextFieldColors(focusedBorderColor = Emerald500)
+                        colors = TextFieldDefaults.outlinedTextFieldColors(focusedIndicatorColor = Emerald500)
                     )
 
                     Row(
@@ -300,7 +300,7 @@ fun MealsLogForm(viewModel: LogViewModel) {
                             placeholder = { Text("e.g. 35") },
                             modifier = Modifier.weight(1f),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            colors = TextFieldDefaults.outlinedTextFieldColors(focusedBorderColor = Emerald500)
+                            colors = TextFieldDefaults.outlinedTextFieldColors(focusedIndicatorColor = Emerald500)
                         )
 
                         OutlinedTextField(
@@ -310,7 +310,7 @@ fun MealsLogForm(viewModel: LogViewModel) {
                             placeholder = { Text("e.g. 450") },
                             modifier = Modifier.weight(1f),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            colors = TextFieldDefaults.outlinedTextFieldColors(focusedBorderColor = Emerald500)
+                            colors = TextFieldDefaults.outlinedTextFieldColors(focusedIndicatorColor = Emerald500)
                         )
                     }
 
@@ -852,7 +852,7 @@ fun InteractiveWorkoutsForm(viewModel: LogViewModel) {
                                         shape = RoundedCornerShape(8.dp),
                                         singleLine = true,
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        colors = TextFieldDefaults.outlinedTextFieldColors(focusedBorderColor = Indigo500)
+                                        colors = TextFieldDefaults.outlinedTextFieldColors(focusedIndicatorColor = Indigo500)
                                     )
                                 }
 
@@ -874,7 +874,7 @@ fun InteractiveWorkoutsForm(viewModel: LogViewModel) {
                                             shape = RoundedCornerShape(8.dp),
                                             singleLine = true,
                                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                            colors = TextFieldDefaults.outlinedTextFieldColors(focusedBorderColor = Indigo500)
+                                            colors = TextFieldDefaults.outlinedTextFieldColors(focusedIndicatorColor = Indigo500)
                                         )
                                     }
                                 } else {

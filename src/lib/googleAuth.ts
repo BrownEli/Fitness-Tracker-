@@ -9,7 +9,7 @@ export const provider = new GoogleAuthProvider();
 provider.addScope('https://www.googleapis.com/auth/drive.file');
 provider.addScope('https://www.googleapis.com/auth/documents.readonly');
 
-let cachedAccessToken: string | null = null;
+let cachedAccessToken: string | null = typeof window !== 'undefined' ? localStorage.getItem('google_access_token') : null;
 let isSigningIn = false;
 
 export const initAuth = (
@@ -25,6 +25,9 @@ export const initAuth = (
       }
     } else {
       cachedAccessToken = null;
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('google_access_token');
+      }
       if (onAuthFailure) onAuthFailure();
     }
   });
@@ -39,6 +42,9 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
       throw new Error('Failed to get access token from Firebase Auth');
     }
     cachedAccessToken = credential.accessToken;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('google_access_token', cachedAccessToken);
+    }
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error) {
     console.error('Sign in error:', error);
@@ -51,6 +57,9 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 export const logout = async () => {
   await signOut(auth);
   cachedAccessToken = null;
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('google_access_token');
+  }
 };
 
 export const getAccessToken = () => cachedAccessToken;

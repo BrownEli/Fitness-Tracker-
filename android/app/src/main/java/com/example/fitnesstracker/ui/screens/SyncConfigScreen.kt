@@ -215,7 +215,7 @@ fun SyncConfigScreen(viewModel: SyncViewModel) {
                         label = { Text("Google Drive Folder") },
                         placeholder = { Text("MyFitnessTracker") },
                         modifier = Modifier.fillMaxWidth(),
-                        colors = TextFieldDefaults.outlinedTextFieldColors(focusedBorderColor = Indigo500)
+                        colors = TextFieldDefaults.outlinedTextFieldColors(focusedIndicatorColor = Indigo500)
                     )
 
                     Button(
