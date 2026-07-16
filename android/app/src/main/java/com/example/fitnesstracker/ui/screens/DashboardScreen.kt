@@ -1,6 +1,7 @@
 package com.example.fitnesstracker.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -13,8 +14,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -109,9 +117,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                                 value = weightInputState,
                                 onValueChange = { weightInputState = it },
                                 placeholder = { Text("0.0", fontSize = 13.sp) },
-                                modifier = Modifier
-                                    .width(90.dp)
-                                    .height(48.dp),
+                                modifier = Modifier.width(95.dp),
                                 shape = RoundedCornerShape(10.dp),
                                 singleLine = true,
                                 colors = TextFieldDefaults.outlinedTextFieldColors(
@@ -136,15 +142,23 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = Emerald500),
                                 shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier
-                                    .height(40.dp)
-                                    .pressClickEffect()
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                                modifier = Modifier.pressClickEffect()
                             ) {
-                                Text("Save", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text("Save", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                             }
                         }
                     }
                 }
+            }
+
+            // 1.5. HYPERTROPHY TRENDS & ANALYTICS CHART CARD
+            item {
+                HypertrophyTrendChart(
+                    logs = backupState.logs.values.toList(),
+                    weightTarget = backupState.goals.weightTarget,
+                    caloriesTarget = backupState.goals.caloriesTarget
+                )
             }
 
             // Calculations for 3 Metric Cards
@@ -605,6 +619,267 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                     }
                 }
             )
+        }
+    }
+}
+
+@Composable
+fun HypertrophyTrendChart(logs: List<DailyLog>, weightTarget: Double, caloriesTarget: Int) {
+    var selectedTab by remember { mutableStateOf("Calories") } // "Calories" or "Weight"
+    
+    // Sort logs by date and take the last 7 days
+    val sortedLogs = remember(logs) {
+        logs.sortedBy { it.date }.takeLast(7)
+    }
+    
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(24.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Header with Tab Selector
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "HYPERTROPHY PROGRESSION",
+                        color = Indigo500,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 11.sp,
+                        letterSpacing = 0.5.sp
+                    )
+                    Text(
+                        text = "Last 7 Logged Days",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 16.sp
+                    )
+                }
+                
+                // Toggle Buttons
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Slate100)
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    listOf("Calories", "Weight").forEach { tab ->
+                        val isSelected = selectedTab == tab
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) Indigo500 else Color.Transparent)
+                                .clickable { selectedTab = tab }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = tab,
+                                color = if (isSelected) Color.White else Slate700,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+            
+            Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), thickness = 1.dp)
+            
+            if (sortedLogs.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "No historical logs available for graphing yet. Keep logging daily!",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            } else {
+                // Determine limits for drawing
+                val maxVal = remember(sortedLogs, selectedTab) {
+                    if (selectedTab == "Calories") {
+                        val maxCal = sortedLogs.maxOfOrNull { log -> log.meals.sumOf { it.calories } } ?: 0
+                        maxOf(maxCal.toFloat(), caloriesTarget.toFloat(), 1000f)
+                    } else {
+                        val maxWt = sortedLogs.maxOfOrNull { it.weight ?: 0.0 } ?: 0.0
+                        maxOf(maxWt.toFloat(), weightTarget.toFloat(), 50f)
+                    }
+                }
+                
+                val minVal = remember(sortedLogs, selectedTab) {
+                    if (selectedTab == "Calories") {
+                        0f
+                    } else {
+                        val minWt = sortedLogs.filter { it.weight != null }.map { it.weight!! }.minOrNull() ?: 0.0
+                        maxOf(0f, (minWt - 5f).toFloat())
+                    }
+                }
+                
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(140.dp)
+                        .padding(top = 16.dp, bottom = 8.dp, start = 8.dp, end = 8.dp)
+                ) {
+                    val width = size.width
+                    val height = size.height
+                    
+                    val pointCount = sortedLogs.size
+                    val spacing = if (pointCount > 1) width / (pointCount - 1) else width
+                    
+                    // Draw horizontal grid lines (3 lines)
+                    val gridLines = 3
+                    for (i in 0 until gridLines) {
+                        val y = height * (i.toFloat() / (gridLines - 1))
+                        drawLine(
+                            color = Color.LightGray.copy(alpha = 0.25f),
+                            start = androidx.compose.ui.geometry.Offset(0f, y),
+                            end = androidx.compose.ui.geometry.Offset(width, y),
+                            strokeWidth = 1f,
+                            pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
+                        )
+                    }
+                    
+                    val points = ArrayList<androidx.compose.ui.geometry.Offset>()
+                    sortedLogs.forEachIndexed { idx, log ->
+                        val value = if (selectedTab == "Calories") {
+                            log.meals.sumOf { it.calories }.toFloat()
+                        } else {
+                            (log.weight ?: 0.0).toFloat()
+                        }
+                        
+                        val range = maxVal - minVal
+                        val normalizedVal = if (range > 0) (value - minVal) / range else 0.5f
+                        val cx = idx * spacing
+                        val cy = height - (normalizedVal * height)
+                        points.add(androidx.compose.ui.geometry.Offset(cx, cy))
+                    }
+                    
+                    if (selectedTab == "Calories") {
+                        // Draw beautiful bar chart or path
+                        points.forEachIndexed { idx, pt ->
+                            val barWidth = 20.dp.toPx()
+                            val rect = androidx.compose.ui.geometry.Rect(
+                                left = pt.x - barWidth / 2,
+                                top = pt.y,
+                                right = pt.x + barWidth / 2,
+                                bottom = height
+                            )
+                            val path = androidx.compose.ui.graphics.Path().apply {
+                                addRoundRect(
+                                    androidx.compose.ui.geometry.RoundRect(
+                                        rect = rect,
+                                        topLeftCornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()),
+                                        topRightCornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx())
+                                    )
+                                )
+                            }
+                            drawPath(
+                                path = path,
+                                brush = Brush.verticalGradient(
+                                    colors = listOf(Indigo500, Indigo500.copy(alpha = 0.3f))
+                                )
+                            )
+                        }
+                    } else {
+                        // Draw smooth line chart
+                        val path = androidx.compose.ui.graphics.Path()
+                        points.forEachIndexed { idx, pt ->
+                            if (idx == 0) {
+                                path.moveTo(pt.x, pt.y)
+                            } else {
+                                path.lineTo(pt.x, pt.y)
+                            }
+                        }
+                        drawPath(
+                            path = path,
+                            color = Emerald500,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                width = 3.dp.toPx(),
+                                cap = androidx.compose.ui.graphics.StrokeCap.Round
+                            )
+                        )
+                        
+                        // Fill gradient below path
+                        val fillPath = androidx.compose.ui.graphics.Path().apply {
+                            addPath(path)
+                            lineTo(width, height)
+                            lineTo(0f, height)
+                            close()
+                        }
+                        drawPath(
+                            path = fillPath,
+                            brush = Brush.verticalGradient(
+                                colors = listOf(Emerald500.copy(alpha = 0.25f), Color.Transparent)
+                            )
+                        )
+                        
+                        // Draw points on the line
+                        points.forEach { pt ->
+                            drawCircle(
+                                color = Emerald600,
+                                radius = 4.dp.toPx(),
+                                center = pt
+                            )
+                            drawCircle(
+                                color = Color.White,
+                                radius = 1.5.dp.toPx(),
+                                center = pt
+                            )
+                        }
+                    }
+                }
+                
+                // Row of labels matching the sortedLogs
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    sortedLogs.forEach { log ->
+                        val displayDate = remember(log.date) {
+                            try {
+                                val dateObj = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).parse(log.date)
+                                java.text.SimpleDateFormat("MM/dd", java.util.Locale.US).format(dateObj)
+                            } catch (e: Exception) {
+                                log.date.takeLast(5)
+                            }
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = displayDate,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Black,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                            )
+                            val displayVal = if (selectedTab == "Calories") {
+                                "${log.meals.sumOf { it.calories }}"
+                            } else {
+                                log.weight?.let { String.format(java.util.Locale.US, "%.1f", it) } ?: "-"
+                            }
+                            Text(
+                                text = displayVal,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (selectedTab == "Calories") Indigo500 else Emerald600
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

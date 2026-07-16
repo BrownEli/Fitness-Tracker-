@@ -16,7 +16,9 @@ data class Goal(
     val weightTarget: Double = 160.0,
     val caloriesTarget: Int = 2500,
     val proteinTarget: Int = 160,
-    val weeklyWorkoutDaysTarget: Int = 5
+    val weeklyWorkoutDaysTarget: Int = 5,
+    val foodsDocId: String = "",
+    val workoutsDocId: String = ""
 )
 
 @Serializable
