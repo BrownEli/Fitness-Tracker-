@@ -140,7 +140,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                                         viewModel.saveWeight(wValue)
                                     }
                                 },
-                                colors = ButtonDefaults.buttonColors(containerColor = Emerald500),
+                                colors = ButtonDefaults.buttonColors(containerColor = Indigo500),
                                 shape = RoundedCornerShape(10.dp),
                                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                                 modifier = Modifier.pressClickEffect()
@@ -199,7 +199,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                                     modifier = Modifier
                                         .size(32.dp)
                                         .clip(RoundedCornerShape(8.dp))
-                                        .background(Emerald50.copy(alpha = 0.4f)),
+                                        .background(Indigo50.copy(alpha = 0.4f)),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text("🔥", fontSize = 16.sp)
@@ -210,7 +210,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                                         text = "TODAY'S PROTEIN",
                                         fontWeight = FontWeight.Black,
                                         fontSize = 11.sp,
-                                        color = Emerald600,
+                                        color = Indigo500,
                                         letterSpacing = 0.5.sp
                                     )
                                     Text(
@@ -225,12 +225,12 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(8.dp))
-                                    .background(Emerald500.copy(alpha = 0.12f))
+                                    .background(Indigo500.copy(alpha = 0.12f))
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 Text(
                                     text = "$proteinPercent%",
-                                    color = Emerald600,
+                                    color = Indigo500,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -243,7 +243,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                                 .fillMaxWidth()
                                 .height(6.dp)
                                 .clip(CircleShape),
-                            color = Emerald500,
+                            color = Indigo500,
                             trackColor = MaterialTheme.colorScheme.surfaceVariant
                         )
                     }
@@ -428,7 +428,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                             LinearProgressIndicator(
                                 progress = (backupState.analytics.cachedStats.averageCalories.toFloat() / backupState.goals.caloriesTarget.toFloat()).coerceIn(0f, 1f),
                                 modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
-                                color = Emerald500,
+                                color = Indigo500,
                                 trackColor = MaterialTheme.colorScheme.surfaceVariant
                             )
                         }
@@ -501,7 +501,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                                         modifier = Modifier
                                             .size(8.dp)
                                             .clip(CircleShape)
-                                            .background(if (workout.completed) Emerald500 else Gold500)
+                                            .background(if (workout.completed) Indigo500 else Gold500)
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
@@ -524,7 +524,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                                         viewModel.toggleWorkoutCompletion(logId, workout.id, checked)
                                     }
                                 },
-                                colors = CheckboxDefaults.colors(checkedColor = Emerald500)
+                                colors = CheckboxDefaults.colors(checkedColor = Indigo500)
                             )
                         }
                     }
@@ -608,7 +608,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                             viewModel.updateGoals(w, c, p, t)
                             showGoalDialog = false
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = Emerald500)
+                        colors = ButtonDefaults.buttonColors(containerColor = Indigo500)
                     ) {
                         Text("Apply Goals", fontWeight = FontWeight.Bold)
                     }
@@ -807,7 +807,7 @@ fun HypertrophyTrendChart(logs: List<DailyLog>, weightTarget: Double, caloriesTa
                         }
                         drawPath(
                             path = path,
-                            color = Emerald500,
+                            color = Indigo500,
                             style = androidx.compose.ui.graphics.drawscope.Stroke(
                                 width = 3.dp.toPx(),
                                 cap = androidx.compose.ui.graphics.StrokeCap.Round
@@ -824,14 +824,14 @@ fun HypertrophyTrendChart(logs: List<DailyLog>, weightTarget: Double, caloriesTa
                         drawPath(
                             path = fillPath,
                             brush = Brush.verticalGradient(
-                                colors = listOf(Emerald500.copy(alpha = 0.25f), Color.Transparent)
+                                colors = listOf(Indigo500.copy(alpha = 0.25f), Color.Transparent)
                             )
                         )
                         
                         // Draw points on the line
                         points.forEach { pt ->
                             drawCircle(
-                                color = Emerald600,
+                                color = Indigo700,
                                 radius = 4.dp.toPx(),
                                 center = pt
                             )
@@ -874,7 +874,7 @@ fun HypertrophyTrendChart(logs: List<DailyLog>, weightTarget: Double, caloriesTa
                                 text = displayVal,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (selectedTab == "Calories") Indigo500 else Emerald600
+                                color = Indigo500
                             )
                         }
                     }

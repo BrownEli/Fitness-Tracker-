@@ -20,21 +20,21 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 
 private val DarkColorScheme = darkColorScheme(
-    primary = Emerald500,
+    primary = Indigo500,
     secondary = Gold500,
-    tertiary = Indigo500,
+    tertiary = Slate700,
     background = Slate900,
     surface = Slate800,
-    onPrimary = Slate900,
+    onPrimary = Color.White,
     onSecondary = Slate900,
     onBackground = Slate50,
     onSurface = Slate50
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Emerald600,
+    primary = Indigo600,
     secondary = Gold600,
-    tertiary = Indigo500,
+    tertiary = Slate500,
     background = Slate50,
     surface = Color.White,
     onPrimary = Color.White,

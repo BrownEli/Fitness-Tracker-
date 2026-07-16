@@ -190,7 +190,7 @@ fun WeightAndNotesForm(viewModel: LogViewModel) {
                                 snackbarMessage = "Please enter a valid weight decimal"
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = Emerald500),
+                        colors = ButtonDefaults.buttonColors(containerColor = Indigo500),
                         modifier = Modifier.fillMaxWidth().height(48.dp).pressClickEffect(),
                         shape = RoundedCornerShape(12.dp)
                     ) {
@@ -239,12 +239,12 @@ fun WeightAndNotesForm(viewModel: LogViewModel) {
         if (snackbarMessage.isNotBlank()) {
             item {
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Emerald50.copy(alpha = 0.5f)),
+                    colors = CardDefaults.cardColors(containerColor = Indigo50.copy(alpha = 0.5f)),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Box(modifier = Modifier.padding(12.dp), contentAlignment = Alignment.Center) {
-                        Text(snackbarMessage, color = Emerald600, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(snackbarMessage, color = Indigo700, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
                 }
             }
@@ -288,7 +288,7 @@ fun MealsLogForm(viewModel: LogViewModel) {
                         label = { Text("What did you eat?") },
                         placeholder = { Text("e.g. Egg White Scramble") },
                         modifier = Modifier.fillMaxWidth(),
-                        colors = TextFieldDefaults.outlinedTextFieldColors(focusedBorderColor = Emerald500)
+                        colors = TextFieldDefaults.outlinedTextFieldColors(focusedBorderColor = Indigo500)
                     )
 
                     Row(
@@ -302,7 +302,7 @@ fun MealsLogForm(viewModel: LogViewModel) {
                             placeholder = { Text("e.g. 35") },
                             modifier = Modifier.weight(1f),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            colors = TextFieldDefaults.outlinedTextFieldColors(focusedBorderColor = Emerald500)
+                            colors = TextFieldDefaults.outlinedTextFieldColors(focusedBorderColor = Indigo500)
                         )
 
                         OutlinedTextField(
@@ -312,7 +312,7 @@ fun MealsLogForm(viewModel: LogViewModel) {
                             placeholder = { Text("e.g. 450") },
                             modifier = Modifier.weight(1f),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            colors = TextFieldDefaults.outlinedTextFieldColors(focusedBorderColor = Emerald500)
+                            colors = TextFieldDefaults.outlinedTextFieldColors(focusedBorderColor = Indigo500)
                         )
                     }
 
@@ -352,7 +352,7 @@ fun MealsLogForm(viewModel: LogViewModel) {
                                 snackbarMessage = "Please add a meal description"
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = Emerald500),
+                        colors = ButtonDefaults.buttonColors(containerColor = Indigo500),
                         modifier = Modifier.fillMaxWidth().height(48.dp).pressClickEffect(),
                         shape = RoundedCornerShape(12.dp)
                     ) {
@@ -365,12 +365,12 @@ fun MealsLogForm(viewModel: LogViewModel) {
         if (snackbarMessage.isNotBlank()) {
             item {
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Emerald50.copy(alpha = 0.5f)),
+                    colors = CardDefaults.cardColors(containerColor = Indigo50.copy(alpha = 0.5f)),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Box(modifier = Modifier.padding(12.dp), contentAlignment = Alignment.Center) {
-                        Text(snackbarMessage, color = Emerald600, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(snackbarMessage, color = Indigo700, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
                 }
             }
@@ -614,12 +614,12 @@ fun InteractiveWorkoutsForm(viewModel: LogViewModel) {
             if (showSuccessMessage) {
                 item {
                     Card(
-                        colors = CardDefaults.cardColors(containerColor = Emerald50.copy(alpha = 0.5f)),
+                        colors = CardDefaults.cardColors(containerColor = Indigo50.copy(alpha = 0.5f)),
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Box(modifier = Modifier.padding(12.dp), contentAlignment = Alignment.Center) {
-                            Text("✓ Workout Logged & Saved!", color = Emerald600, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text("✓ Workout Logged & Saved!", color = Indigo700, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
                     }
                 }
@@ -810,7 +810,7 @@ fun InteractiveWorkoutsForm(viewModel: LogViewModel) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(if (completed) Emerald50.copy(alpha = 0.4f) else Slate50, RoundedCornerShape(12.dp))
+                                    .background(if (completed) Indigo50.copy(alpha = 0.4f) else Slate50, RoundedCornerShape(12.dp))
                                     .padding(8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -820,7 +820,7 @@ fun InteractiveWorkoutsForm(viewModel: LogViewModel) {
                                     modifier = Modifier
                                         .size(24.dp)
                                         .clip(CircleShape)
-                                        .background(if (completed) Emerald500 else Color.White)
+                                        .background(if (completed) Indigo500 else Color.White)
                                         .clickable { workoutProgressCompleted[key] = !completed }
                                         .pressClickEffect(),
                                     contentAlignment = Alignment.Center
@@ -834,7 +834,7 @@ fun InteractiveWorkoutsForm(viewModel: LogViewModel) {
                                     text = "Working Set ${s + 1}",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 11.sp,
-                                    color = if (completed) Emerald600 else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                    color = if (completed) Indigo700 else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                                     modifier = Modifier.weight(1f)
                                 )
 
@@ -946,7 +946,7 @@ fun InteractiveWorkoutsForm(viewModel: LogViewModel) {
                         isWorkoutActive = false
                         showSuccessMessage = true
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Emerald500),
+                    colors = ButtonDefaults.buttonColors(containerColor = Indigo500),
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()

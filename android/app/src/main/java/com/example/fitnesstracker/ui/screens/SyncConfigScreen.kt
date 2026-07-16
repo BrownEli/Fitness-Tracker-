@@ -166,12 +166,12 @@ fun SyncConfigScreen(viewModel: SyncViewModel) {
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(if (isConnected) Emerald500.copy(alpha = 0.12f) else Coral500.copy(alpha = 0.12f))
+                                .background(if (isConnected) Indigo500.copy(alpha = 0.12f) else Coral500.copy(alpha = 0.12f))
                                 .padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
                             Text(
                                 text = if (isConnected) "ONLINE" else "OFFLINE",
-                                color = if (isConnected) Emerald600 else Coral500,
+                                color = if (isConnected) Indigo500 else Coral500,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Black
                             )
@@ -250,6 +250,25 @@ fun SyncConfigScreen(viewModel: SyncViewModel) {
                             fontSize = 14.sp
                         )
                     }
+
+                    if (!isConnected) {
+                        OutlinedButton(
+                            onClick = { viewModel.connectDemoAccount() },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Indigo500),
+                            border = androidx.compose.foundation.BorderStroke(1.5.dp, Indigo500),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .pressClickEffect()
+                        ) {
+                            Text(
+                                text = "⚡ Use Demo Workspace Mode",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -288,7 +307,7 @@ fun SyncConfigScreen(viewModel: SyncViewModel) {
                         label = { Text("Foods To Eat Google Doc Link or ID") },
                         placeholder = { Text("Enter Google Doc URL or ID") },
                         modifier = Modifier.fillMaxWidth(),
-                        colors = TextFieldDefaults.outlinedTextFieldColors(focusedBorderColor = Emerald500)
+                        colors = TextFieldDefaults.outlinedTextFieldColors(focusedBorderColor = Indigo500)
                     )
 
                     OutlinedTextField(
@@ -349,7 +368,7 @@ fun SyncConfigScreen(viewModel: SyncViewModel) {
                         ) {
                             Button(
                                 onClick = { viewModel.triggerManualBackup() },
-                                colors = ButtonDefaults.buttonColors(containerColor = Emerald500),
+                                colors = ButtonDefaults.buttonColors(containerColor = Indigo500),
                                 shape = RoundedCornerShape(12.dp),
                                 enabled = !isSyncing,
                                 modifier = Modifier
@@ -382,7 +401,7 @@ fun SyncConfigScreen(viewModel: SyncViewModel) {
                                     .fillMaxWidth()
                                     .padding(top = 4.dp)
                             ) {
-                                CircularProgressIndicator(color = Emerald500, modifier = Modifier.size(18.dp))
+                                CircularProgressIndicator(color = Indigo500, modifier = Modifier.size(18.dp))
                                 Text(
                                     text = "Executing cloud procedures...",
                                     fontSize = 12.sp,
@@ -430,7 +449,7 @@ fun SyncConfigScreen(viewModel: SyncViewModel) {
                                 )
                                 Button(
                                     onClick = { viewModel.syncFoodsFromDoc(goals.foodsDocId) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Emerald500),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Indigo500),
                                     shape = RoundedCornerShape(10.dp),
                                     enabled = !isSyncingFoods && goals.foodsDocId.isNotBlank(),
                                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
@@ -474,7 +493,7 @@ fun SyncConfigScreen(viewModel: SyncViewModel) {
                                                 }
                                                 Button(
                                                     onClick = { viewModel.logParsedMeal(meal) },
-                                                    colors = ButtonDefaults.buttonColors(containerColor = Emerald500),
+                                                    colors = ButtonDefaults.buttonColors(containerColor = Indigo500),
                                                     shape = RoundedCornerShape(8.dp),
                                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                                                     modifier = Modifier.height(28.dp)
