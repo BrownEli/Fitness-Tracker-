@@ -80,7 +80,7 @@ fun MainScreen(
                     }
                 }
                 
-                HorizontalDivider(
+                Divider(
                     color = Color.White.copy(alpha = 0.08f),
                     thickness = 1.dp,
                     modifier = Modifier.padding(vertical = 12.dp)

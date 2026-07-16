@@ -783,8 +783,8 @@ fun HypertrophyTrendChart(logs: List<DailyLog>, weightTarget: Double, caloriesTa
                                 addRoundRect(
                                     androidx.compose.ui.geometry.RoundRect(
                                         rect = rect,
-                                        topLeftCornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()),
-                                        topRightCornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx())
+                                        topLeft = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()),
+                                        topRight = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx())
                                     )
                                 )
                             }
