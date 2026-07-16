@@ -18,6 +18,7 @@ val Gold500 = Color(0xFFF59E0B)
 val Gold600 = Color(0xFFD97706)
 
 val Indigo500 = Color(0xFF6366F1)
+val Indigo600 = Color(0xFF4F46E5)
 val Indigo700 = Color(0xFF4338CA)
 val Indigo50 = Color(0xFFEEF2FF)
 val Coral500 = Color(0xFFEF4444)
