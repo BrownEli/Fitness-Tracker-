@@ -4,6 +4,8 @@ import { Plus, Flame, Clock, PlusCircle, Check, HelpCircle, Utensils } from 'luc
 
 interface MealLoggerProps {
   onAddMeal: (meal: Omit<Meal, 'id' | 'timestamp'> & { timestamp?: string }) => void;
+  timestamp: string;
+  setTimestamp: (time: string) => void;
 }
 
 interface NutritionPreset {
@@ -34,17 +36,11 @@ const NUTRITION_GUIDE_PRESETS: NutritionPreset[] = [
   { name: 'Peanut Butter Oatmeal Bowl', protein: 16, calories: 450, category: 'Healthy Fats', icon: '🥜', desc: 'Healthy calorie multiplier.' }
 ];
 
-export default function MealLogger({ onAddMeal }: MealLoggerProps) {
+export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealLoggerProps) {
   const [name, setName] = useState('');
   const [protein, setProtein] = useState('');
   const [calories, setCalories] = useState('');
   
-  // Set default timestamp to current HH:MM in 24h format
-  const [timestamp, setTimestamp] = useState(() => {
-    const d = new Date();
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  });
-
   const [logSuccess, setLogSuccess] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -86,8 +82,8 @@ export default function MealLogger({ onAddMeal }: MealLoggerProps) {
       
       {/* 1. Direct clear input card */}
       <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-10 shadow-sm">
-        <div className="flex items-center gap-4 mb-8">
-          <div className="p-3.5 bg-indigo-50 text-indigo-600 rounded-2xl">
+        <div className="flex items-start gap-4 mb-8">
+          <div className="p-3.5 bg-indigo-50 text-indigo-600 rounded-2xl shrink-0 mt-0.5">
             <Utensils className="w-7 h-7" />
           </div>
           <div>
@@ -120,6 +116,7 @@ export default function MealLogger({ onAddMeal }: MealLoggerProps) {
                 <input
                   type="number"
                   required
+                  step="any"
                   min="0"
                   max="300"
                   placeholder="e.g. 25"
@@ -139,6 +136,7 @@ export default function MealLogger({ onAddMeal }: MealLoggerProps) {
                 <input
                   type="number"
                   required
+                  step="any"
                   min="0"
                   max="3000"
                   placeholder="e.g. 400"

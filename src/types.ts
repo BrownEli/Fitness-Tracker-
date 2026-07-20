@@ -11,6 +11,7 @@ export interface Workout {
   category: 'Chest' | 'Back' | 'Legs' | 'Shoulders' | 'Arms' | 'Core' | 'Cardio';
   sets: SetLog[];
   completed: boolean;
+  youtubeUrl?: string;
 }
 
 export interface Meal {
@@ -33,12 +34,15 @@ export interface UserGoals {
   currentWeight: number;
   targetWeight: number;
   weightUnit: 'lbs' | 'kg';
+  currentHeight?: number; // in cm
   dailyProteinTarget: number; // grams
   dailyCalorieTarget: number; // kcal
   weeklyWorkoutDaysTarget: number;
   foodsDocId?: string;
   workoutsDocId?: string;
+  driveFolderLink?: string;
   lastSyncTime?: string;
+  syncDocsOnBackup?: boolean;
 }
 
 export interface CoachingInsight {

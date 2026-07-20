@@ -109,11 +109,11 @@ export default function Analytics({ logs, goals }: AnalyticsProps) {
             <Award className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-slate-400 text-[11px] uppercase tracking-wider font-extrabold">Protein Success</span>
+            <span className="text-indigo-600 text-xs uppercase tracking-wider font-extrabold">Protein Success</span>
             <h3 className="text-xl font-black text-slate-900 mt-0.5">
-              {dailyChartData.filter(d => d.Protein >= d.ProteinGoal).length}/7 <span className="text-slate-400 text-xs font-medium">Days</span>
+              {dailyChartData.filter(d => d.Protein >= d.ProteinGoal).length}/7 <span className="text-slate-500 text-sm font-bold">Days</span>
             </h3>
-            <p className="text-[10px] text-slate-500 mt-0.5">Achieved protein hypertrophy target</p>
+            <p className="text-xs font-semibold text-slate-600 mt-0.5">Achieved protein hypertrophy target</p>
           </div>
         </div>
 
@@ -122,11 +122,11 @@ export default function Analytics({ logs, goals }: AnalyticsProps) {
             <Dumbbell className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-slate-400 text-[11px] uppercase tracking-wider font-extrabold">Hypertrophy Sets</span>
+            <span className="text-indigo-600 text-xs uppercase tracking-wider font-extrabold">Hypertrophy Sets</span>
             <h3 className="text-xl font-black text-slate-900 mt-0.5">
-              {totalWeeklySets} <span className="text-slate-400 text-xs font-medium">Working Sets</span>
+              {totalWeeklySets} <span className="text-slate-500 text-sm font-bold">Working Sets</span>
             </h3>
-            <p className="text-[10px] text-slate-500 mt-0.5">Completed sets across muscle groups</p>
+            <p className="text-xs font-semibold text-slate-600 mt-0.5">Completed sets across muscle groups</p>
           </div>
         </div>
 
@@ -135,11 +135,11 @@ export default function Analytics({ logs, goals }: AnalyticsProps) {
             <Flame className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-slate-400 text-[11px] uppercase tracking-wider font-extrabold">Caloric Surplus</span>
+            <span className="text-indigo-600 text-xs uppercase tracking-wider font-extrabold">Caloric Surplus</span>
             <h3 className="text-xl font-black text-slate-900 mt-0.5">
-              {dailyChartData.filter(d => d.Calories >= d.CalorieGoal).length}/7 <span className="text-slate-400 text-xs font-medium">Days</span>
+              {dailyChartData.filter(d => d.Calories >= d.CalorieGoal).length}/7 <span className="text-slate-500 text-sm font-bold">Days</span>
             </h3>
-            <p className="text-[10px] text-slate-500 mt-0.5">Fueled bulking caloric target</p>
+            <p className="text-xs font-semibold text-slate-600 mt-0.5">Fueled bulking caloric target</p>
           </div>
         </div>
 
@@ -148,13 +148,13 @@ export default function Analytics({ logs, goals }: AnalyticsProps) {
             <Scale className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-slate-400 text-[11px] uppercase tracking-wider font-extrabold">Scale Weight</span>
+            <span className="text-indigo-600 text-xs uppercase tracking-wider font-extrabold">Scale Weight</span>
             <h3 className="text-xl font-black text-slate-900 mt-0.5">
               {dailyChartData[dailyChartData.length - 1]?.Weight ? (
                 `${dailyChartData[dailyChartData.length - 1].Weight} ${goals.weightUnit}`
               ) : 'No log'}
             </h3>
-            <p className="text-[10px] text-indigo-600 font-bold mt-0.5">
+            <p className="text-xs text-indigo-600 font-extrabold mt-0.5">
               Target: {goals.targetWeight} {goals.weightUnit} for hypertrophy
             </p>
           </div>

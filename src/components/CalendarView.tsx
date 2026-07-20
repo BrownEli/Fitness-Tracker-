@@ -38,16 +38,16 @@ export default function CalendarView({ logs, goals, selectedDate, onSelectDate }
 
   return (
     <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm" id="calendar-view-container">
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-6 border-b border-slate-100 pb-5">
         <div>
           <h2 className="text-lg font-bold text-slate-900 tracking-tight flex items-center gap-2">
-            <CalendarIcon className="w-5 h-5 text-indigo-600" />
+            <CalendarIcon className="w-5.5 h-5.5 text-indigo-600" />
             Consistency Calendar
           </h2>
-          <p className="text-slate-500 text-xs mt-0.5">Select a day to review and log workouts or nutrition</p>
+          <p className="text-slate-500 text-xs mt-1">Select a day to review and log workouts or nutrition</p>
         </div>
-        <div className="bg-slate-50 px-3.5 py-1.5 rounded-xl border border-slate-150">
-          <span className="text-xs font-extrabold text-indigo-600 font-mono tracking-tight">{monthName}</span>
+        <div className="bg-indigo-50/75 px-4.5 py-1.5 rounded-xl border border-indigo-100 inline-flex items-center justify-center self-start sm:self-auto">
+          <span className="text-sm font-black text-indigo-700 font-mono tracking-tight">{monthName}</span>
         </div>
       </div>
 

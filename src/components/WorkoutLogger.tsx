@@ -1,11 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Workout, SetLog } from '../types';
 import FormVisualizer, { EXERCISES_DATABASE } from './FormVisualizer';
-import { PlayCircle, CheckCircle2, ChevronRight, ChevronLeft, Award, Dumbbell, Clock, Info, Check, Plus, AlertCircle } from 'lucide-react';
+import { PlayCircle, CheckCircle2, ChevronRight, ChevronLeft, Award, Dumbbell, Clock, Info, Check, Plus, AlertCircle, ExternalLink } from 'lucide-react';
 
 interface WorkoutLoggerProps {
   onAddWorkout: (workout: Omit<Workout, 'id'>) => void;
   weightUnit: string;
+  selectedDate?: string;
+  logs?: any[];
+  parsedWorkouts?: Omit<Workout, 'id'>[];
 }
 
 interface WorkoutDayPlan {
@@ -20,21 +23,121 @@ const WEEKLY_PLAN_DATA: WorkoutDayPlan[] = [
   { day: 2, focus: 'Arms & Shoulders', category: 'Shoulders', exercises: ['Bicep Curls', 'Seated Dumbbell Shoulder Press'] },
   { day: 3, focus: 'Core & Back', category: 'Back', exercises: ['Flat Bench Leg Raises', 'Dumbbell Rows'] },
   { day: 4, focus: 'Active Recovery & Legs', category: 'Legs', exercises: ['Bodyweight Bench Squats', 'Light Stretching'] },
-  { day: 5, focus: 'Repeat & Overload Cycle', category: 'Legs', exercises: ['Bench Crunches', 'Dumbbell Flat Bench Press', 'Seated Dumbbell Shoulder Press'] }
+  { day: 5, focus: 'Core & Chest', category: 'Chest', exercises: ['Bench Crunches', 'Dumbbell Flat Bench Press'] },
+  { day: 6, focus: 'Arms & Shoulders', category: 'Shoulders', exercises: ['Bicep Curls', 'Seated Dumbbell Shoulder Press'] },
+  { day: 7, focus: 'Core & Back', category: 'Back', exercises: ['Flat Bench Leg Raises', 'Dumbbell Rows'] }
 ];
 
-export default function WorkoutLogger({ onAddWorkout, weightUnit }: WorkoutLoggerProps) {
-  const [selectedPlanDay, setSelectedPlanDay] = useState<number>(1);
+const calculateStreak = (logs: any[] = [], activeDate: string): number => {
+  if (!logs || logs.length === 0) return 1;
+
+  const activeDates = new Set<string>();
+  logs.forEach(l => {
+    const hasWorkoutCompleted = l.workouts && l.workouts.some((w: any) => w.completed);
+    const hasFoodLogged = l.meals && l.meals.length > 0;
+    if (hasWorkoutCompleted || hasFoodLogged) {
+      activeDates.add(l.date);
+    }
+  });
+
+  const activeDateStr = activeDate;
+  let streak = 0;
+  let checkDate = new Date(activeDate + 'T00:00:00');
+
+  const formatDate = (d: Date) => {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
+  const hasActivityToday = activeDates.has(activeDateStr);
+  
+  if (hasActivityToday) {
+    streak = 1;
+    checkDate.setDate(checkDate.getDate() - 1);
+    while (activeDates.has(formatDate(checkDate))) {
+      streak++;
+      checkDate.setDate(checkDate.getDate() - 1);
+    }
+  } else {
+    let yesterday = new Date(checkDate);
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    let yesterdayStreak = 0;
+    while (activeDates.has(formatDate(yesterday))) {
+      yesterdayStreak++;
+      yesterday.setDate(yesterday.getDate() - 1);
+    }
+    streak = yesterdayStreak + 1;
+  }
+
+  return streak > 0 ? streak : 1;
+};
+
+const extractYoutubeVideoId = (url: string | undefined): string | null => {
+  if (!url) return null;
+  // If it's already just an 11-char video ID, return it
+  if (/^[a-zA-Z0-9_\-]{11}$/.test(url)) return url;
+  
+  // Robust match for 11-char YouTube ID in watch, embed, or youtu.be short urls
+  const regExp = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([a-zA-Z0-9_\-]{11})/i;
+  const match = url.match(regExp);
+  if (match && match[1]) {
+    return match[1];
+  }
+  return null;
+};
+
+export default function WorkoutLogger({ onAddWorkout, weightUnit, selectedDate, logs = [], parsedWorkouts = [] }: WorkoutLoggerProps) {
   const [isWorkoutActive, setIsWorkoutActive] = useState(false);
   const [activeExerciseIndex, setActiveExerciseIndex] = useState(0);
-  
+
+  // Calculate the current streak from consistency calendar logs
+  const streak = calculateStreak(logs, selectedDate || new Date().toISOString().split('T')[0]);
+  const currentPlanDay = ((streak - 1) % 7) + 1;
+
   // Track inputs for each set in the active workout
   // Key: "exerciseName-setIndex"
   const [workoutProgress, setWorkoutProgress] = useState<Record<string, { reps: number; weight: number; completed: boolean }>>({});
   const [completedSuccessMsg, setCompletedSuccessMsg] = useState(false);
 
   // Quick helper to fetch the plan day object
-  const currentPlan = WEEKLY_PLAN_DATA.find(p => p.day === selectedPlanDay) || WEEKLY_PLAN_DATA[0];
+  const currentPlan = WEEKLY_PLAN_DATA.find(p => p.day === currentPlanDay) || WEEKLY_PLAN_DATA[0];
+
+  // Retrieve active YouTube ID for current exercise (fallback to DB)
+  const getActiveYoutubeId = (): string | null => {
+    const exName = currentPlan.exercises[activeExerciseIndex];
+    if (!exName) return null;
+
+    // 1. Check if we have a parsed workout from Google Docs that matches this exercise name and has a youtubeUrl
+    if (parsedWorkouts && parsedWorkouts.length > 0) {
+      const match = parsedWorkouts.find(w => w.name.toLowerCase() === exName.toLowerCase() || exName.toLowerCase().includes(w.name.toLowerCase()) || w.name.toLowerCase().includes(exName.toLowerCase()));
+      if (match && match.youtubeUrl) {
+        const videoId = extractYoutubeVideoId(match.youtubeUrl);
+        if (videoId) return videoId;
+      }
+    }
+
+    // 2. Check predefined exercises database for default youtubeVideoId
+    const normalizedKey = Object.keys(EXERCISES_DATABASE).find(
+      k => k.toLowerCase().includes(exName.toLowerCase()) || exName.toLowerCase().includes(k.toLowerCase())
+    );
+    if (normalizedKey) {
+      const dbEntry = EXERCISES_DATABASE[normalizedKey];
+      if (dbEntry && dbEntry.youtubeVideoId) {
+        return dbEntry.youtubeVideoId;
+      }
+    }
+
+    return null;
+  };
+
+  const activeYoutubeId = getActiveYoutubeId();
+
+  // Check if daily workout has already been completed for the selected date
+  const selectedDateStr = selectedDate || new Date().toISOString().split('T')[0];
+  const isWorkoutCompletedToday = logs && logs.some(l => l.date === selectedDateStr && l.workouts && l.workouts.length > 0);
 
   // Initialize progress state when starting workout
   const handleStartWorkout = () => {
@@ -130,9 +233,9 @@ export default function WorkoutLogger({ onAddWorkout, weightUnit }: WorkoutLogge
         <div className="space-y-8" id="workout-selector-panel">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-100 pb-6">
             <div>
-              <h2 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-3">
-                <Dumbbell className="w-7 h-7 text-indigo-600 animate-pulse" />
-                Daily Workout Routines
+              <h2 className="text-2xl font-black text-slate-900 tracking-tight flex items-start gap-3">
+                <Dumbbell className="w-7 h-7 text-indigo-600 animate-pulse shrink-0 mt-0.5" />
+                <span>Daily Workout Routines</span>
               </h2>
               <p className="text-slate-500 text-sm mt-2 font-semibold">Daily Consistency Workout Plan V4 — designed for progressive overload</p>
             </div>
@@ -145,63 +248,67 @@ export default function WorkoutLogger({ onAddWorkout, weightUnit }: WorkoutLogge
             )}
           </div>
 
-          {/* Quick interactive Day Buttons */}
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4" id="workout-days-carousel">
-            {WEEKLY_PLAN_DATA.map((plan) => (
-              <button
-                type="button"
-                key={plan.day}
-                onClick={() => setSelectedPlanDay(plan.day)}
-                className={`flex flex-col items-center justify-center p-5 rounded-2xl border transition-all cursor-pointer relative ${
-                  selectedPlanDay === plan.day
-                    ? 'bg-indigo-600 border-indigo-600 text-white shadow-md shadow-indigo-150 scale-102 font-bold'
-                    : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100/70 hover:border-slate-300'
-                }`}
-              >
-                <span className={`text-[11px] font-black uppercase tracking-widest ${selectedPlanDay === plan.day ? 'text-indigo-100' : 'text-slate-400'}`}>
-                  Routine
-                </span>
-                <span className="text-2xl font-black mt-2">Day {plan.day}</span>
-                <span className={`text-xs mt-2 font-semibold text-center line-clamp-1 max-w-[90%] ${selectedPlanDay === plan.day ? 'text-indigo-200' : 'text-slate-500'}`}>
-                  {plan.focus}
-                </span>
-              </button>
-            ))}
+          {/* Consistency Streak Hero Box - matches parent width, reasonable height, displays Streak Day & Workout focus */}
+          <div className="w-full bg-linear-to-r from-indigo-500 to-violet-600 rounded-3xl p-6 sm:p-8 text-white shadow-lg shadow-indigo-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 min-h-[150px]" id="workout-streak-box">
+            <div className="space-y-2">
+              <span className="text-[10px] font-black uppercase tracking-widest bg-white/20 text-white px-3 py-1 rounded-full border border-white/10 inline-block">
+                Consistency Calendar Streak
+              </span>
+              <h3 className="text-3xl font-black tracking-tight">
+                Day {streak}
+              </h3>
+              <p className="text-indigo-100 text-sm font-semibold">
+                Today's Focus: <span className="text-white font-black">{currentPlan.focus}</span> ({currentPlan.category} targets)
+              </p>
+            </div>
+            
+            <div className="shrink-0 bg-white/10 border border-white/15 px-4.5 py-3 rounded-2xl">
+              <span className="text-[9px] font-black text-indigo-100 uppercase tracking-widest block mb-1">Routine Schedule</span>
+              <span className="font-mono text-xs font-black text-white bg-slate-950/30 px-3.5 py-1.5 rounded-xl inline-block">
+                Cycle Day {currentPlan.day} of 7
+              </span>
+            </div>
           </div>
 
-          {/* Selected Routine Details Card */}
+          {/* Routine Actions and Targets Card */}
           <div className="bg-slate-50/70 border border-slate-200/80 rounded-2xl p-6 sm:p-8 space-y-6">
-            <div className="flex flex-col gap-5">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div>
                 <span className="text-xs uppercase font-black px-3 py-1 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-150">
                   {currentPlan.category} TARGETS
                 </span>
-                <h3 className="text-xl font-black text-slate-800 mt-3">
-                  Day {currentPlan.day}: {currentPlan.focus} Routine
+                <h3 className="text-lg font-black text-slate-800 mt-2">
+                  Start Today's Lift
                 </h3>
               </div>
 
-              {/* Start button */}
-              <button
-                type="button"
-                onClick={handleStartWorkout}
-                className="w-full flex items-center justify-center gap-2 px-8 py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-base rounded-2xl transition-all shadow-md hover:shadow-lg shadow-indigo-150 cursor-pointer active:scale-95"
-                id="start-workout-btn"
-              >
-                <PlayCircle className="w-5.5 h-5.5" />
-                Start Day {currentPlan.day} Workout
-              </button>
+              {isWorkoutCompletedToday ? (
+                <div className="flex items-center gap-2 px-5 py-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl font-black text-xs shrink-0 self-center" id="workout-already-completed-badge">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 animate-pulse" />
+                  <span>Daily Lift Completed & Saved</span>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleStartWorkout}
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-sm rounded-2xl transition-all shadow-md hover:shadow-lg shadow-indigo-150 cursor-pointer active:scale-95"
+                  id="start-workout-btn"
+                >
+                  <PlayCircle className="w-5 h-5" />
+                  Start Day {streak} Workout
+                </button>
+              )}
             </div>
 
             <div className="border-t border-slate-200/60 pt-6 space-y-4">
-              <span className="text-sm font-black text-slate-400 uppercase tracking-wider block">Today's Exercises:</span>
+              <span className="text-xs font-black text-slate-400 uppercase tracking-wider block">Exercises for this routine:</span>
               
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {currentPlan.exercises.map((exName, idx) => {
                   const dbEntry = EXERCISES_DATABASE[exName];
                   return (
-                    <div key={idx} className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-4 shadow-xs">
-                      <div className="w-10 h-10 rounded-lg bg-indigo-50 text-indigo-600 font-mono font-black text-base flex items-center justify-center">
+                    <div key={idx} className="bg-white border border-slate-200 rounded-xl p-4 flex items-start gap-4 shadow-xs">
+                      <div className="w-10 h-10 rounded-lg bg-indigo-50 text-indigo-600 font-mono font-black text-base flex items-center justify-center shrink-0">
                         {idx + 1}
                       </div>
                       <div className="flex-1 min-w-0">
@@ -270,6 +377,43 @@ export default function WorkoutLogger({ onAddWorkout, weightUnit }: WorkoutLogge
 
           {/* Core Exercise Guide with animated Visualizer */}
           <FormVisualizer exerciseName={currentPlan.exercises[activeExerciseIndex]} />
+
+          {/* YouTube Video Player (Underneath the Live Form Preview / Visualizer) */}
+          {activeYoutubeId && (
+            <div className="bg-slate-900 rounded-2xl p-4 sm:p-5 shadow-sm border border-slate-800 space-y-3" id="youtube-embed-card">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-indigo-400 font-extrabold flex items-center gap-1.5 uppercase tracking-wider">
+                  <PlayCircle className="w-4 h-4 text-indigo-500 animate-pulse" />
+                  YouTube Video Demonstration Guide
+                </span>
+                <span className="text-[10px] text-slate-400 font-bold font-mono">Video ID: {activeYoutubeId}</span>
+              </div>
+              <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-slate-950 border border-slate-800 shadow-inner">
+                <iframe
+                  className="absolute top-0 left-0 w-full h-full"
+                  src={`https://www.youtube.com/embed/${activeYoutubeId}?autoplay=0&rel=0`}
+                  title="YouTube video player"
+                  frameBorder="0"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                ></iframe>
+              </div>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-1 text-xs">
+                <span className="text-slate-400 font-medium">
+                  Having playback issues or want to watch full-screen?
+                </span>
+                <a
+                  href={`https://www.youtube.com/watch?v=${activeYoutubeId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-sm transition-colors cursor-pointer text-center"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  Watch on YouTube
+                </a>
+              </div>
+            </div>
+          )}
 
           {/* Dynamic Interactive Sets Entry */}
           <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 space-y-4">
@@ -341,8 +485,9 @@ export default function WorkoutLogger({ onAddWorkout, weightUnit }: WorkoutLogge
                             type="number"
                             min="0"
                             max="1000"
+                            step="0.1"
                             value={setProgress.weight}
-                            onChange={(e) => handleUpdateSetField(exName, setIdx, 'weight', Math.max(0, parseInt(e.target.value) || 0))}
+                            onChange={(e) => handleUpdateSetField(exName, setIdx, 'weight', Math.max(0, parseFloat(e.target.value) || 0))}
                             className="w-16 bg-white border border-slate-200 text-center py-1.5 text-xs font-bold rounded-lg focus:outline-none focus:border-indigo-500 font-mono"
                           />
                         </>

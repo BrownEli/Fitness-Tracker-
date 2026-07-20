@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { UserGoals, DailyLog, CoachingInsight, Meal, Workout } from '../types';
-import { auth, googleSignIn, logout, initAuth } from '../lib/googleAuth';
+import { auth, googleSignIn, logout, initAuth, isTokenExpired } from '../lib/googleAuth';
 import {
   fetchGoogleDocText,
   parseFoodsFromText,
   parseWorkoutsFromText,
   backupDataToDrive,
-  restoreDataFromDrive
+  restoreDataFromDrive,
+  extractFolderId
 } from '../lib/googleApi';
 import { User } from 'firebase/auth';
 
@@ -27,7 +28,8 @@ import {
   Calendar,
   Sparkles,
   Flame,
-  Dumbbell
+  Dumbbell,
+  Folder
 } from 'lucide-react';
 
 interface WorkspaceHubProps {
@@ -66,6 +68,7 @@ export default function WorkspaceHub({
   // Google Docs state
   const [foodsInput, setFoodsInput] = useState(goals.foodsDocId || '');
   const [workoutsInput, setWorkoutsInput] = useState(goals.workoutsDocId || '');
+  const [folderLinkInput, setFolderLinkInput] = useState(goals.driveFolderLink || '');
   const [isSavingDocIds, setIsSavingDocIds] = useState(false);
 
   // Loaded Google Docs contents
@@ -86,6 +89,9 @@ export default function WorkspaceHub({
   // Local Import / Export state
   const [fileError, setFileError] = useState<string | null>(null);
   const [fileSuccess, setFileSuccess] = useState<string | null>(null);
+  const [isManualSyncing, setIsManualSyncing] = useState(false);
+
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   // Initialize Auth state
   useEffect(() => {
@@ -93,14 +99,62 @@ export default function WorkspaceHub({
       (currentUser, activeToken) => {
         setUser(currentUser);
         setToken(activeToken);
+        setSessionExpired(isTokenExpired());
       },
       () => {
         setUser(null);
         setToken(null);
+        setSessionExpired(false);
       }
     );
     return () => unsubscribe();
   }, []);
+
+  // Monitor Google Access Token Expiration
+  useEffect(() => {
+    if (token) {
+      setSessionExpired(isTokenExpired());
+      const interval = setInterval(() => {
+        setSessionExpired(isTokenExpired());
+      }, 30000); // Check every 30 seconds
+      return () => clearInterval(interval);
+    } else {
+      setSessionExpired(false);
+    }
+  }, [token]);
+
+  // Synchronize inputs when parent goals change
+  useEffect(() => {
+    setFoodsInput(goals.foodsDocId || '');
+    setWorkoutsInput(goals.workoutsDocId || '');
+    setFolderLinkInput(goals.driveFolderLink || '');
+  }, [goals.foodsDocId, goals.workoutsDocId, goals.driveFolderLink]);
+
+  // Helper to ensure a fresh Google Access Token before any user-triggered operation
+  const getOrRenewToken = async (): Promise<string | null> => {
+    if (!token) return null;
+
+    if (isTokenExpired()) {
+      console.log('Google Access Token has expired. Silently/quickly renewing now...');
+      setSyncStatus('idle');
+      setSyncMessage('Renewing secure Google connection...');
+      try {
+        const result = await googleSignIn();
+        if (result) {
+          setUser(result.user);
+          setToken(result.accessToken);
+          setSessionExpired(false);
+          return result.accessToken;
+        }
+      } catch (err: any) {
+        console.error('Failed to automatically renew Google token:', err);
+        setSyncStatus('error');
+        setSyncMessage('Your secure Google session has expired. Please connect again: ' + (err.message || ''));
+        return null;
+      }
+    }
+    return token;
+  };
 
   // Handle manual Google Sign In
   const handleGoogleSignIn = async () => {
@@ -147,21 +201,24 @@ export default function WorkspaceHub({
     setIsSavingDocIds(true);
     const fId = extractDocId(foodsInput);
     const wId = extractDocId(workoutsInput);
+    const folderLink = folderLinkInput.trim();
 
     onUpdateGoals((prev) => ({
       ...prev,
       foodsDocId: fId,
-      workoutsDocId: wId
+      workoutsDocId: wId,
+      driveFolderLink: folderLink
     }));
 
     setIsSavingDocIds(false);
-    setDocSuccess('Document ID configurations updated successfully!');
+    setDocSuccess('Document and folder configuration updated successfully!');
     setTimeout(() => setDocSuccess(null), 4000);
   };
 
   // Fetch foods Google Doc
   const handleFetchFoodsDoc = async () => {
-    if (!token) {
+    const activeToken = await getOrRenewToken();
+    if (!activeToken) {
       setDocError('Please connect to Google Workspace first to read Google Docs.');
       return;
     }
@@ -175,7 +232,7 @@ export default function WorkspaceHub({
     setDocError(null);
     setDocSuccess(null);
     try {
-      const text = await fetchGoogleDocText(docId, token);
+      const text = await fetchGoogleDocText(docId, activeToken);
       setRawFoodsText(text);
       const foods = parseFoodsFromText(text);
       onUpdateParsedFoods(foods);
@@ -190,7 +247,8 @@ export default function WorkspaceHub({
 
   // Fetch workouts Google Doc
   const handleFetchWorkoutsDoc = async () => {
-    if (!token) {
+    const activeToken = await getOrRenewToken();
+    if (!activeToken) {
       setDocError('Please connect to Google Workspace first to read Google Docs.');
       return;
     }
@@ -204,7 +262,7 @@ export default function WorkspaceHub({
     setDocError(null);
     setDocSuccess(null);
     try {
-      const text = await fetchGoogleDocText(docId, token);
+      const text = await fetchGoogleDocText(docId, activeToken);
       setRawWorkoutsText(text);
       const workouts = parseWorkoutsFromText(text);
       onUpdateParsedWorkouts(workouts);
@@ -219,7 +277,8 @@ export default function WorkspaceHub({
 
   // Backup state payload to Google Drive
   const handleBackupToDrive = async () => {
-    if (!token) {
+    const activeToken = await getOrRenewToken();
+    if (!activeToken) {
       setSyncStatus('error');
       setSyncMessage('Please authenticate with Google before backing up.');
       return;
@@ -238,7 +297,8 @@ export default function WorkspaceHub({
         exportedAt: new Date().toISOString()
       };
 
-      const fileId = await backupDataToDrive(payload, token);
+      const folderId = goals.driveFolderLink ? extractFolderId(goals.driveFolderLink) : undefined;
+      const fileId = await backupDataToDrive(payload, activeToken, folderId);
       const nowStr = new Date().toLocaleString();
 
       onUpdateGoals((prev) => ({
@@ -246,8 +306,9 @@ export default function WorkspaceHub({
         lastSyncTime: nowStr
       }));
 
+      const locationMsg = goals.driveFolderLink ? 'inside your custom folder' : 'in your root folder';
       setSyncStatus('success');
-      setSyncMessage(`Backup saved to your Google Drive! File ID: ${fileId}. Last synced: ${nowStr}`);
+      setSyncMessage(`Backup saved to your Google Drive (${locationMsg})! File ID: ${fileId}. Last synced: ${nowStr}`);
     } catch (err: any) {
       console.error(err);
       setSyncStatus('error');
@@ -259,7 +320,8 @@ export default function WorkspaceHub({
 
   // Restore state payload from Google Drive
   const handleRestoreFromDrive = async () => {
-    if (!token) {
+    const activeToken = await getOrRenewToken();
+    if (!activeToken) {
       setSyncStatus('error');
       setSyncMessage('Please authenticate with Google before restoring.');
       return;
@@ -275,7 +337,8 @@ export default function WorkspaceHub({
     setSyncMessage('');
 
     try {
-      const data = await restoreDataFromDrive(token);
+      const folderId = goals.driveFolderLink ? extractFolderId(goals.driveFolderLink) : undefined;
+      const data = await restoreDataFromDrive(activeToken, folderId);
       if (data && data.goals && data.logs) {
         onUpdateGoals(data.goals);
         onUpdateLogs(data.logs);
@@ -399,7 +462,7 @@ export default function WorkspaceHub({
                 </h3>
                 <p className="text-slate-500 text-sm mt-1">Keep your muscle history synchronized and safe</p>
               </div>
-              <span className={`px-3 py-1 rounded-full text-xs font-bold font-mono uppercase ${
+              <span className={`px-3 py-1 rounded-full text-sm font-extrabold font-mono uppercase ${
                 token ? 'bg-indigo-50 text-indigo-700 border border-indigo-100' : 'bg-amber-50 text-amber-700 border border-amber-100'
               }`}>
                 {token ? 'Connected' : 'Offline'}
@@ -418,8 +481,8 @@ export default function WorkspaceHub({
                     </div>
                   )}
                   <div>
-                    <h4 className="text-base font-bold text-slate-800">{user.displayName || 'Authorized User'}</h4>
-                    <p className="text-xs text-slate-500">{user.email}</p>
+                    <h4 className="text-lg font-extrabold text-slate-800">{user.displayName || 'Authorized User'}</h4>
+                    <p className="text-sm font-semibold text-slate-500">{user.email}</p>
                   </div>
                 </div>
 
@@ -427,37 +490,124 @@ export default function WorkspaceHub({
                   <button
                     onClick={handleBackupToDrive}
                     disabled={isSyncing}
-                    className="flex items-center justify-center gap-2 px-5 py-3.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl text-sm font-bold cursor-pointer transition-all shadow-md shadow-indigo-100"
+                    className="flex items-center justify-center gap-2 px-5 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-sm font-extrabold cursor-pointer transition-all border border-slate-200 shadow-sm"
                   >
-                    {isSyncing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                    Backup to Drive
+                    {isSyncing ? <RefreshCw className="w-4 h-4 animate-spin text-slate-600" /> : <Upload className="w-4 h-4 text-slate-600" />}
+                    Only Backup Data
                   </button>
                   <button
                     onClick={handleRestoreFromDrive}
                     disabled={isSyncing}
-                    className="flex items-center justify-center gap-2 px-5 py-3.5 bg-sky-500 hover:bg-sky-600 disabled:bg-sky-400 text-white rounded-xl text-sm font-bold cursor-pointer transition-all shadow-md shadow-sky-100"
+                    className="flex items-center justify-center gap-2 px-5 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-sm font-extrabold cursor-pointer transition-all border border-slate-200 shadow-sm"
                   >
-                    {isSyncing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                    Restore from Drive
+                    {isSyncing ? <RefreshCw className="w-4 h-4 animate-spin text-slate-600" /> : <Download className="w-4 h-4 text-slate-600" />}
+                    Restore from Backup
                   </button>
                 </div>
 
                 {/* Last Sync Info */}
-                <div className="flex justify-between items-center bg-slate-50 border border-slate-200/60 p-4 rounded-xl text-xs text-slate-600 font-medium">
+                <div className="flex flex-col gap-1 bg-slate-50 border border-slate-200/60 p-4 rounded-xl text-sm text-slate-700 font-extrabold">
                   <span>Last Sync Status:</span>
-                  <span className="font-mono font-bold text-indigo-600">{goals.lastSyncTime || 'Never backed up'}</span>
+                  <span className="font-mono font-black text-indigo-600">{goals.lastSyncTime || 'Never backed up'}</span>
                 </div>
 
-                {/* Auto Sync Toggle Explanation */}
-                <div className="bg-indigo-50/50 rounded-2xl p-4 border border-indigo-100 flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
+                {/* Sync to Google Docs & Drive automatically Checkbox */}
+                <label className="flex items-start gap-3 cursor-pointer group mt-4">
+                  <input
+                    type="checkbox"
+                    checked={goals.syncDocsOnBackup || false}
+                    onChange={(e) => {
+                      onUpdateGoals((prev) => ({
+                        ...prev,
+                        syncDocsOnBackup: e.target.checked
+                      }));
+                    }}
+                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 mt-0.5 accent-indigo-600 cursor-pointer"
+                  />
                   <div>
-                    <h4 className="text-xs font-bold text-indigo-800">Automatic Weekly Sync Engaged</h4>
-                    <p className="text-xs text-indigo-600/90 mt-1 leading-relaxed">
-                      With Google connected, your data is checked and automatically backed up to Google Drive in the background every 7 days when you open the app.
+                    <span className="text-sm font-extrabold text-slate-900 group-hover:text-indigo-600 transition-colors select-none">
+                      Sync to Google Docs & Drive automatically
+                    </span>
+                    <p className="text-xs font-bold text-slate-600 mt-0.5 leading-relaxed">
+                      Enabling this option will automatically synchronize your planning items from Google Docs (Foods & Workouts) alongside your weekly auto-sync and manual Google Drive backups.
                     </p>
                   </div>
-                </div>
+                </label>
+
+                {/* Sync Drive & Docs Now Button */}
+                <button
+                  onClick={async () => {
+                    const activeToken = await getOrRenewToken();
+                    if (!activeToken) {
+                      setSyncStatus('error');
+                      setSyncMessage('Please authenticate with Google before running a manual sync.');
+                      return;
+                    }
+
+                    setIsSyncing(true);
+                    setSyncStatus('idle');
+                    setSyncMessage('');
+                    try {
+                      // 1. Backup to Google Drive
+                      const payload = {
+                        goals,
+                        logs,
+                        insights,
+                        backupVersion: '1.0',
+                        exportedAt: new Date().toISOString()
+                      };
+                      const folderId = goals.driveFolderLink ? extractFolderId(goals.driveFolderLink) : undefined;
+                      const fileId = await backupDataToDrive(payload, activeToken, folderId);
+                      const nowStr = new Date().toLocaleString();
+
+                      onUpdateGoals((prev) => ({
+                        ...prev,
+                        lastSyncTime: nowStr
+                      }));
+
+                      // 2. Fetch Google Docs if they are configured
+                      let docSyncedCount = 0;
+                      if (goals.foodsDocId) {
+                        try {
+                          const text = await fetchGoogleDocText(goals.foodsDocId, activeToken);
+                          const foods = parseFoodsFromText(text);
+                          onUpdateParsedFoods(foods);
+                          docSyncedCount++;
+                        } catch (err) {
+                          console.error('Failed manual sync of Foods Doc:', err);
+                        }
+                      }
+                      if (goals.workoutsDocId) {
+                        try {
+                          const text = await fetchGoogleDocText(goals.workoutsDocId, activeToken);
+                          const workouts = parseWorkoutsFromText(text);
+                          onUpdateParsedWorkouts(workouts);
+                          docSyncedCount++;
+                        } catch (err) {
+                          console.error('Failed manual sync of Workouts Doc:', err);
+                        }
+                      }
+
+                      setSyncStatus('success');
+                      let successMsg = `Full sync successful! Backed up to Google Drive (ID: ${fileId}).`;
+                      if (docSyncedCount > 0) {
+                        successMsg += ` Synced ${docSyncedCount} Google Doc(s).`;
+                      }
+                      setSyncMessage(successMsg);
+                    } catch (err: any) {
+                      console.error(err);
+                      setSyncStatus('error');
+                      setSyncMessage(err.message || 'Manual Sync to Google Drive and Docs failed.');
+                    } finally {
+                      setIsSyncing(false);
+                    }
+                  }}
+                  disabled={isSyncing}
+                  className="w-full flex items-center justify-center gap-2.5 px-6 py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl text-sm font-bold cursor-pointer transition-all shadow-md shadow-indigo-100"
+                >
+                  {isSyncing ? <RefreshCw className="w-4 h-4 animate-spin text-white" /> : <RefreshCw className="w-4 h-4 text-white" />}
+                  Sync Drive & Docs Now
+                </button>
               </div>
             ) : (
               <div className="space-y-6 py-6 text-center">
@@ -566,39 +716,15 @@ export default function WorkspaceHub({
 
       </div>
 
-      {/* Android Jetpack Compose companion blueprint banner */}
-      <div className="bg-slate-900 border border-slate-800 text-white rounded-3xl p-8 shadow-md flex flex-col md:flex-row items-center justify-between gap-6" id="android-blueprint-section">
-        <div className="space-y-3 max-w-2xl">
-          <div className="inline-flex items-center gap-2 bg-indigo-500/15 border border-indigo-500/30 px-3 py-1 rounded-full text-xs font-bold text-indigo-400">
-            <Sparkles className="w-3.5 h-3.5" />
-            Android Companion Blueprint Ready
-          </div>
-          <h3 className="text-xl font-black tracking-tight text-white flex items-center gap-2">
-            Jetpack Compose & MVVM Companion App
-          </h3>
-          <p className="text-sm text-slate-300 leading-relaxed">
-            Convert this web workspace into a high-performance, offline-first Android application! Includes a dynamic, date-partitioned JSON storage engine synchronizing directly with Google Drive, clean Material 3 design, and robust separation of concerns.
-          </p>
-        </div>
-        <a
-          href="/api/download-blueprint"
-          download="android_blueprint.md"
-          className="flex items-center justify-center gap-2.5 px-6 py-4 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white font-bold rounded-2xl text-sm transition-all shadow-lg shadow-indigo-500/10 shrink-0 w-full md:w-auto"
-        >
-          <Download className="w-4.5 h-4.5" />
-          Download Android Blueprint (.md)
-        </a>
-      </div>
-
-      {/* Google Docs Integration Panel */}
+      {/* Google Docs & Folder Integration Panel */}
       <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm space-y-8" id="google-docs-config-panel">
         <div className="border-b border-slate-100 pb-4">
           <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
             <FileText className="w-5 h-5 text-indigo-600" />
-            Connected Food & Workout Documents
+            Connected Workspace Documents & Folders
           </h3>
           <p className="text-slate-500 text-sm mt-1">
-            Build your tracking experience around your own Google Docs plans
+            Build your tracking experience and locate your backup storage folder
           </p>
         </div>
 
@@ -632,13 +758,30 @@ export default function WorkspaceHub({
             />
           </div>
 
-          <div className="md:col-span-2 flex justify-end">
+          <div className="md:col-span-2 space-y-2">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+              <Folder className="w-3.5 h-3.5 text-indigo-500" />
+              Google Drive Backup Folder Link / ID (Optional)
+            </label>
+            <input
+              type="text"
+              placeholder="Paste Google Drive folder link or ID (e.g., https://drive.google.com/drive/folders/...)"
+              value={folderLinkInput}
+              onChange={(e) => setFolderLinkInput(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 px-4 py-3 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800 font-medium"
+            />
+            <p className="text-[11px] text-slate-400 font-medium mt-1">
+              Provide a folder link to save and restore your <span className="font-mono text-indigo-600 font-semibold">hypertrophy_hub_backup.json</span> backup file inside that specific directory. If left empty, backups will default to your Google Drive root directory.
+            </p>
+          </div>
+
+          <div className="md:col-span-2">
             <button
               type="submit"
               disabled={isSavingDocIds}
-              className="px-6 py-3.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl text-sm font-bold cursor-pointer transition-all shadow-sm"
+              className="w-full px-6 py-3.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl text-sm font-bold cursor-pointer transition-all shadow-sm"
             >
-              Save Connected Docs
+              Save Configuration
             </button>
           </div>
         </form>

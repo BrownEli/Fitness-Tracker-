@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { DailyLog, UserGoals, CoachingInsight, Meal, Workout } from './types';
 import { INITIAL_GOALS, INITIAL_LOGS, INITIAL_INSIGHTS } from './data';
 import MealLogger from './components/MealLogger';
@@ -8,8 +8,8 @@ import CalendarView from './components/CalendarView';
 import CoachInsights from './components/CoachInsights';
 import GoalsConfig from './components/GoalsConfig';
 import WorkspaceHub from './components/WorkspaceHub';
-import { auth, initAuth, getAccessToken } from './lib/googleAuth';
-import { backupDataToDrive } from './lib/googleApi';
+import { auth, initAuth, getAccessToken, isTokenExpired, googleSignIn } from './lib/googleAuth';
+import { backupDataToDrive, extractFolderId, fetchGoogleDocText, parseFoodsFromText, parseWorkoutsFromText } from './lib/googleApi';
 
 import {
   Dumbbell,
@@ -32,6 +32,25 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
+function formatTime12Hour(timeStr: string): string {
+  if (!timeStr) return '';
+  if (timeStr.toLowerCase().includes('am') || timeStr.toLowerCase().includes('pm')) {
+    return timeStr;
+  }
+  const parts = timeStr.split(':');
+  if (parts.length >= 2) {
+    let hours = parseInt(parts[0], 10);
+    const minutes = parts[1].trim();
+    if (!isNaN(hours)) {
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      hours = hours % 12;
+      hours = hours ? hours : 12; // the hour '0' should be '12'
+      return `${hours}:${minutes} ${ampm}`;
+    }
+  }
+  return timeStr;
+}
+
 export default function App() {
   // Navigation Tabs state: Expanded to separate Nutrition, Workouts, and Workspace Hubs
   const [activeTab, setActiveTab] = useState<
@@ -44,6 +63,9 @@ export default function App() {
   // Hamburger drawer open/close state
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
+  // Track if we have already auto-synced upon opening the app
+  const hasSyncedOnOpen = useRef(false);
+
 
   // Selected date for logging, defaults to today in YYYY-MM-DD
   const [selectedDate, setSelectedDate] = useState(() => {
@@ -53,7 +75,24 @@ export default function App() {
   // Load goals from LocalStorage, fallback to Initial
   const [goals, setGoals] = useState<UserGoals>(() => {
     const saved = localStorage.getItem('hypertrophy_goals');
-    return saved ? JSON.parse(saved) : INITIAL_GOALS;
+    if (saved) {
+      try {
+        let parsed = JSON.parse(saved);
+        // Force migration to kg and cm as explicitly requested by user:
+        if (parsed.weightUnit === 'lbs') {
+          parsed.currentWeight = Math.round((parsed.currentWeight * 0.45359237) * 10) / 10;
+          parsed.targetWeight = Math.round((parsed.targetWeight * 0.45359237) * 10) / 10;
+          parsed.weightUnit = 'kg';
+        }
+        if (!parsed.currentHeight) {
+          parsed.currentHeight = 178; // Default in cm
+        }
+        return { ...INITIAL_GOALS, ...parsed };
+      } catch (e) {
+        return INITIAL_GOALS;
+      }
+    }
+    return INITIAL_GOALS;
   });
 
   // Load daily logs from LocalStorage, fallback to Initial (with auto-purge for legacy mock data)
@@ -99,12 +138,37 @@ export default function App() {
   });
 
   // Parsed documents state lifted to App level so they can be logged from Nutrition or Workouts
-  const [parsedFoods, setParsedFoods] = useState<Omit<Meal, 'id' | 'timestamp'>[]>([]);
-  const [parsedWorkouts, setParsedWorkouts] = useState<Omit<Workout, 'id'>[]>([]);
+  const [parsedFoods, setParsedFoods] = useState<Omit<Meal, 'id' | 'timestamp'>[]>(() => {
+    try {
+      const saved = localStorage.getItem('hypertrophy_parsed_foods');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [parsedWorkouts, setParsedWorkouts] = useState<Omit<Workout, 'id'>[]>(() => {
+    try {
+      const saved = localStorage.getItem('hypertrophy_parsed_workouts');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
   const [rawPlanText, setRawPlanText] = useState('');
 
-  // State to manage entering today's bodyweight
+  // Food/Meal selected logging time
+  const [mealTimeInput, setMealTimeInput] = useState(() => {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  });
+
+  // Authentication & session expiration states
+  const [googleToken, setGoogleToken] = useState<string | null>(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
+
+  // State to manage entering today's bodyweight and height
   const [weightInput, setWeightInput] = useState('');
+  const [heightInput, setHeightInput] = useState(() => (goals.currentHeight || 178).toString());
 
   // Sync to LocalStorage whenever state changes
   useEffect(() => {
@@ -119,63 +183,115 @@ export default function App() {
     localStorage.setItem('hypertrophy_insights', JSON.stringify(insights));
   }, [insights]);
 
-  // Automatic Weekly Backup to Google Drive if connected and configured
   useEffect(() => {
-    const triggerWeeklyAutoSync = async () => {
+    localStorage.setItem('hypertrophy_parsed_foods', JSON.stringify(parsedFoods));
+  }, [parsedFoods]);
+
+  useEffect(() => {
+    localStorage.setItem('hypertrophy_parsed_workouts', JSON.stringify(parsedWorkouts));
+  }, [parsedWorkouts]);
+
+  // Automatic Backup and Sync to Google Drive & connected Docs upon opening the app
+  useEffect(() => {
+    const triggerAutoSyncOnOpen = async () => {
+      if (hasSyncedOnOpen.current) return;
+
       const accessToken = getAccessToken();
       if (!accessToken) return;
 
-      const lastSync = goals.lastSyncTime;
-      let shouldSync = false;
-
-      if (!lastSync) {
-        shouldSync = true;
-      } else {
-        try {
-          const lastSyncDate = new Date(lastSync);
-          const diffTime = Math.abs(new Date().getTime() - lastSyncDate.getTime());
-          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-          if (diffDays >= 7) {
-            shouldSync = true;
-          }
-        } catch (e) {
-          shouldSync = true;
-        }
+      if (isTokenExpired()) {
+        console.log('Skipping background auto-sync on load: Google Access Token is expired.');
+        return;
       }
 
-      if (shouldSync) {
-        console.log('Initiating weekly auto backup to Google Drive...');
-        try {
-          const payload = {
-            goals,
-            logs,
-            insights,
-            backupVersion: '1.0',
-            exportedAt: new Date().toISOString()
-          };
-          await backupDataToDrive(payload, accessToken);
-          const nowStr = new Date().toLocaleString();
-          setGoals((prev) => ({
-            ...prev,
-            lastSyncTime: nowStr
-          }));
-          console.log('Weekly auto-sync successful:', nowStr);
-        } catch (err) {
-          console.error('Weekly auto-sync failed:', err);
+      hasSyncedOnOpen.current = true;
+      console.log('Initiating auto-sync on app open...');
+      try {
+        const payload = {
+          goals,
+          logs,
+          insights,
+          backupVersion: '1.0',
+          exportedAt: new Date().toISOString()
+        };
+        const folderId = goals.driveFolderLink ? extractFolderId(goals.driveFolderLink) : undefined;
+        await backupDataToDrive(payload, accessToken, folderId);
+
+        // Automatically sync connected Google Docs if preference enabled
+        if (goals.syncDocsOnBackup) {
+          console.log('Syncing connected Google Docs during auto-sync...');
+          if (goals.foodsDocId) {
+            try {
+              const text = await fetchGoogleDocText(goals.foodsDocId, accessToken);
+              const foods = parseFoodsFromText(text);
+              setParsedFoods(foods);
+            } catch (foodsErr) {
+              console.error('Failed to auto-sync foods doc:', foodsErr);
+            }
+          }
+          if (goals.workoutsDocId) {
+            try {
+              const text = await fetchGoogleDocText(goals.workoutsDocId, accessToken);
+              const workouts = parseWorkoutsFromText(text);
+              setParsedWorkouts(workouts);
+            } catch (workoutsErr) {
+              console.error('Failed to auto-sync workouts doc:', workoutsErr);
+            }
+          }
         }
+
+        const nowStr = new Date().toLocaleString();
+        setGoals((prev) => ({
+          ...prev,
+          lastSyncTime: nowStr
+        }));
+        console.log('Auto-sync on app open successful:', nowStr);
+      } catch (err) {
+        console.error('Auto-sync on app open failed:', err);
       }
     };
 
     // Listen to Google Auth status changes to trigger sync
     const unsubscribe = initAuth(
-      () => {
+      (user, activeToken) => {
+        setGoogleToken(activeToken);
+        setSessionExpired(isTokenExpired());
         // Silently wait then run auto check
-        setTimeout(triggerWeeklyAutoSync, 3000);
+        setTimeout(triggerAutoSyncOnOpen, 3000);
       },
-      () => {}
+      () => {
+        setGoogleToken(null);
+        setSessionExpired(false);
+      }
     );
     return () => unsubscribe();
-  }, [goals.lastSyncTime, logs, insights]);
+  }, [goals.foodsDocId, goals.workoutsDocId, goals.syncDocsOnBackup, goals.driveFolderLink, logs, insights]);
+
+  // Monitor Google Access Token Expiration globally
+  useEffect(() => {
+    if (googleToken) {
+      setSessionExpired(isTokenExpired());
+      const interval = setInterval(() => {
+        setSessionExpired(isTokenExpired());
+      }, 30000); // Check every 30 seconds
+      return () => clearInterval(interval);
+    } else {
+      setSessionExpired(false);
+    }
+  }, [googleToken]);
+
+  // Renew secure Google session
+  const handleRenewSession = async () => {
+    try {
+      const result = await googleSignIn();
+      if (result) {
+        setGoogleToken(result.accessToken);
+        setSessionExpired(false);
+      }
+    } catch (err) {
+      console.error('Failed to renew session from global banner:', err);
+    }
+  };
 
   // Retrieve log for currently selected date
   const currentLog = logs.find((l) => l.date === selectedDate) || {
@@ -186,14 +302,15 @@ export default function App() {
     notes: ''
   };
 
-  // Setup current bodyweight input field when log weight changes
+  // Setup current bodyweight and height inputs
   useEffect(() => {
     if (currentLog.weight) {
       setWeightInput(currentLog.weight.toString());
     } else {
       setWeightInput('');
     }
-  }, [selectedDate, currentLog.weight]);
+    setHeightInput((goals.currentHeight || 178).toString());
+  }, [selectedDate, currentLog.weight, goals.currentHeight]);
 
   // Helper to update logs safely
   const saveDailyLog = (updatedLog: DailyLog) => {
@@ -204,8 +321,9 @@ export default function App() {
   };
 
   // Add meal to selected date
-  const handleAddMeal = (newMeal: Omit<Meal, 'id' | 'timestamp'>) => {
-    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const handleAddMeal = (newMeal: Omit<Meal, 'id' | 'timestamp'> & { timestamp?: string }) => {
+    const rawTimestamp = newMeal.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const timestamp = formatTime12Hour(rawTimestamp);
     const mealWithMeta: Meal = {
       ...newMeal,
       id: `meal-${Date.now()}`,
@@ -302,24 +420,26 @@ export default function App() {
     saveDailyLog(updatedLog);
   };
 
-  // Save body weight for selected date
-  const handleSaveWeight = (e: React.FormEvent) => {
+  // Save body weight and height for selected date and goals
+  const handleSaveWeightAndHeight = (e: React.FormEvent) => {
     e.preventDefault();
     const weightNum = parseFloat(weightInput);
-    if (isNaN(weightNum)) return;
+    const heightNum = parseFloat(heightInput);
 
-    const updatedLog: DailyLog = {
-      ...currentLog,
-      weight: weightNum
-    };
+    setGoals((prev) => {
+      const updated = { ...prev };
+      if (!isNaN(weightNum)) updated.currentWeight = weightNum;
+      if (!isNaN(heightNum)) updated.currentHeight = heightNum;
+      return updated;
+    });
 
-    saveDailyLog(updatedLog);
-
-    // Also update current body weight in user goals profile
-    setGoals((prev) => ({
-      ...prev,
-      currentWeight: weightNum
-    }));
+    if (!isNaN(weightNum)) {
+      const updatedLog: DailyLog = {
+        ...currentLog,
+        weight: weightNum
+      };
+      saveDailyLog(updatedLog);
+    }
   };
 
   // Clear all tracking logs to reset data
@@ -370,8 +490,8 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans selection:bg-indigo-600 selection:text-white pb-24" id="app-root-view">
       {/* 1. Sticky Navigation Header */}
       <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-6 sm:px-8 py-4.5 flex justify-between items-center shadow-xs">
-        <div className="flex items-center gap-4.5">
-          <div className="w-12 h-12 rounded-2xl overflow-hidden shadow-md flex-shrink-0">
+        <div className="flex items-start gap-4.5">
+          <div className="w-12 h-12 rounded-2xl overflow-hidden shadow-md flex-shrink-0 mt-0.5">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" className="w-full h-full">
               <rect width="512" height="512" rx="120" fill="#0f172a"/>
               <circle cx="256" cy="256" r="140" stroke="#4f46e5" strokeWidth="24" fill="none" opacity="0.3" />
@@ -479,14 +599,18 @@ export default function App() {
               <div className="p-6 border-t border-slate-100 bg-slate-50/50 space-y-4">
                 <div className="space-y-2">
                   <span className="text-[9px] text-slate-400 uppercase tracking-widest font-black block">Fitness Targets</span>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="bg-white border border-slate-200/60 p-2.5 rounded-xl text-center">
-                      <span className="text-[8px] text-slate-400 font-bold block">Weight Goal</span>
-                      <span className="text-xs font-black text-indigo-600 font-mono">{goals.targetWeight} {goals.weightUnit}</span>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <div className="bg-white border border-slate-200/60 p-2 rounded-xl text-center">
+                      <span className="text-[8px] text-slate-400 font-bold block leading-tight">Weight Goal</span>
+                      <span className="text-[11px] font-black text-indigo-600 font-mono mt-0.5 block">{goals.targetWeight}{goals.weightUnit}</span>
                     </div>
-                    <div className="bg-white border border-slate-200/60 p-2.5 rounded-xl text-center">
-                      <span className="text-[8px] text-slate-400 font-bold block">Protein Goal</span>
-                      <span className="text-xs font-black text-emerald-600 font-mono">{goals.dailyProteinTarget}g</span>
+                    <div className="bg-white border border-slate-200/60 p-2 rounded-xl text-center">
+                      <span className="text-[8px] text-slate-400 font-bold block leading-tight">Height</span>
+                      <span className="text-[11px] font-black text-violet-600 font-mono mt-0.5 block">{goals.currentHeight || 178}cm</span>
+                    </div>
+                    <div className="bg-white border border-slate-200/60 p-2 rounded-xl text-center">
+                      <span className="text-[8px] text-slate-400 font-bold block leading-tight">Protein Goal</span>
+                      <span className="text-[11px] font-black text-emerald-600 font-mono mt-0.5 block">{goals.dailyProteinTarget}g</span>
                     </div>
                   </div>
                 </div>
@@ -504,6 +628,106 @@ export default function App() {
       {/* Main Spacious Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
         
+        {/* Global Google Session Expiration Warning */}
+        {sessionExpired && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-900 px-6 py-5 rounded-3xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shadow-sm animate-fade-in" id="global-session-expired-banner">
+            <div>
+              <h4 className="text-base font-black flex items-center gap-2 text-amber-800">
+                <span className="inline-flex items-center justify-center w-2.5 h-2.5 rounded-full bg-amber-500 animate-ping" />
+                Google Session Expired
+              </h4>
+              <p className="text-xs text-amber-700 font-semibold mt-1 max-w-2xl leading-relaxed">
+                Your secure Google Workspace access session has expired. Click renew to keep syncing your foods list and workout plans seamlessly from Google Docs.
+              </p>
+            </div>
+            <button
+              onClick={handleRenewSession}
+              type="button"
+              className="w-full sm:w-auto px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-black rounded-xl transition-all shadow-md hover:shadow-lg active:scale-95 cursor-pointer shrink-0 text-center"
+            >
+              Renew Session Now
+            </button>
+          </div>
+        )}
+        
+        {/* Unified Active Day context, Date Picker & Today's Body Metrics (Visible only in Log Area) */}
+        {(activeTab === 'nutrition' || activeTab === 'workouts') && (
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs flex flex-col md:flex-row justify-between gap-6" id="global-metrics-bar">
+            {/* Left: Active Day selection */}
+            <div className="flex items-start gap-4">
+              <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl shrink-0">
+                <Calendar className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <span className="text-[10px] text-slate-400 uppercase tracking-widest font-black block">Active Logging Day</span>
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  className="text-lg font-black text-slate-900 bg-transparent border-b-2 border-dashed border-indigo-200 hover:border-indigo-400 focus:border-indigo-500 focus:outline-none focus:ring-0 pb-1 cursor-pointer font-mono transition-colors"
+                  id="global-date-selector"
+                />
+                <p className="text-[11px] text-slate-500 font-medium">Changing the date will update logs and graphs below.</p>
+              </div>
+            </div>
+
+            {/* Right: Weight & Height Quick-Form */}
+            <form onSubmit={handleSaveWeightAndHeight} className="flex flex-col gap-4 w-full md:w-80">
+              <div className="border-b border-slate-100 pb-2">
+                <span className="text-[10px] text-slate-400 uppercase tracking-widest font-black block">Log Metrics today</span>
+              </div>
+              {/* Weight Line */}
+              <div className="flex flex-col gap-1.5 w-full">
+                <label className="text-xs text-slate-600 font-bold flex items-center gap-1.5">
+                  <Weight className="w-4 h-4 text-indigo-500" />
+                  <span>Body Weight</span>
+                </label>
+                <div className="relative w-full flex items-center">
+                  <input
+                    type="number"
+                    step="0.1"
+                    placeholder={goals.currentWeight.toString()}
+                    value={weightInput}
+                    onChange={(e) => setWeightInput(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 py-2.5 px-4 pr-14 text-sm font-bold text-slate-800 rounded-xl focus:outline-none focus:border-indigo-500 focus:bg-white font-mono"
+                    id="global-weight-input"
+                  />
+                  <span className="absolute right-4 text-xs text-slate-400 font-mono font-black uppercase">{goals.weightUnit}</span>
+                </div>
+              </div>
+
+              {/* Height Line */}
+              <div className="flex flex-col gap-1.5 w-full">
+                <label className="text-xs text-slate-600 font-bold flex items-center gap-1.5">
+                  <span className="text-sm">📏</span>
+                  <span>Current Height</span>
+                </label>
+                <div className="relative w-full flex items-center">
+                  <input
+                    type="number"
+                    step="1"
+                    placeholder={(goals.currentHeight || 178).toString()}
+                    value={heightInput}
+                    onChange={(e) => setHeightInput(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 py-2.5 px-4 pr-14 text-sm font-bold text-slate-800 rounded-xl focus:outline-none focus:border-indigo-500 focus:bg-white font-mono"
+                    id="global-height-input"
+                  />
+                  <span className="absolute right-4 text-xs text-slate-400 font-mono font-black uppercase font-bold">cm</span>
+                </div>
+              </div>
+
+              {/* Save Button Underneath */}
+              <button
+                type="submit"
+                className="w-full py-2.5 text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-95 shadow-sm shadow-indigo-150"
+                id="global-save-metrics-btn"
+              >
+                <span>Save Today's Metrics</span>
+              </button>
+            </form>
+          </div>
+        )}
+
         {/* Tab Router Switch */}
         <div className="transition-all duration-300">
           
@@ -514,7 +738,11 @@ export default function App() {
                 
                 {/* Left/Main Form and Preset Guide Grid */}
                 <div className="xl:col-span-8">
-                  <MealLogger onAddMeal={handleAddMeal} />
+                  <MealLogger
+                    onAddMeal={handleAddMeal}
+                    timestamp={mealTimeInput}
+                    setTimestamp={setMealTimeInput}
+                  />
                 </div>
 
                 {/* Right Panel: Daily Logs History List */}
@@ -580,7 +808,7 @@ export default function App() {
                     {parsedFoods.map((meal, idx) => (
                       <button
                         key={`doc-meal-${idx}`}
-                        onClick={() => handleAddMeal(meal)}
+                        onClick={() => handleAddMeal({ ...meal, timestamp: mealTimeInput })}
                         className="p-3.5 bg-slate-50 hover:bg-emerald-55/20 border border-slate-200 hover:border-emerald-500/20 rounded-2xl transition-all cursor-pointer flex justify-between items-center text-left"
                       >
                         <div>
@@ -605,7 +833,7 @@ export default function App() {
                 
                 {/* Workout Guide and Player Panel */}
                 <div className="xl:col-span-8">
-                  <WorkoutLogger onAddWorkout={handleAddWorkout} weightUnit={goals.weightUnit} />
+                  <WorkoutLogger onAddWorkout={handleAddWorkout} weightUnit={goals.weightUnit} selectedDate={selectedDate} logs={logs} parsedWorkouts={parsedWorkouts} />
                 </div>
 
                 {/* Workout Logs List panel */}
@@ -705,46 +933,6 @@ export default function App() {
           {/* TAB 3: ANALYTICS & RECORDS */}
           {activeTab === 'analytics' && (
             <div className="space-y-6" id="analytics-master-panel">
-              
-              {/* Active Log Context & Bodyweight Tracker */}
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 shadow-xs">
-                <div className="flex items-center gap-3">
-                  <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl">
-                    <Calendar className="w-5.5 h-5.5" />
-                  </div>
-                  <div>
-                    <p className="text-[9px] text-slate-400 uppercase tracking-widest font-black">Active Logging Day</p>
-                    <h2 className="text-base font-black text-slate-900 mt-0.5">{getFriendlyDateLabel()}</h2>
-                  </div>
-                </div>
-
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full md:w-auto border-t md:border-t-0 pt-3 md:pt-0">
-                  {/* Quick Weight Tracker */}
-                  <form onSubmit={handleSaveWeight} className="flex gap-2.5 items-center justify-between sm:justify-start w-full">
-                    <span className="text-xs text-slate-500 font-bold whitespace-nowrap flex items-center gap-1.5">
-                      <Weight className="w-4 h-4 text-indigo-500" />
-                      Bodyweight today:
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        step="0.1"
-                        placeholder={goals.currentWeight.toString()}
-                        value={weightInput}
-                        onChange={(e) => setWeightInput(e.target.value)}
-                        className="w-20 bg-slate-50 border border-slate-200 text-center py-2 text-xs font-bold text-slate-800 rounded-xl focus:outline-none focus:border-indigo-500/50 focus:bg-white font-mono"
-                      />
-                      <span className="text-xs text-slate-400 font-mono font-bold uppercase">{goals.weightUnit}</span>
-                      <button
-                        type="submit"
-                        className="px-3.5 py-2 text-xs font-bold bg-indigo-50 text-indigo-600 hover:bg-indigo-100/90 rounded-xl cursor-pointer transition-all border border-indigo-100"
-                      >
-                        Save
-                      </button>
-                    </div>
-                  </form>
-                </div>
-              </div>
 
               {/* Global Budgets Overview Widgets */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4" id="budgets-overview-bar">
@@ -833,8 +1021,8 @@ export default function App() {
               <div className="transition-all duration-200">
                 
                 {analyticsSubTab === 'graphs' && (
-                  <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-xs">
-                    <div className="mb-6">
+                  <div className="space-y-6">
+                    <div className="mb-4">
                       <h3 className="text-base font-black text-slate-900">Performance Over Time</h3>
                       <p className="text-slate-400 text-xs mt-1">Review protein, calories, lean muscle metrics, and weight gains</p>
                     </div>
@@ -843,8 +1031,8 @@ export default function App() {
                 )}
 
                 {analyticsSubTab === 'calendar' && (
-                  <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-xs">
-                    <div className="mb-6">
+                  <div className="space-y-6">
+                    <div className="mb-4">
                       <h3 className="text-base font-black text-slate-900">Consistency Calendar Records</h3>
                       <p className="text-slate-400 text-xs mt-1">Tap any date to log foods or exercises for that past day</p>
                     </div>
@@ -861,8 +1049,8 @@ export default function App() {
                 )}
 
                 {analyticsSubTab === 'coach' && (
-                  <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-xs">
-                    <div className="mb-6">
+                  <div className="space-y-6">
+                    <div className="mb-4">
                       <h3 className="text-base font-black text-slate-900">AI Coach Advice Insights</h3>
                       <p className="text-slate-400 text-xs mt-1">Generates hypertrophy and caloric timing summaries from your daily metrics</p>
                     </div>
@@ -879,14 +1067,14 @@ export default function App() {
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                     
                     {/* Goal Configuration settings */}
-                    <div className="lg:col-span-6 bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-xs">
-                      <div className="mb-6">
+                    <div className="lg:col-span-6 space-y-6">
+                      <div className="mb-4">
                         <h3 className="text-base font-black text-slate-900">Anabolic Target Settings</h3>
                         <p className="text-slate-400 text-xs mt-1">Change your targets, daily protein thresholds, and weight units</p>
                       </div>
                       <GoalsConfig goals={goals} onUpdateGoals={setGoals} />
                       
-                      <div className="border-t border-slate-100 pt-6 mt-6">
+                      <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
                         <h4 className="text-xs font-black text-rose-500 uppercase tracking-widest mb-2.5">Data Reset Center</h4>
                         <button
                           onClick={handleResetData}
@@ -926,29 +1114,27 @@ export default function App() {
           {/* TAB 4: GOOGLE WORKSPACE SYNC */}
           {activeTab === 'workspace' && (
             <div className="space-y-6 animate-fade-in" id="workspace-view-panel">
-              <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-xs">
-                <div className="mb-6 pb-4 border-b border-slate-100">
-                  <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
-                    <Cloud className="w-5 h-5 text-indigo-500" />
-                    Google Docs & Drive Sync Hub
-                  </h3>
-                  <p className="text-slate-400 text-xs mt-1">Configure target document IDs, back up application data, and fetch custom meal or exercise plans directly from Google Docs.</p>
-                </div>
-                <WorkspaceHub
-                  goals={goals}
-                  logs={logs}
-                  insights={insights}
-                  onUpdateGoals={setGoals}
-                  onUpdateLogs={setLogs}
-                  onUpdateInsights={setInsights}
-                  onLogMeal={handleAddMeal}
-                  onLogWorkout={handleAddWorkout}
-                  parsedFoods={parsedFoods}
-                  parsedWorkouts={parsedWorkouts}
-                  onUpdateParsedFoods={setParsedFoods}
-                  onUpdateParsedWorkouts={setParsedWorkouts}
-                />
+              <div className="mb-4">
+                <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+                  <Cloud className="w-5 h-5 text-indigo-500" />
+                  Google Docs & Drive Sync Hub
+                </h3>
+                <p className="text-slate-400 text-xs mt-1">Configure target document IDs, back up application data, and fetch custom meal or exercise plans directly from Google Docs.</p>
               </div>
+              <WorkspaceHub
+                goals={goals}
+                logs={logs}
+                insights={insights}
+                onUpdateGoals={setGoals}
+                onUpdateLogs={setLogs}
+                onUpdateInsights={setInsights}
+                onLogMeal={handleAddMeal}
+                onLogWorkout={handleAddWorkout}
+                parsedFoods={parsedFoods}
+                parsedWorkouts={parsedWorkouts}
+                onUpdateParsedFoods={setParsedFoods}
+                onUpdateParsedWorkouts={setParsedWorkouts}
+              />
             </div>
           )}
 

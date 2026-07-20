@@ -3,10 +3,22 @@
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  
+  /* Scale font size scale up globally for a highly readable display */
+  --text-xs: 0.85rem;      /* From 0.75rem to 0.85rem (approx 13.5px) */
+  --text-sm: 0.95rem;      /* From 0.875rem to 0.95rem (approx 15.2px) */
+  --text-base: 1.05rem;    /* From 1.0rem to 1.05rem (approx 16.8px) */
+  --text-lg: 1.25rem;      /* From 1.125rem to 1.25rem (approx 20px) */
+  --text-xl: 1.45rem;      /* From 1.25rem to 1.45rem (approx 23px) */
+  --text-2xl: 1.75rem;     /* From 1.5rem to 1.75rem (approx 28px) */
+  --text-3xl: 2.25rem;     /* From 1.875rem to 2.25rem (approx 36px) */
+  --text-4xl: 2.75rem;     /* From 2.25rem to 2.75rem (approx 44px) */
 }
 
 body {
   background-color: #F8FAFC;
-  color: #1e293b;
+  color: #0f172a; /* Deeper slate for high-contrast readability */
   font-family: var(--font-sans);
+  font-size: 1.05rem; /* Larger base font size */
+  line-height: 1.625;
 }

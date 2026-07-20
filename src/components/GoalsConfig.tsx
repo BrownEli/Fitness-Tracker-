@@ -11,10 +11,22 @@ export default function GoalsConfig({ goals, onUpdateGoals }: GoalsConfigProps) 
   const [currentWeight, setCurrentWeight] = useState(goals.currentWeight.toString());
   const [targetWeight, setTargetWeight] = useState(goals.targetWeight.toString());
   const [weightUnit, setWeightUnit] = useState<UserGoals['weightUnit']>(goals.weightUnit);
+  const [currentHeight, setCurrentHeight] = useState((goals.currentHeight || 178).toString());
   const [protein, setProtein] = useState(goals.dailyProteinTarget.toString());
   const [calories, setCalories] = useState(goals.dailyCalorieTarget.toString());
   const [workoutDays, setWorkoutDays] = useState(goals.weeklyWorkoutDaysTarget.toString());
   const [saved, setSaved] = useState(false);
+
+  // Synchronize local state with props when goals change
+  React.useEffect(() => {
+    setCurrentWeight(goals.currentWeight.toString());
+    setTargetWeight(goals.targetWeight.toString());
+    setWeightUnit(goals.weightUnit);
+    setCurrentHeight((goals.currentHeight || 178).toString());
+    setProtein(goals.dailyProteinTarget.toString());
+    setCalories(goals.dailyCalorieTarget.toString());
+    setWorkoutDays(goals.weeklyWorkoutDaysTarget.toString());
+  }, [goals]);
 
   // Auto-calculate optimized target protein based on hypertrophy standards: 1.0g per lb of bodyweight
   const handleAutoOptimize = () => {
@@ -36,9 +48,11 @@ export default function GoalsConfig({ goals, onUpdateGoals }: GoalsConfigProps) 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onUpdateGoals({
-      currentWeight: parseFloat(currentWeight) || 160,
-      targetWeight: parseFloat(targetWeight) || 170,
+      ...goals,
+      currentWeight: parseFloat(currentWeight) || 75,
+      targetWeight: parseFloat(targetWeight) || 80,
       weightUnit,
+      currentHeight: parseFloat(currentHeight) || 178,
       dailyProteinTarget: parseFloat(protein) || 150,
       dailyCalorieTarget: parseInt(calories) || 2500,
       weeklyWorkoutDaysTarget: parseInt(workoutDays) || 5
@@ -72,7 +86,7 @@ export default function GoalsConfig({ goals, onUpdateGoals }: GoalsConfigProps) 
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-5" id="goals-form">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Weight Unit */}
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1.5">Weight Unit</label>
@@ -131,6 +145,22 @@ export default function GoalsConfig({ goals, onUpdateGoals }: GoalsConfigProps) 
                 className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl px-3.5 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none transition-all"
               />
               <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">{weightUnit}</span>
+            </div>
+          </div>
+
+          {/* Current Height */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 mb-1.5">Current Height</label>
+            <div className="relative">
+              <input
+                type="number"
+                step="1"
+                required
+                value={currentHeight}
+                onChange={(e) => setCurrentHeight(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl px-3.5 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none transition-all"
+              />
+              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">cm</span>
             </div>
           </div>
         </div>

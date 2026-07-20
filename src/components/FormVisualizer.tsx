@@ -11,6 +11,7 @@ export interface ExerciseDetails {
   volume: string;
   intensity: string;
   description: string;
+  youtubeVideoId?: string;
 }
 
 export const EXERCISES_DATABASE: Record<string, ExerciseDetails> = {
@@ -19,56 +20,64 @@ export const EXERCISES_DATABASE: Record<string, ExerciseDetails> = {
     target: 'Core / Stomach',
     volume: '3 sets of 20 repetitions',
     intensity: 'Moderate, controlled pace',
-    description: 'Lie flat on your back on the workout bench with your feet planted firmly on the ground or hooked into the foot pads. Place your hands gently behind your head or crossed over your chest. Contract your abdominal muscles to lift your shoulders and upper torso off the bench. Focus on squeezing your stomach at the top, then slowly lower yourself back down. Do not pull on your neck.'
+    description: 'Lie flat on your back on the workout bench with your feet planted firmly on the ground or hooked into the foot pads. Place your hands gently behind your head or crossed over your chest. Contract your abdominal muscles to lift your shoulders and upper torso off the bench. Focus on squeezing your stomach at the top, then slowly lower yourself back down. Do not pull on your neck.',
+    youtubeVideoId: 'MKs7Gv_9Ghc'
   },
   'Dumbbell Flat Bench Press': {
     name: 'Dumbbell Flat Bench Press',
     target: 'Chest & Arms',
     volume: '3 sets of 20 repetitions',
     intensity: 'Comfortable weight',
-    description: 'Lie flat on the bench holding a dumbbell in each hand at chest level, palms facing forward. Press the weights straight up toward the ceiling until your arms are fully extended but not locked. Slowly lower the weights back down to chest level, keeping your elbows at a 45-degree angle to your body.'
+    description: 'Lie flat on the bench holding a dumbbell in each hand at chest level, palms facing forward. Press the weights straight up toward the ceiling until your arms are fully extended but not locked. Slowly lower the weights back down to chest level, keeping your elbows at a 45-degree angle to your body.',
+    youtubeVideoId: 'VmB1G1K7v94'
   },
   'Flat Bench Leg Raises': {
     name: 'Flat Bench Leg Raises',
     target: 'Lower Abs',
     volume: '3 sets of 8-10 repetitions',
     intensity: 'Slow, steady speed',
-    description: 'Lie flat on your back on the bench, gripping the top of the bench behind your head for stability. Keeping your legs straight (or slightly bent if it strains your back), slowly lift them up until they are perpendicular to the floor. Lower them back down slowly until they are just above the bench level.'
+    description: 'Lie flat on your back on the bench, gripping the top of the bench behind your head for stability. Keeping your legs straight (or slightly bent if it strains your back), slowly lift them up until they are perpendicular to the floor. Lower them back down slowly until they are just above the bench level.',
+    youtubeVideoId: '2o1bwZT5nE0'
   },
   'Seated Dumbbell Shoulder Press': {
     name: 'Seated Dumbbell Shoulder Press',
     target: 'Shoulders',
     volume: '3 sets of 10 repetitions',
     intensity: 'Controlled overhead press',
-    description: 'Adjust your bench to an upright seated position. Sit with your back firmly against the pad. Bring the dumbbells up to shoulder height, palms facing away from you. Press the weights straight up overhead until your arms are extended, then slowly lower them back to your shoulders.'
+    description: 'Adjust your bench to an upright seated position. Sit with your back firmly against the pad. Bring the dumbbells up to shoulder height, palms facing away from you. Press the weights straight up overhead until your arms are extended, then slowly lower them back to your shoulders.',
+    youtubeVideoId: 'qEwKCR5JCog'
   },
   'Bicep Curls': {
     name: 'Bicep Curls',
     target: 'Arms (Biceps)',
     volume: '3 sets of 12 repetitions',
     intensity: 'Controlled, strict form',
-    description: 'Stand with dumbbells in hands, elbows pinned to your sides. Squeeze biceps to curl dumbbells to shoulder height. Slow, 2-second eccentric lower. No body swinging.'
+    description: 'Stand with dumbbells in hands, elbows pinned to your sides. Squeeze biceps to curl dumbbells to shoulder height. Slow, 2-second eccentric lower. No body swinging.',
+    youtubeVideoId: 'ykJgrb560_Y'
   },
   'Dumbbell Rows': {
     name: 'Dumbbell Rows',
     target: 'Core & Back (Lats)',
     volume: '3 sets of 12 repetitions',
     intensity: 'Moderate weight with hold',
-    description: 'Place one knee and one hand on your workout bench for stability. With other hand, pull the dumbbell up to your hip pocket. Squeeze your mid-back at the top, then extend arm fully down.'
+    description: 'Place one knee and one hand on your workout bench for stability. With other hand, pull the dumbbell up to your hip pocket. Squeeze your mid-back at the top, then extend arm fully down.',
+    youtubeVideoId: 'dFzUjzfih7k'
   },
   'Bodyweight Bench Squats': {
     name: 'Bodyweight Bench Squats',
     target: 'Legs (Quads & Glutes)',
     volume: '3 sets of 15 repetitions',
     intensity: 'Fluid, explosive stand',
-    description: 'Stand with feet shoulder-width apart in front of the bench. Lower your hips back and down until your glutes lightly tap the bench pad. Instantly drive through your heels to return to standing.'
+    description: 'Stand with feet shoulder-width apart in front of the bench. Lower your hips back and down until your glutes lightly tap the bench pad. Instantly drive through your heels to return to standing.',
+    youtubeVideoId: 'aclHkVaku9U'
   },
   'Light Stretching': {
     name: 'Light Stretching',
     target: 'Active Recovery',
     volume: '10-15 minutes total',
     intensity: 'Relaxed, deep breathing',
-    description: 'Perform light dynamic and static stretches. Reach for your toes, stretch your shoulders, chest, and hip flexors. Hold stretch positions without pain, breathing deeply.'
+    description: 'Perform light dynamic and static stretches. Reach for your toes, stretch your shoulders, chest, and hip flexors. Hold stretch positions without pain, breathing deeply.',
+    youtubeVideoId: 'g_tea8ZNk5A'
   }
 };
 
@@ -89,7 +98,7 @@ export default function FormVisualizer({ exerciseName }: FormVisualizerProps) {
             <style>{`
               @keyframes crunchAnim {
                 0%, 100% { transform: rotate(0deg); }
-                50% { transform: rotate(-22deg); }
+                50% { transform: rotate(22deg); }
               }
               .torso {
                 animation: crunchAnim 2.8s ease-in-out infinite;
@@ -201,11 +210,12 @@ export default function FormVisualizer({ exerciseName }: FormVisualizerProps) {
           <svg viewBox="0 0 240 160" className="w-full h-full text-indigo-600" fill="none" xmlns="http://www.w3.org/2000/svg">
             <style>{`
               @keyframes shoulderPressAnim {
-                0%, 100% { transform: translateY(15px); }
-                50% { transform: translateY(-20px); }
+                0%, 100% { transform: scaleY(0.7) translateY(12px); }
+                50% { transform: scaleY(1.3) translateY(-10px); }
               }
               .dumbbells {
                 animation: shoulderPressAnim 2.4s ease-in-out infinite;
+                transform-origin: 128px 52px;
               }
             `}</style>
             {/* Floor and Bench */}
@@ -218,6 +228,8 @@ export default function FormVisualizer({ exerciseName }: FormVisualizerProps) {
             {/* Seated Figure */}
             <circle cx="128" cy="42" r="8" fill="#4f46e5" />
             <line x1="128" y1="50" x2="128" y2="100" stroke="#4f46e5" strokeWidth="8" strokeLinecap="round" />
+            {/* Shoulders */}
+            <line x1="110" y1="52" x2="146" y2="52" stroke="#4f46e5" strokeWidth="6" strokeLinecap="round" />
             {/* Thighs */}
             <line x1="128" y1="100" x2="160" y2="100" stroke="#94a3b8" strokeWidth="6" strokeLinecap="round" />
             {/* Shins */}
@@ -225,17 +237,17 @@ export default function FormVisualizer({ exerciseName }: FormVisualizerProps) {
 
             {/* Dumbbells pressing up */}
             <g className="dumbbells">
-              {/* Left hand/DB */}
-              <line x1="105" y1="65" x2="105" y2="40" stroke="#818cf8" strokeWidth="4" strokeLinecap="round" />
-              <line x1="95" y1="40" x2="115" y2="40" stroke="#1e293b" strokeWidth="3" />
-              <circle cx="95" cy="40" r="5" fill="#1e293b" />
-              <circle cx="115" cy="40" r="5" fill="#1e293b" />
+              {/* Left arm: shoulder to elbow to hand */}
+              <path d="M 110 52 L 100 70 L 100 35" stroke="#818cf8" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+              <line x1="90" y1="35" x2="110" y2="35" stroke="#1e293b" strokeWidth="3" />
+              <circle cx="90" cy="35" r="5" fill="#1e293b" />
+              <circle cx="110" cy="35" r="5" fill="#1e293b" />
 
-              {/* Right hand/DB */}
-              <line x1="151" y1="65" x2="151" y2="40" stroke="#818cf8" strokeWidth="4" strokeLinecap="round" />
-              <line x1="141" y1="40" x2="161" y2="40" stroke="#1e293b" strokeWidth="3" />
-              <circle cx="141" cy="40" r="5" fill="#1e293b" />
-              <circle cx="161" cy="40" r="5" fill="#1e293b" />
+              {/* Right arm: shoulder to elbow to hand */}
+              <path d="M 146 52 L 156 70 L 156 35" stroke="#818cf8" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+              <line x1="146" y1="35" x2="166" y2="35" stroke="#1e293b" strokeWidth="3" />
+              <circle cx="146" cy="35" r="5" fill="#1e293b" />
+              <circle cx="166" cy="35" r="5" fill="#1e293b" />
             </g>
             {/* Target indicator */}
             <circle cx="128" cy="62" r="14" fill="#f43f5e" fillOpacity="0.1" stroke="#f43f5e" strokeWidth="1" strokeDasharray="2 2" />
@@ -287,11 +299,12 @@ export default function FormVisualizer({ exerciseName }: FormVisualizerProps) {
           <svg viewBox="0 0 240 160" className="w-full h-full text-indigo-600" fill="none" xmlns="http://www.w3.org/2000/svg">
             <style>{`
               @keyframes rowAnim {
-                0%, 100% { transform: translateY(22px); }
-                50% { transform: translateY(-5px); }
+                0%, 100% { transform: rotate(0deg); }
+                50% { transform: rotate(-40deg); }
               }
               .rowWeight {
                 animation: rowAnim 2.3s ease-in-out infinite;
+                transform-origin: 110px 65px;
               }
             `}</style>
             {/* Floor and Bench */}
@@ -330,12 +343,12 @@ export default function FormVisualizer({ exerciseName }: FormVisualizerProps) {
           <svg viewBox="0 0 240 160" className="w-full h-full text-indigo-600" fill="none" xmlns="http://www.w3.org/2000/svg">
             <style>{`
               @keyframes squatAnim {
-                0%, 100% { transform: translateY(0); }
-                50% { transform: translateY(22px); }
+                0%, 100% { transform: scaleY(1); }
+                50% { transform: scaleY(0.72); }
               }
               .squattingFigure {
                 animation: squatAnim 2.6s ease-in-out infinite;
-                transform-origin: bottom;
+                transform-origin: 125px 130px;
               }
             `}</style>
             {/* Floor and Bench */}
@@ -346,16 +359,17 @@ export default function FormVisualizer({ exerciseName }: FormVisualizerProps) {
 
             {/* Squatting Figure */}
             <g className="squattingFigure">
-              {/* Torso/Head */}
+              {/* Head */}
               <circle cx="125" cy="50" r="8" fill="#4f46e5" />
+              {/* Torso */}
               <line x1="125" y1="58" x2="125" y2="95" stroke="#4f46e5" strokeWidth="8" strokeLinecap="round" />
               {/* Thighs */}
-              <line x1="125" y1="95" x2="125" y2="115" stroke="#818cf8" strokeWidth="6" strokeLinecap="round" />
+              <line x1="125" y1="95" x2="145" y2="105" stroke="#818cf8" strokeWidth="6" strokeLinecap="round" />
+              {/* Shins / Calf to floor */}
+              <line x1="145" y1="105" x2="125" y2="130" stroke="#94a3b8" strokeWidth="6" strokeLinecap="round" />
               {/* Hands extended for balance */}
               <line x1="125" y1="70" x2="150" y2="70" stroke="#818cf8" strokeWidth="4" strokeLinecap="round" />
             </g>
-            {/* Feet firmly on floor */}
-            <line x1="125" y1="115" x2="125" y2="130" stroke="#94a3b8" strokeWidth="6" strokeLinecap="round" />
             {/* Target indicator */}
             <circle cx="125" cy="110" r="14" fill="#6366f1" fillOpacity="0.1" stroke="#6366f1" strokeWidth="1" strokeDasharray="2 2" />
             <text x="125" y="113" fill="#6366f1" fontSize="7" fontWeight="bold" textAnchor="middle">LEGS</text>
