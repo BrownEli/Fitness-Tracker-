@@ -9,7 +9,7 @@ import CoachInsights from './components/CoachInsights';
 import GoalsConfig from './components/GoalsConfig';
 import WorkspaceHub from './components/WorkspaceHub';
 import { auth, initAuth, getAccessToken, isTokenExpired, googleSignIn } from './lib/googleAuth';
-import { backupDataToDrive, extractFolderId, fetchGoogleDocText, parseFoodsFromText, parseWorkoutsFromText } from './lib/googleApi';
+import { backupDataToDrive, extractFolderId, fetchGoogleDocText, parseFoodsFromText, parseWorkoutsFromText, restoreDataFromDrive } from './lib/googleApi';
 
 import {
   Dumbbell,
@@ -207,47 +207,74 @@ export default function App() {
       hasSyncedOnOpen.current = true;
       console.log('Initiating auto-sync on app open...');
       try {
-        const payload = {
-          goals,
-          logs,
-          insights,
-          backupVersion: '1.0',
-          exportedAt: new Date().toISOString()
-        };
         const folderId = goals.driveFolderLink ? extractFolderId(goals.driveFolderLink) : undefined;
-        await backupDataToDrive(payload, accessToken, folderId);
+        
+        // Try to restore first
+        const restored = await restoreDataFromDrive(accessToken, folderId);
+        
+        if (restored) {
+          console.log('Found existing backup on Google Drive, restoring data...', restored);
+          if (restored.goals) setGoals(restored.goals);
+          if (restored.logs) setLogs(restored.logs);
+          if (restored.insights) setInsights(restored.insights);
+          if (restored.parsedFoods) setParsedFoods(restored.parsedFoods);
+          if (restored.parsedWorkouts) setParsedWorkouts(restored.parsedWorkouts);
 
-        // Automatically sync connected Google Docs if preference enabled
-        if (goals.syncDocsOnBackup) {
-          console.log('Syncing connected Google Docs during auto-sync...');
-          if (goals.foodsDocId) {
-            try {
-              const text = await fetchGoogleDocText(goals.foodsDocId, accessToken);
-              const foods = parseFoodsFromText(text);
-              setParsedFoods(foods);
-            } catch (foodsErr) {
-              console.error('Failed to auto-sync foods doc:', foodsErr);
+          const nowStr = new Date().toLocaleString();
+          setGoals((prev) => ({
+            ...prev,
+            ...restored.goals,
+            lastSyncTime: nowStr
+          }));
+
+          // Automatically sync connected Google Docs if preference enabled in restored goals
+          const activeGoals = restored.goals || goals;
+          if (activeGoals.syncDocsOnBackup) {
+            console.log('Syncing connected Google Docs during auto-sync...');
+            if (activeGoals.foodsDocId) {
+              try {
+                const text = await fetchGoogleDocText(activeGoals.foodsDocId, accessToken);
+                const foods = parseFoodsFromText(text);
+                setParsedFoods(foods);
+              } catch (foodsErr) {
+                console.error('Failed to auto-sync foods doc:', foodsErr);
+              }
+            }
+            if (activeGoals.workoutsDocId) {
+              try {
+                const text = await fetchGoogleDocText(activeGoals.workoutsDocId, accessToken);
+                const workouts = parseWorkoutsFromText(text);
+                setParsedWorkouts(workouts);
+              } catch (workoutsErr) {
+                console.error('Failed to auto-sync workouts doc:', workoutsErr);
+              }
             }
           }
-          if (goals.workoutsDocId) {
-            try {
-              const text = await fetchGoogleDocText(goals.workoutsDocId, accessToken);
-              const workouts = parseWorkoutsFromText(text);
-              setParsedWorkouts(workouts);
-            } catch (workoutsErr) {
-              console.error('Failed to auto-sync workouts doc:', workoutsErr);
-            }
-          }
+          console.log('Auto-sync / restore on app open successful:', nowStr);
+        } else {
+          // No backup found. Perform initial backup of current local state so it is saved in Drive
+          console.log('No backup found on Google Drive. Performing initial backup...');
+          const payload = {
+            goals,
+            logs,
+            insights,
+            parsedFoods,
+            parsedWorkouts,
+            backupVersion: '1.0',
+            exportedAt: new Date().toISOString()
+          };
+          const { fileId, folderId: resolvedFolderId } = await backupDataToDrive(payload, accessToken, folderId);
+          
+          const nowStr = new Date().toLocaleString();
+          setGoals((prev) => ({
+            ...prev,
+            lastSyncTime: nowStr,
+            driveFolderLink: resolvedFolderId ? `https://drive.google.com/drive/folders/${resolvedFolderId}` : prev.driveFolderLink
+          }));
+          console.log('Initial backup successful on open:', nowStr);
         }
-
-        const nowStr = new Date().toLocaleString();
-        setGoals((prev) => ({
-          ...prev,
-          lastSyncTime: nowStr
-        }));
-        console.log('Auto-sync on app open successful:', nowStr);
       } catch (err) {
-        console.error('Auto-sync on app open failed:', err);
+        console.error('Auto-sync / restore on app open failed:', err);
       }
     };
 

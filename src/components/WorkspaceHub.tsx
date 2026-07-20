@@ -553,16 +553,19 @@ export default function WorkspaceHub({
                         goals,
                         logs,
                         insights,
+                        parsedFoods,
+                        parsedWorkouts,
                         backupVersion: '1.0',
                         exportedAt: new Date().toISOString()
                       };
                       const folderId = goals.driveFolderLink ? extractFolderId(goals.driveFolderLink) : undefined;
-                      const fileId = await backupDataToDrive(payload, activeToken, folderId);
+                      const { fileId, folderId: resolvedFolderId } = await backupDataToDrive(payload, activeToken, folderId);
                       const nowStr = new Date().toLocaleString();
 
                       onUpdateGoals((prev) => ({
                         ...prev,
-                        lastSyncTime: nowStr
+                        lastSyncTime: nowStr,
+                        driveFolderLink: resolvedFolderId ? `https://drive.google.com/drive/folders/${resolvedFolderId}` : prev.driveFolderLink
                       }));
 
                       // 2. Fetch Google Docs if they are configured
@@ -589,7 +592,7 @@ export default function WorkspaceHub({
                       }
 
                       setSyncStatus('success');
-                      let successMsg = `Full sync successful! Backed up to Google Drive (ID: ${fileId}).`;
+                      let successMsg = `Full sync successful! Backed up to Google Drive folder "Fitness Tracker/Backups".`;
                       if (docSyncedCount > 0) {
                         successMsg += ` Synced ${docSyncedCount} Google Doc(s).`;
                       }

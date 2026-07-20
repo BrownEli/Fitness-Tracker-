@@ -247,14 +247,77 @@ export function extractFolderId(input: string): string {
 }
 
 /**
+ * Resolves a nested folder path starting from the root of Google Drive.
+ * e.g., ["Fitness Tracker", "Backups"]
+ * Returns the folder ID of the leaf folder.
+ * If createIfMissing is true, it creates folders as needed.
+ */
+export async function getOrCreateFolderByPath(
+  pathParts: string[],
+  accessToken: string,
+  createIfMissing: boolean = true
+): Promise<string | null> {
+  let parentId = 'root';
+
+  for (const part of pathParts) {
+    const queryText = `name = '${part.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents and trashed = false`;
+    const query = encodeURIComponent(queryText);
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id)`, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to search folder "${part}": ${res.statusText}`);
+    }
+    const data = await res.json();
+    const existingFolder = data.files && data.files[0];
+
+    if (existingFolder) {
+      parentId = existingFolder.id;
+    } else {
+      if (!createIfMissing) {
+        return null; // Not found, and we don't want to create
+      }
+      // Create folder
+      const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: part,
+          mimeType: 'application/vnd.google-apps.folder',
+          parents: [parentId]
+        })
+      });
+      if (!createRes.ok) {
+        throw new Error(`Failed to create folder "${part}": ${createRes.statusText}`);
+      }
+      const createData = await createRes.json();
+      parentId = createData.id;
+    }
+  }
+
+  return parentId;
+}
+
+/**
  * Backs up all application data (logs, goals, insights) to Google Drive in JSON format
  */
-export async function backupDataToDrive(data: any, accessToken: string, folderId?: string): Promise<string> {
+export async function backupDataToDrive(data: any, accessToken: string, folderId?: string): Promise<{ fileId: string; folderId: string }> {
   const filename = 'hypertrophy_hub_backup.json';
   
+  let resolvedFolderId = folderId;
+  if (!resolvedFolderId) {
+    const defaultFolderId = await getOrCreateFolderByPath(['Fitness Tracker', 'Backups'], accessToken, true);
+    if (defaultFolderId) {
+      resolvedFolderId = defaultFolderId;
+    }
+  }
+
   let queryText = `name = '${filename}' and trashed = false`;
-  if (folderId) {
-    queryText += ` and '${folderId}' in parents`;
+  if (resolvedFolderId) {
+    queryText += ` and '${resolvedFolderId}' in parents`;
   }
   const query = encodeURIComponent(queryText);
   
@@ -274,8 +337,8 @@ export async function backupDataToDrive(data: any, accessToken: string, folderId
       name: filename,
       mimeType: 'application/json'
     };
-    if (folderId) {
-      body.parents = [folderId];
+    if (resolvedFolderId) {
+      body.parents = [resolvedFolderId];
     }
 
     const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
@@ -306,7 +369,7 @@ export async function backupDataToDrive(data: any, accessToken: string, folderId
     throw new Error(`Failed to upload sync data to Google Drive: ${uploadRes.statusText}`);
   }
 
-  return fileId;
+  return { fileId, folderId: resolvedFolderId || '' };
 }
 
 /**
@@ -315,10 +378,17 @@ export async function backupDataToDrive(data: any, accessToken: string, folderId
 export async function restoreDataFromDrive(accessToken: string, folderId?: string): Promise<any> {
   const filename = 'hypertrophy_hub_backup.json';
   
-  let queryText = `name = '${filename}' and trashed = false`;
-  if (folderId) {
-    queryText += ` and '${folderId}' in parents`;
+  let resolvedFolderId = folderId;
+  if (!resolvedFolderId) {
+    resolvedFolderId = await getOrCreateFolderByPath(['Fitness Tracker', 'Backups'], accessToken, false) || undefined;
   }
+  
+  if (!resolvedFolderId) {
+    // No backup folder exists, so no backup is found
+    return null;
+  }
+
+  const queryText = `name = '${filename}' and trashed = false and '${resolvedFolderId}' in parents`;
   const query = encodeURIComponent(queryText);
   
   const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id)`, {
@@ -330,8 +400,7 @@ export async function restoreDataFromDrive(accessToken: string, folderId?: strin
   const searchData = await searchRes.json();
   const fileId = searchData.files && searchData.files[0]?.id;
   if (!fileId) {
-    const targetLoc = folderId ? 'the configured Google Drive folder' : 'your Google Drive root directory';
-    throw new Error(`No backup file named "hypertrophy_hub_backup.json" was found in ${targetLoc}.`);
+    return null;
   }
 
   // Download file media content
