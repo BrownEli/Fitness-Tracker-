@@ -17,17 +17,9 @@ export const initAuth = (
   onAuthFailure?: () => void
 ) => {
   return onAuthStateChanged(auth, async (user) => {
-    if (user) {
-      if (cachedAccessToken) {
-        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
-      } else {
-        if (onAuthFailure) onAuthFailure();
-      }
+    if (user && cachedAccessToken && !isTokenExpired()) {
+      if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
     } else {
-      cachedAccessToken = null;
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('google_access_token');
-      }
       if (onAuthFailure) onAuthFailure();
     }
   });

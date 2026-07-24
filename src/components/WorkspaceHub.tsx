@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { UserGoals, DailyLog, CoachingInsight, Meal, Workout } from '../types';
 import { auth, googleSignIn, logout, initAuth, isTokenExpired } from '../lib/googleAuth';
+import { ConfirmModal } from './ConfirmModal';
 import {
-  fetchGoogleDocText,
-  parseFoodsFromText,
-  parseWorkoutsFromText,
   backupDataToDrive,
   restoreDataFromDrive,
   extractFolderId
@@ -15,21 +13,15 @@ import {
   Cloud,
   Download,
   Upload,
-  FileText,
   CheckCircle,
   AlertCircle,
   RefreshCw,
   FileJson,
-  Link2,
   Lock,
   Plus,
-  Compass,
-  Check,
-  Calendar,
-  Sparkles,
   Flame,
-  Dumbbell,
-  Folder
+  Folder,
+  Trash2
 } from 'lucide-react';
 
 interface WorkspaceHubProps {
@@ -42,9 +34,9 @@ interface WorkspaceHubProps {
   onLogMeal: (newMeal: Omit<Meal, 'id' | 'timestamp'>) => void;
   onLogWorkout: (newWorkout: Omit<Workout, 'id'>) => void;
   parsedFoods: Omit<Meal, 'id' | 'timestamp'>[];
-  parsedWorkouts: Omit<Workout, 'id'>[];
+  parsedWorkouts: any[];
   onUpdateParsedFoods: React.Dispatch<React.SetStateAction<Omit<Meal, 'id' | 'timestamp'>[]>>;
-  onUpdateParsedWorkouts: React.Dispatch<React.SetStateAction<Omit<Workout, 'id'>[]>>;
+  onUpdateParsedWorkouts: React.Dispatch<React.SetStateAction<any[]>>;
 }
 
 export default function WorkspaceHub({
@@ -65,18 +57,9 @@ export default function WorkspaceHub({
   const [token, setToken] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   
-  // Google Docs state
-  const [foodsInput, setFoodsInput] = useState(goals.foodsDocId || '');
-  const [workoutsInput, setWorkoutsInput] = useState(goals.workoutsDocId || '');
+  // Folder link state
   const [folderLinkInput, setFolderLinkInput] = useState(goals.driveFolderLink || '');
-  const [isSavingDocIds, setIsSavingDocIds] = useState(false);
-
-  // Loaded Google Docs contents
-  const [rawFoodsText, setRawFoodsText] = useState('');
-  const [rawWorkoutsText, setRawWorkoutsText] = useState('');
-  
-  const [isLoadingFoodsDoc, setIsLoadingFoodsDoc] = useState(false);
-  const [isLoadingWorkoutsDoc, setIsLoadingWorkoutsDoc] = useState(false);
+  const [isSavingFolder, setIsSavingFolder] = useState(false);
   const [docError, setDocError] = useState<string | null>(null);
   const [docSuccess, setDocSuccess] = useState<string | null>(null);
 
@@ -84,14 +67,47 @@ export default function WorkspaceHub({
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [syncMessage, setSyncMessage] = useState('');
-  const [autoSyncEnabled, setAutoSyncEnabled] = useState(!!goals.lastSyncTime);
 
   // Local Import / Export state
   const [fileError, setFileError] = useState<string | null>(null);
   const [fileSuccess, setFileSuccess] = useState<string | null>(null);
-  const [isManualSyncing, setIsManualSyncing] = useState(false);
 
   const [sessionExpired, setSessionExpired] = useState(false);
+
+  // Custom confirmation modal state
+  const [confirmConfig, setConfirmConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmText?: string;
+    variant?: 'danger' | 'warning' | 'info';
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {}
+  });
+
+  const requestConfirm = (
+    title: string,
+    message: string,
+    onConfirm: () => void,
+    confirmText = 'Confirm',
+    variant: 'danger' | 'warning' | 'info' = 'danger'
+  ) => {
+    setConfirmConfig({
+      isOpen: true,
+      title,
+      message,
+      confirmText,
+      variant,
+      onConfirm: () => {
+        onConfirm();
+        setConfirmConfig((prev) => ({ ...prev, isOpen: false }));
+      }
+    });
+  };
 
   // Initialize Auth state
   useEffect(() => {
@@ -123,12 +139,10 @@ export default function WorkspaceHub({
     }
   }, [token]);
 
-  // Synchronize inputs when parent goals change
+  // Synchronize input when parent goals change
   useEffect(() => {
-    setFoodsInput(goals.foodsDocId || '');
-    setWorkoutsInput(goals.workoutsDocId || '');
     setFolderLinkInput(goals.driveFolderLink || '');
-  }, [goals.foodsDocId, goals.workoutsDocId, goals.driveFolderLink]);
+  }, [goals.driveFolderLink]);
 
   // Helper to ensure a fresh Google Access Token before any user-triggered operation
   const getOrRenewToken = async (): Promise<string | null> => {
@@ -179,100 +193,35 @@ export default function WorkspaceHub({
   };
 
   const handleSignOut = async () => {
-    if (window.confirm('Disconnect Google Workspace connection? This clears your temporary access session.')) {
-      await logout();
-      setUser(null);
-      setToken(null);
-      setSyncStatus('idle');
-      setSyncMessage('');
-    }
+    requestConfirm(
+      'Disconnect Google Workspace',
+      'Are you sure you want to disconnect your Google Workspace connection? This clears your temporary access session.',
+      async () => {
+        await logout();
+        setUser(null);
+        setToken(null);
+        setSyncStatus('idle');
+        setSyncMessage('');
+      },
+      'Disconnect',
+      'warning'
+    );
   };
 
-  // Helper to extract Doc ID from either a direct Google Docs URL or raw ID
-  const extractDocId = (input: string): string => {
-    const urlPattern = /\/document\/d\/([a-zA-Z0-9-_]+)/;
-    const match = input.match(urlPattern);
-    return match ? match[1] : input.trim();
-  };
-
-  // Save Document Links/IDs to goals
-  const handleSaveDocIds = (e: React.FormEvent) => {
+  // Save Drive Folder Link
+  const handleSaveFolderLink = (e: React.FormEvent) => {
     e.preventDefault();
-    setIsSavingDocIds(true);
-    const fId = extractDocId(foodsInput);
-    const wId = extractDocId(workoutsInput);
+    setIsSavingFolder(true);
     const folderLink = folderLinkInput.trim();
 
     onUpdateGoals((prev) => ({
       ...prev,
-      foodsDocId: fId,
-      workoutsDocId: wId,
       driveFolderLink: folderLink
     }));
 
-    setIsSavingDocIds(false);
-    setDocSuccess('Document and folder configuration updated successfully!');
+    setIsSavingFolder(false);
+    setDocSuccess('Google Drive folder link saved successfully!');
     setTimeout(() => setDocSuccess(null), 4000);
-  };
-
-  // Fetch foods Google Doc
-  const handleFetchFoodsDoc = async () => {
-    const activeToken = await getOrRenewToken();
-    if (!activeToken) {
-      setDocError('Please connect to Google Workspace first to read Google Docs.');
-      return;
-    }
-    const docId = extractDocId(foodsInput);
-    if (!docId) {
-      setDocError('Please enter a valid Google Doc link or ID for Foods.');
-      return;
-    }
-
-    setIsLoadingFoodsDoc(true);
-    setDocError(null);
-    setDocSuccess(null);
-    try {
-      const text = await fetchGoogleDocText(docId, activeToken);
-      setRawFoodsText(text);
-      const foods = parseFoodsFromText(text);
-      onUpdateParsedFoods(foods);
-      setDocSuccess(`Successfully loaded ${foods.length} muscle food options from your Google Doc!`);
-    } catch (err: any) {
-      console.error(err);
-      setDocError(err.message || 'Failed to fetch Google Doc. Make sure the ID is correct and your document is accessible.');
-    } finally {
-      setIsLoadingFoodsDoc(false);
-    }
-  };
-
-  // Fetch workouts Google Doc
-  const handleFetchWorkoutsDoc = async () => {
-    const activeToken = await getOrRenewToken();
-    if (!activeToken) {
-      setDocError('Please connect to Google Workspace first to read Google Docs.');
-      return;
-    }
-    const docId = extractDocId(workoutsInput);
-    if (!docId) {
-      setDocError('Please enter a valid Google Doc link or ID for Workouts.');
-      return;
-    }
-
-    setIsLoadingWorkoutsDoc(true);
-    setDocError(null);
-    setDocSuccess(null);
-    try {
-      const text = await fetchGoogleDocText(docId, activeToken);
-      setRawWorkoutsText(text);
-      const workouts = parseWorkoutsFromText(text);
-      onUpdateParsedWorkouts(workouts);
-      setDocSuccess(`Successfully extracted ${workouts.length} hypertrophy exercise routines from your Google Doc!`);
-    } catch (err: any) {
-      console.error(err);
-      setDocError(err.message || 'Failed to fetch Google Doc. Make sure the ID is correct and your document is accessible.');
-    } finally {
-      setIsLoadingWorkoutsDoc(false);
-    }
   };
 
   // Backup state payload to Google Drive
@@ -293,22 +242,24 @@ export default function WorkspaceHub({
         goals,
         logs,
         insights,
+        parsedFoods,
+        parsedWorkouts,
         backupVersion: '1.0',
         exportedAt: new Date().toISOString()
       };
 
       const folderId = goals.driveFolderLink ? extractFolderId(goals.driveFolderLink) : undefined;
-      const fileId = await backupDataToDrive(payload, activeToken, folderId);
+      const { fileId, folderId: resolvedFolderId } = await backupDataToDrive(payload, activeToken, folderId);
       const nowStr = new Date().toLocaleString();
 
       onUpdateGoals((prev) => ({
         ...prev,
-        lastSyncTime: nowStr
+        lastSyncTime: nowStr,
+        driveFolderLink: resolvedFolderId ? `https://drive.google.com/drive/folders/${resolvedFolderId}` : prev.driveFolderLink
       }));
 
-      const locationMsg = goals.driveFolderLink ? 'inside your custom folder' : 'in your root folder';
       setSyncStatus('success');
-      setSyncMessage(`Backup saved to your Google Drive (${locationMsg})! File ID: ${fileId}. Last synced: ${nowStr}`);
+      setSyncMessage(`JSON backup saved to your Google Drive! File ID: ${fileId}. Last synced: ${nowStr}`);
     } catch (err: any) {
       console.error(err);
       setSyncStatus('error');
@@ -327,35 +278,49 @@ export default function WorkspaceHub({
       return;
     }
 
-    const confirmed = window.confirm(
-      'Are you sure you want to download and restore your data from Google Drive? This will overwrite your current logs, goals, and insights!'
+    requestConfirm(
+      'Restore from Google Drive',
+      'Are you sure you want to download and restore your data from Google Drive? This will overwrite your current logs, routines, goals, and insights!',
+      async () => {
+        setIsSyncing(true);
+        setSyncStatus('idle');
+        setSyncMessage('');
+
+        try {
+          const folderId = goals.driveFolderLink ? extractFolderId(goals.driveFolderLink) : undefined;
+          const data = await restoreDataFromDrive(activeToken, folderId);
+          if (data && data.goals && data.logs) {
+            onUpdateGoals((prev) => {
+              const driveFolderLink = data._resolvedFolderId
+                ? `https://drive.google.com/drive/folders/${data._resolvedFolderId}`
+                : (data.goals.driveFolderLink || prev.driveFolderLink);
+              return {
+                ...prev,
+                ...data.goals,
+                driveFolderLink
+              };
+            });
+            onUpdateLogs(data.logs);
+            if (data.insights) onUpdateInsights(data.insights);
+            if (data.parsedFoods) onUpdateParsedFoods(data.parsedFoods);
+            if (data.parsedWorkouts) onUpdateParsedWorkouts(data.parsedWorkouts);
+
+            setSyncStatus('success');
+            setSyncMessage('Hypertrophy logs, routines, and goals successfully restored from Google Drive JSON backup!');
+          } else {
+            throw new Error('No backup file found, or retrieved file is missing valid properties.');
+          }
+        } catch (err: any) {
+          console.error(err);
+          setSyncStatus('error');
+          setSyncMessage(err.message || 'Drive Restore failed.');
+        } finally {
+          setIsSyncing(false);
+        }
+      },
+      'Restore Data',
+      'warning'
     );
-    if (!confirmed) return;
-
-    setIsSyncing(true);
-    setSyncStatus('idle');
-    setSyncMessage('');
-
-    try {
-      const folderId = goals.driveFolderLink ? extractFolderId(goals.driveFolderLink) : undefined;
-      const data = await restoreDataFromDrive(activeToken, folderId);
-      if (data && data.goals && data.logs) {
-        onUpdateGoals(data.goals);
-        onUpdateLogs(data.logs);
-        if (data.insights) onUpdateInsights(data.insights);
-
-        setSyncStatus('success');
-        setSyncMessage('Hypertrophy logs and goals successfully restored from Google Drive!');
-      } else {
-        throw new Error('Retrieved file is missing valid backup properties.');
-      }
-    } catch (err: any) {
-      console.error(err);
-      setSyncStatus('error');
-      setSyncMessage(err.message || 'Drive Restore failed.');
-    } finally {
-      setIsSyncing(false);
-    }
   };
 
   // Manual Local Export (Download JSON file)
@@ -365,17 +330,20 @@ export default function WorkspaceHub({
         goals,
         logs,
         insights,
+        parsedFoods,
+        parsedWorkouts,
+        backupVersion: '1.0',
         exportedAt: new Date().toISOString()
       };
       const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(payload, null, 2))}`;
       const downloadAnchor = document.createElement('a');
       downloadAnchor.setAttribute('href', jsonString);
-      downloadAnchor.setAttribute('download', `hypertrophy_hub_export_${new Date().toISOString().split('T')[0]}.json`);
+      downloadAnchor.setAttribute('download', `hypertrophy_hub_backup_${new Date().toISOString().split('T')[0]}.json`);
       document.body.appendChild(downloadAnchor);
       downloadAnchor.click();
       downloadAnchor.remove();
 
-      setFileSuccess('Data exported successfully! Check your downloads.');
+      setFileSuccess('Data exported successfully! Check your downloads for hypertrophy_hub_backup.json');
       setTimeout(() => setFileSuccess(null), 4000);
     } catch (err: any) {
       setFileError('Failed to export local JSON file.');
@@ -388,34 +356,41 @@ export default function WorkspaceHub({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const confirmed = window.confirm(
-      'Are you sure you want to import this local JSON backup? It will replace all your current daily logs, muscle profile, and history logs.'
-    );
-    if (!confirmed) {
-      e.target.value = ''; // Reset input
-      return;
-    }
-
-    fileReader.onload = (event) => {
-      try {
-        const importedData = JSON.parse(event.target?.result as string);
-        if (importedData && importedData.goals && importedData.logs) {
-          onUpdateGoals(importedData.goals);
-          onUpdateLogs(importedData.logs);
-          if (importedData.insights) {
-            onUpdateInsights(importedData.insights);
+    requestConfirm(
+      'Import Backup File',
+      'Are you sure you want to import this JSON backup file? It will update your current daily logs, routines, and goals.',
+      () => {
+        fileReader.onload = (event) => {
+          try {
+            const importedData = JSON.parse(event.target?.result as string);
+            if (importedData && importedData.goals && importedData.logs) {
+              onUpdateGoals(importedData.goals);
+              onUpdateLogs(importedData.logs);
+              if (importedData.insights) {
+                onUpdateInsights(importedData.insights);
+              }
+              if (importedData.parsedFoods) {
+                onUpdateParsedFoods(importedData.parsedFoods);
+              }
+              if (importedData.parsedWorkouts) {
+                onUpdateParsedWorkouts(importedData.parsedWorkouts);
+              }
+              setFileSuccess('Data backup imported and loaded successfully!');
+              setFileError(null);
+            } else {
+              setFileError('Invalid JSON backup format. Missing goals or logs properties.');
+            }
+          } catch (err) {
+            setFileError('Failed to parse uploaded JSON file. Please make sure it is a valid backup file.');
           }
-          setFileSuccess('Data backup imported and loaded successfully!');
-          setFileError(null);
-        } else {
-          setFileError('Invalid JSON backup format. Missing goals or logs properties.');
-        }
-      } catch (err) {
-        setFileError('Failed to parse uploaded JSON file. Please make sure it is a valid backup file.');
-      }
-    };
+        };
 
-    fileReader.readAsText(file);
+        fileReader.readAsText(file);
+      },
+      'Import Data',
+      'warning'
+    );
+
     e.target.value = ''; // Reset input
   };
 
@@ -426,13 +401,6 @@ export default function WorkspaceHub({
     setTimeout(() => setDocSuccess(null), 3000);
   };
 
-  // Log parsed workout
-  const handleLogParsedWorkout = (workout: Omit<Workout, 'id'>) => {
-    onLogWorkout(workout);
-    setDocSuccess(`Added exercise routine "${workout.name}" to today's log!`);
-    setTimeout(() => setDocSuccess(null), 3000);
-  };
-
   return (
     <div className="space-y-12" id="workspace-hub-view">
       
@@ -440,11 +408,10 @@ export default function WorkspaceHub({
       <div className="bg-slate-900 border border-slate-800 text-white p-8 sm:p-10 rounded-3xl shadow-md">
         <h2 className="text-2xl sm:text-3xl font-black tracking-tight flex items-center gap-3">
           <Cloud className="w-8 h-8 text-sky-300 animate-pulse" />
-          Workspace Hub
+          Workspace Hub & JSON Storage
         </h2>
         <p className="text-base sm:text-lg text-slate-300 mt-3 max-w-3xl leading-relaxed">
-          Unlock maximum hypertrophy progression by integrating Google Workspace. Automate backups directly to your personal 
-          Google Drive and import custom nutrition strategies or workout routines directly from your Google Docs!
+          Manage your hypertrophy logs, custom exercise routines, and nutrition data using clean JSON storage. Backup directly to Google Drive or export and import local JSON files!
         </p>
       </div>
 
@@ -458,9 +425,9 @@ export default function WorkspaceHub({
               <div>
                 <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
                   <Cloud className="w-5 h-5 text-indigo-600" />
-                  Google Cloud Sync
+                  Google Drive Cloud Backup
                 </h3>
-                <p className="text-slate-500 text-sm mt-1">Keep your muscle history synchronized and safe</p>
+                <p className="text-slate-500 text-sm mt-1">Automatically save and restore your JSON backup on Google Drive</p>
               </div>
               <span className={`px-3 py-1 rounded-full text-sm font-extrabold font-mono uppercase ${
                 token ? 'bg-indigo-50 text-indigo-700 border border-indigo-100' : 'bg-amber-50 text-amber-700 border border-amber-100'
@@ -490,10 +457,10 @@ export default function WorkspaceHub({
                   <button
                     onClick={handleBackupToDrive}
                     disabled={isSyncing}
-                    className="flex items-center justify-center gap-2 px-5 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-sm font-extrabold cursor-pointer transition-all border border-slate-200 shadow-sm"
+                    className="flex items-center justify-center gap-2 px-5 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-extrabold cursor-pointer transition-all shadow-sm"
                   >
-                    {isSyncing ? <RefreshCw className="w-4 h-4 animate-spin text-slate-600" /> : <Upload className="w-4 h-4 text-slate-600" />}
-                    Only Backup Data
+                    {isSyncing ? <RefreshCw className="w-4 h-4 animate-spin text-white" /> : <Upload className="w-4 h-4 text-white" />}
+                    Backup JSON to Drive
                   </button>
                   <button
                     onClick={handleRestoreFromDrive}
@@ -501,124 +468,23 @@ export default function WorkspaceHub({
                     className="flex items-center justify-center gap-2 px-5 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-sm font-extrabold cursor-pointer transition-all border border-slate-200 shadow-sm"
                   >
                     {isSyncing ? <RefreshCw className="w-4 h-4 animate-spin text-slate-600" /> : <Download className="w-4 h-4 text-slate-600" />}
-                    Restore from Backup
+                    Restore JSON from Drive
                   </button>
                 </div>
 
                 {/* Last Sync Info */}
                 <div className="flex flex-col gap-1 bg-slate-50 border border-slate-200/60 p-4 rounded-xl text-sm text-slate-700 font-extrabold">
-                  <span>Last Sync Status:</span>
+                  <span>Last Cloud Backup:</span>
                   <span className="font-mono font-black text-indigo-600">{goals.lastSyncTime || 'Never backed up'}</span>
                 </div>
-
-                {/* Sync to Google Docs & Drive automatically Checkbox */}
-                <label className="flex items-start gap-3 cursor-pointer group mt-4">
-                  <input
-                    type="checkbox"
-                    checked={goals.syncDocsOnBackup || false}
-                    onChange={(e) => {
-                      onUpdateGoals((prev) => ({
-                        ...prev,
-                        syncDocsOnBackup: e.target.checked
-                      }));
-                    }}
-                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 mt-0.5 accent-indigo-600 cursor-pointer"
-                  />
-                  <div>
-                    <span className="text-sm font-extrabold text-slate-900 group-hover:text-indigo-600 transition-colors select-none">
-                      Sync to Google Docs & Drive automatically
-                    </span>
-                    <p className="text-xs font-bold text-slate-600 mt-0.5 leading-relaxed">
-                      Enabling this option will automatically synchronize your planning items from Google Docs (Foods & Workouts) alongside your weekly auto-sync and manual Google Drive backups.
-                    </p>
-                  </div>
-                </label>
-
-                {/* Sync Drive & Docs Now Button */}
-                <button
-                  onClick={async () => {
-                    const activeToken = await getOrRenewToken();
-                    if (!activeToken) {
-                      setSyncStatus('error');
-                      setSyncMessage('Please authenticate with Google before running a manual sync.');
-                      return;
-                    }
-
-                    setIsSyncing(true);
-                    setSyncStatus('idle');
-                    setSyncMessage('');
-                    try {
-                      // 1. Backup to Google Drive
-                      const payload = {
-                        goals,
-                        logs,
-                        insights,
-                        parsedFoods,
-                        parsedWorkouts,
-                        backupVersion: '1.0',
-                        exportedAt: new Date().toISOString()
-                      };
-                      const folderId = goals.driveFolderLink ? extractFolderId(goals.driveFolderLink) : undefined;
-                      const { fileId, folderId: resolvedFolderId } = await backupDataToDrive(payload, activeToken, folderId);
-                      const nowStr = new Date().toLocaleString();
-
-                      onUpdateGoals((prev) => ({
-                        ...prev,
-                        lastSyncTime: nowStr,
-                        driveFolderLink: resolvedFolderId ? `https://drive.google.com/drive/folders/${resolvedFolderId}` : prev.driveFolderLink
-                      }));
-
-                      // 2. Fetch Google Docs if they are configured
-                      let docSyncedCount = 0;
-                      if (goals.foodsDocId) {
-                        try {
-                          const text = await fetchGoogleDocText(goals.foodsDocId, activeToken);
-                          const foods = parseFoodsFromText(text);
-                          onUpdateParsedFoods(foods);
-                          docSyncedCount++;
-                        } catch (err) {
-                          console.error('Failed manual sync of Foods Doc:', err);
-                        }
-                      }
-                      if (goals.workoutsDocId) {
-                        try {
-                          const text = await fetchGoogleDocText(goals.workoutsDocId, activeToken);
-                          const workouts = parseWorkoutsFromText(text);
-                          onUpdateParsedWorkouts(workouts);
-                          docSyncedCount++;
-                        } catch (err) {
-                          console.error('Failed manual sync of Workouts Doc:', err);
-                        }
-                      }
-
-                      setSyncStatus('success');
-                      let successMsg = `Full sync successful! Backed up to Google Drive folder "Fitness Tracker/Backups".`;
-                      if (docSyncedCount > 0) {
-                        successMsg += ` Synced ${docSyncedCount} Google Doc(s).`;
-                      }
-                      setSyncMessage(successMsg);
-                    } catch (err: any) {
-                      console.error(err);
-                      setSyncStatus('error');
-                      setSyncMessage(err.message || 'Manual Sync to Google Drive and Docs failed.');
-                    } finally {
-                      setIsSyncing(false);
-                    }
-                  }}
-                  disabled={isSyncing}
-                  className="w-full flex items-center justify-center gap-2.5 px-6 py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl text-sm font-bold cursor-pointer transition-all shadow-md shadow-indigo-100"
-                >
-                  {isSyncing ? <RefreshCw className="w-4 h-4 animate-spin text-white" /> : <RefreshCw className="w-4 h-4 text-white" />}
-                  Sync Drive & Docs Now
-                </button>
               </div>
             ) : (
               <div className="space-y-6 py-6 text-center">
                 <div className="max-w-md mx-auto">
                   <Lock className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-                  <h4 className="text-base font-bold text-slate-800">Secure Cloud Connection Required</h4>
+                  <h4 className="text-base font-bold text-slate-800">Google Workspace Backup Connection</h4>
                   <p className="text-sm text-slate-500 mt-2 leading-relaxed">
-                    Connecting your Google account provides secure direct access to your personal files for backup storage and Google Docs plans. Your credentials are never stored externally.
+                    Connect your Google account to automatically store and restore your JSON backup files directly on your personal Google Drive.
                   </p>
                 </div>
 
@@ -674,14 +540,14 @@ export default function WorkspaceHub({
             <div className="mb-6 border-b border-slate-100 pb-4">
               <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
                 <FileJson className="w-5 h-5 text-sky-600" />
-                Local Backup & Portability
+                Local JSON File Import / Export
               </h3>
-              <p className="text-slate-500 text-sm mt-1">Export or restore your data manually via standard JSON file transfer</p>
+              <p className="text-slate-500 text-sm mt-1">Export or restore your full database manually as a single JSON file</p>
             </div>
 
             <div className="space-y-6">
               <p className="text-sm text-slate-600 leading-relaxed font-medium">
-                Want to keep a copy of your muscle logs on your hard drive? You can export your full hypertrophy database as a single portable JSON file, and restore it on any device at any time.
+                Export your hypertrophy logs, exercise routines, and nutrition list as <span className="font-mono text-indigo-600 font-bold">hypertrophy_hub_backup.json</span>. You can restore this JSON file at any time on any device.
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -690,11 +556,11 @@ export default function WorkspaceHub({
                   className="flex items-center justify-center gap-2 px-5 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-bold cursor-pointer transition-all border border-slate-200"
                 >
                   <Upload className="w-4 h-4 text-slate-500" />
-                  Manual JSON Export
+                  Export JSON File
                 </button>
                 <label className="flex items-center justify-center gap-2 px-5 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-bold cursor-pointer transition-all border border-slate-200 border-dashed">
                   <Download className="w-4 h-4 text-slate-500" />
-                  <span>Manual JSON Import</span>
+                  <span>Import JSON File</span>
                   <input
                     type="file"
                     accept=".json"
@@ -719,52 +585,24 @@ export default function WorkspaceHub({
 
       </div>
 
-      {/* Google Docs & Folder Integration Panel */}
-      <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm space-y-8" id="google-docs-config-panel">
+      {/* Google Drive Folder Configuration Panel */}
+      <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm space-y-6" id="google-folder-config-panel">
         <div className="border-b border-slate-100 pb-4">
           <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-            <FileText className="w-5 h-5 text-indigo-600" />
-            Connected Workspace Documents & Folders
+            <Folder className="w-5 h-5 text-indigo-600" />
+            Google Drive Storage Location
           </h3>
           <p className="text-slate-500 text-sm mt-1">
-            Build your tracking experience and locate your backup storage folder
+            Specify an optional target folder for your Google Drive JSON backups
           </p>
         </div>
 
-        {/* Inputs */}
-        <form onSubmit={handleSaveDocIds} className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
+        {/* Form */}
+        <form onSubmit={handleSaveFolderLink} className="space-y-4">
           <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
-              <Link2 className="w-3.5 h-3.5 text-indigo-500" />
-              Foods to Eat Doc URL / ID
-            </label>
-            <input
-              type="text"
-              placeholder="Paste Google Doc link or ID"
-              value={foodsInput}
-              onChange={(e) => setFoodsInput(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 px-4 py-3 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800 font-medium"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
-              <Link2 className="w-3.5 h-3.5 text-indigo-500" />
-              Workout Plans Doc URL / ID
-            </label>
-            <input
-              type="text"
-              placeholder="Paste Google Doc link or ID"
-              value={workoutsInput}
-              onChange={(e) => setWorkoutsInput(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 px-4 py-3 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800 font-medium"
-            />
-          </div>
-
-          <div className="md:col-span-2 space-y-2">
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
               <Folder className="w-3.5 h-3.5 text-indigo-500" />
-              Google Drive Backup Folder Link / ID (Optional)
+              Google Drive Folder Link or ID (Optional)
             </label>
             <input
               type="text"
@@ -774,17 +612,17 @@ export default function WorkspaceHub({
               className="w-full bg-slate-50 border border-slate-200 px-4 py-3 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800 font-medium"
             />
             <p className="text-[11px] text-slate-400 font-medium mt-1">
-              Provide a folder link to save and restore your <span className="font-mono text-indigo-600 font-semibold">hypertrophy_hub_backup.json</span> backup file inside that specific directory. If left empty, backups will default to your Google Drive root directory.
+              Provide a folder link to save and restore your <span className="font-mono text-indigo-600 font-semibold">hypertrophy_hub_backup.json</span> backup file inside that specific directory. If left empty, backups default to your root Google Drive folder.
             </p>
           </div>
 
-          <div className="md:col-span-2">
+          <div>
             <button
               type="submit"
-              disabled={isSavingDocIds}
-              className="w-full px-6 py-3.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl text-sm font-bold cursor-pointer transition-all shadow-sm"
+              disabled={isSavingFolder}
+              className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl text-sm font-bold cursor-pointer transition-all shadow-sm"
             >
-              Save Configuration
+              Save Storage Location
             </button>
           </div>
         </form>
@@ -803,125 +641,59 @@ export default function WorkspaceHub({
           </div>
         )}
 
-        {/* Action Controls for fetching */}
-        {token ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-4 border-t border-slate-100">
-            <div className="space-y-4">
-              <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+        {/* DISPLAY SAVED CUSTOM FOODS IF ANY */}
+        {parsedFoods.length > 0 && (
+          <div className="pt-6 border-t border-slate-100 space-y-4">
+            <div className="flex justify-between items-center">
+              <h4 className="text-base font-bold text-slate-800 flex items-center gap-2">
                 <Flame className="w-4 h-4 text-indigo-500" />
-                Foods to Eat Plan
+                Custom JSON Foods ({parsedFoods.length})
               </h4>
               <button
-                onClick={handleFetchFoodsDoc}
-                disabled={isLoadingFoodsDoc}
-                className="w-full py-3 px-4 bg-indigo-55 hover:bg-indigo-100 disabled:bg-slate-50 border border-indigo-200 hover:border-indigo-300 disabled:border-slate-100 text-indigo-700 text-xs font-bold rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-all"
+                type="button"
+                onClick={() => onUpdateParsedFoods([])}
+                className="px-2 py-0.5 text-[10px] font-bold text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md border border-slate-200 hover:border-rose-200 transition-colors flex items-center gap-1 cursor-pointer"
+                title="Clear custom foods list"
               >
-                {isLoadingFoodsDoc ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                Sync Foods list from Google Doc
+                <Trash2 className="w-3 h-3" />
+                Clear
               </button>
             </div>
 
-            <div className="space-y-4">
-              <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                <Dumbbell className="w-4 h-4 text-indigo-500" />
-                Workout Plans
-              </h4>
-              <button
-                onClick={handleFetchWorkoutsDoc}
-                disabled={isLoadingWorkoutsDoc}
-                className="w-full py-3 px-4 bg-indigo-55 hover:bg-indigo-100 disabled:bg-slate-50 border border-indigo-200 hover:border-indigo-300 disabled:border-slate-100 text-indigo-700 text-xs font-bold rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-all"
-              >
-                {isLoadingWorkoutsDoc ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                Sync Workouts from Google Doc
-              </button>
+            <div className="space-y-2 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+              {parsedFoods.map((food, idx) => (
+                <div
+                  key={`parsed-food-${idx}`}
+                  onClick={() => handleLogParsedMeal(food)}
+                  className="flex justify-between items-center p-3.5 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 rounded-xl cursor-pointer transition-all group"
+                >
+                  <div>
+                    <h5 className="text-xs font-bold text-slate-800 group-hover:text-indigo-900">{food.name}</h5>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      {food.protein}g protein • {food.calories} kcal
+                    </p>
+                  </div>
+                  <button className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-400 group-hover:text-indigo-600 group-hover:border-indigo-300 transition-colors">
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
             </div>
-          </div>
-        ) : (
-          <div className="p-6 bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-center text-slate-500 text-sm font-semibold">
-            Connect Google Workspace to import planning items directly.
-          </div>
-        )}
-
-        {/* DISPLAY PARSED OPTIONS */}
-        {(parsedFoods.length > 0 || parsedWorkouts.length > 0) && (
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 pt-8 border-t border-slate-100">
-            
-            {/* Parsed Foods Panel */}
-            {parsedFoods.length > 0 && (
-              <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <h4 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                    <Flame className="w-4 h-4 text-indigo-500" />
-                    Foods list from Doc ({parsedFoods.length})
-                  </h4>
-                  <span className="text-[10px] text-slate-400 font-extrabold uppercase bg-slate-100 px-2 py-0.5 rounded-md">Click to Eat / Log</span>
-                </div>
-
-                <div className="space-y-2 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
-                  {parsedFoods.map((food, idx) => (
-                    <div
-                      key={`parsed-food-${idx}`}
-                      onClick={() => handleLogParsedMeal(food)}
-                      className="flex justify-between items-center p-3.5 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 rounded-xl cursor-pointer transition-all group"
-                    >
-                      <div>
-                        <h5 className="text-xs font-bold text-slate-800 group-hover:text-indigo-900">{food.name}</h5>
-                        <p className="text-[11px] text-slate-500 mt-1">
-                          {food.protein}g protein • {food.calories} kcal
-                        </p>
-                      </div>
-                      <button className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-400 group-hover:text-indigo-600 group-hover:border-indigo-300 transition-colors">
-                        <Plus className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Parsed Workouts Panel */}
-            {parsedWorkouts.length > 0 && (
-              <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <h4 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                    <Dumbbell className="w-4 h-4 text-indigo-500" />
-                    Exercise routines from Doc ({parsedWorkouts.length})
-                  </h4>
-                  <span className="text-[10px] text-slate-400 font-extrabold uppercase bg-slate-100 px-2 py-0.5 rounded-md">Click to Log Exercise</span>
-                </div>
-
-                <div className="space-y-2 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
-                  {parsedWorkouts.map((workout, idx) => (
-                    <div
-                      key={`parsed-workout-${idx}`}
-                      onClick={() => handleLogParsedWorkout(workout)}
-                      className="flex justify-between items-center p-3.5 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 rounded-xl cursor-pointer transition-all group"
-                    >
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">
-                            {workout.category}
-                          </span>
-                          <h5 className="text-xs font-bold text-slate-800 group-hover:text-indigo-900">{workout.name}</h5>
-                        </div>
-                        <p className="text-[11px] text-slate-500 mt-1">
-                          {workout.sets.length} sets • target: {workout.sets[0]?.reps || 10} reps @ {workout.sets[0]?.weight || 135} {goals.weightUnit}
-                        </p>
-                      </div>
-                      <button className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-400 group-hover:text-indigo-600 group-hover:border-indigo-300 transition-colors">
-                        <Plus className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
           </div>
         )}
 
       </div>
 
+      {/* Custom Confirmation Modal */}
+      <ConfirmModal
+        isOpen={confirmConfig.isOpen}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+        confirmText={confirmConfig.confirmText}
+        variant={confirmConfig.variant}
+        onConfirm={confirmConfig.onConfirm}
+        onCancel={() => setConfirmConfig((prev) => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 }

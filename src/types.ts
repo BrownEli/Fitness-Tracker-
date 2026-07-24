@@ -45,6 +45,21 @@ export interface UserGoals {
   syncDocsOnBackup?: boolean;
 }
 
+export interface ParsedWorkoutExercise {
+  name: string;
+  youtubeUrl?: string;
+  sets?: number;
+  reps?: number;
+  weight?: number;
+  category?: string;
+}
+
+export interface ParsedWorkoutDay {
+  day: string; // e.g. "Day 1"
+  focusArea: string; // e.g. "Core & Chest"
+  exercises: ParsedWorkoutExercise[];
+}
+
 export interface CoachingInsight {
   timestamp: string;
   summary: string;

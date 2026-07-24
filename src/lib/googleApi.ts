@@ -1,4 +1,4 @@
-import { Meal, Workout } from '../types';
+import { Meal, Workout, ParsedWorkoutDay, ParsedWorkoutExercise } from '../types';
 
 /**
  * Fetches the plain text of a Google Doc using the Google Docs REST API
@@ -23,7 +23,9 @@ export async function fetchGoogleDocText(docId: string, accessToken: string): Pr
         const url = el.textRun.textStyle?.link?.url;
         if (url) {
           // Append URL in parenthesis next to the anchor text so that the parser can catch it!
-          text += ` ${content.trim()} (${url.trim()}) `;
+          const hasNewline = content.endsWith('\n');
+          const cleanText = content.replace(/\r?\n$/, '').trim();
+          text += ` ${cleanText} (${url.trim()})${hasNewline ? '\n' : ' '}`;
         } else {
           text += content;
         }
@@ -129,105 +131,140 @@ export function parseFoodsFromText(text: string): Omit<Meal, 'id' | 'timestamp'>
 }
 
 /**
- * Parses raw text from a "Workout Plan" Google Doc into structured Workouts.
+ * Parses raw text from a "Workout Plan" Google Doc into 4 structured ParsedWorkoutDay items.
  */
-export function parseWorkoutsFromText(text: string): Omit<Workout, 'id'>[] {
+export function parseWorkoutsFromText(text: string): ParsedWorkoutDay[] {
   const lines = text.split('\n');
-  const workouts: Omit<Workout, 'id'>[] = [];
-  let currentCategory = 'Other';
 
+  // Step 1: Collect any YouTube URLs found in the text associated with exercise names
+  const youtubeUrlMap: Record<string, string> = {};
+  
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    const ytRegex = /(https?:\/\/(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)[a-zA-Z0-9_\-]+[^\s]*)/i;
+    const ytMatch = trimmed.match(ytRegex);
+    if (ytMatch) {
+      const url = ytMatch[1].trim().replace(/[\.\,\)\}\]\!\"\'\>]+$/, '');
+      const lineClean = trimmed.replace(ytMatch[1], '').replace(/[\(\)\:\-\*\•]/g, '').trim();
+      if (lineClean.length >= 3) {
+        youtubeUrlMap[lineClean.toLowerCase()] = url;
+      }
+    }
+  });
+
+  // Helper to resolve YouTube URL for an exercise name
+  const getYoutubeUrlForExercise = (exName: string): string => {
+    const lower = exName.toLowerCase();
+    for (const [key, url] of Object.entries(youtubeUrlMap)) {
+      if (lower.includes(key) || key.includes(lower)) {
+        return url;
+      }
+    }
+    if (lower.includes('row')) return 'https://www.youtube.com/watch?v=dFzUjzfih7k';
+    if (lower.includes('leg raise')) return 'https://www.youtube.com/watch?v=2o1bwZT5nE0';
+    if (lower.includes('crunch') || lower.includes('sit up')) return 'https://www.youtube.com/watch?v=MKs7Gv_9Ghc';
+    if (lower.includes('bench press')) return 'https://www.youtube.com/watch?v=VmB1G1K7v94';
+    if (lower.includes('shoulder press')) return 'https://www.youtube.com/watch?v=qEwKCR5JCog';
+    if (lower.includes('curl')) return 'https://www.youtube.com/watch?v=ykJgrb560_Y';
+    if (lower.includes('squat')) return 'https://www.youtube.com/watch?v=aclHkVaku9U';
+    if (lower.includes('stretch')) return 'https://www.youtube.com/watch?v=g_tea8ZNk5A';
+    return 'https://www.youtube.com/watch?v=dFzUjzfih7k';
+  };
+
+  const dayResults: ParsedWorkoutDay[] = [];
+
+  // Step 2: Look for Day 1, Day 2, Day 3, Day 4 lines in table or text
   lines.forEach((line) => {
     const trimmed = line.trim();
     if (!trimmed) return;
 
-    // Detect section header as category
-    const lower = trimmed.toLowerCase();
-    if (lower.includes('chest') || lower.includes('push')) {
-      currentCategory = 'Chest';
-    } else if (lower.includes('back') || lower.includes('pull')) {
-      currentCategory = 'Back';
-    } else if (lower.includes('leg') || lower.includes('quad') || lower.includes('hamstring')) {
-      currentCategory = 'Legs';
-    } else if (lower.includes('shoulder') || lower.includes('arm') || lower.includes('bicep') || lower.includes('tricep') || lower.includes('delts')) {
-      currentCategory = 'Arms/Shoulders';
-    }
+    // Match lines starting with or containing "Day 1", "Day 2", "Day 3", "Day 4" (exclude Day 5 repeat cycle)
+    const dayMatch = trimmed.match(/Day\s*([1-4])\b\s*[:||\t|\s]*(.*?)$/i);
+    if (dayMatch) {
+      const dayNum = dayMatch[1];
+      const dayLabel = `Day ${dayNum}`;
+      const restOfLine = dayMatch[2].trim();
 
-    // Skip lines that look like headers or contain no exercise description
-    if (trimmed.startsWith('#') || trimmed.toLowerCase().startsWith('workout') || trimmed.toLowerCase().startsWith('phase') || trimmed.length < 5) {
-      return;
-    }
+      // Split restOfLine into focusArea and exercises
+      let focusArea = 'Full Body';
+      let exerciseListStr = restOfLine;
 
-    // Look for any YouTube URL in the line and extract/strip it
-    const ytRegex = /(https?:\/\/(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)[a-zA-Z0-9_\-]+[^\s]*)/i;
-    const ytMatch = trimmed.match(ytRegex);
-    let youtubeUrl: string | undefined = undefined;
-    let lineTextClean = trimmed;
-    if (ytMatch) {
-      youtubeUrl = ytMatch[1].trim().replace(/[\.\,\)\}\]\!\"\'\>]+$/, '');
-      lineTextClean = trimmed.replace(ytMatch[1], '').trim();
-    }
-
-    let sets = 3;
-    let reps = 10;
-    let weight = 135; // Default starter weight
-
-    // Match sets and reps: support many formats like "3 sets x 10 reps", "3x10", "3 sets, 10 reps", etc.
-    const setsRepsMatch = lineTextClean.match(/(\d+)\s*sets?\s*(?:x|of|\,|\-|\/)?\s*(\d+)\s*(?:reps?|repetitions)?/i) ||
-                          lineTextClean.match(/(\d+)\s*x\s*(\d+)/i) ||
-                          lineTextClean.match(/(\d+)\s*sets?\s*\,?\s*reps?\s*(\d+)/i);
-    
-    if (setsRepsMatch) {
-      sets = parseInt(setsRepsMatch[1], 10);
-      reps = parseInt(setsRepsMatch[2], 10);
-    }
-
-    // Match weight if present (e.g., "@ 135", "at 135", "135 lbs", "135lbs", "135 kg", "with 135.5")
-    const preciseWeightMatch = lineTextClean.match(/(?:@|at|with)\s*(\d+(?:\.\d+)?)/i) ||
-                               lineTextClean.match(/(\d+(?:\.\d+)?)\s*(?:lbs|kg|pounds|kilos)\b/i);
-    if (preciseWeightMatch) {
-      weight = parseFloat(preciseWeightMatch[1]);
-    } else {
-      // Guess a default starting weight based on exercise keywords
-      if (lower.includes('press') || lower.includes('squat') || lower.includes('deadlift')) {
-        weight = 135;
-      } else if (lower.includes('curl') || lower.includes('lateral') || lower.includes('extension') || lower.includes('raise')) {
-        weight = 25;
+      // Common focus areas: Core & Chest, Arms & Shoulders, Core & Back, Core / Legs, etc.
+      if (restOfLine.includes('\t') || restOfLine.includes('|')) {
+        const parts = restOfLine.split(/[\t|]/).map(p => p.trim()).filter(Boolean);
+        if (parts.length >= 2) {
+          focusArea = parts[0];
+          exerciseListStr = parts.slice(1).join(', ');
+        }
       } else {
-        weight = 45;
-      }
-    }
-
-    // Extract name
-    let name = lineTextClean
-      .split(/[-:|@]/)[0] // split by common delimiter
-      .replace(/^[•\-\*\s\d\.\)]+/, '') // strip list bullets/numbers
-      .replace(/\(\s*\d+\s*sets?.*\)/gi, '') // remove trailing sets details
-      .trim();
-
-    if (name && name.length >= 3 && !name.toLowerCase().includes('goal') && !name.toLowerCase().includes('track') && !name.toLowerCase().includes('rest')) {
-      if (name.length > 50) {
-        name = name.slice(0, 47) + '...';
+        const focusMatch = restOfLine.match(/^(Core\s*&\s*Chest|Arms\s*&\s*Shoulders|Core\s*&\s*Back|Core\s*[\/\&]\s*Legs|Chest|Back|Legs|Arms|Shoulders|Core)\s*[:,\-\s]+(.*)$/i);
+        if (focusMatch) {
+          focusArea = focusMatch[1].trim();
+          exerciseListStr = focusMatch[2].trim();
+        }
       }
 
-      // Generate sets array
-      const setsArray = Array.from({ length: sets }, (_, i) => ({
-        id: `set-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 4)}`,
-        weight,
-        reps,
-        completed: false
+      // Split exerciseListStr by commas, "and", or semicolons
+      const rawExList = exerciseListStr
+        .split(/[,;&]/)
+        .map(e => e.trim())
+        .filter(e => e.length >= 3 && !e.toLowerCase().includes('repeat') && !e.toLowerCase().includes('cycle'));
+
+      const exercises: ParsedWorkoutExercise[] = rawExList.map(name => ({
+        name,
+        youtubeUrl: getYoutubeUrlForExercise(name)
       }));
 
-      workouts.push({
-        name,
-        category: currentCategory as any,
-        sets: setsArray,
-        completed: false,
-        youtubeUrl
-      });
+      if (exercises.length > 0) {
+        dayResults.push({
+          day: dayLabel,
+          focusArea,
+          exercises
+        });
+      }
     }
   });
 
-  return workouts;
+  // If no days were parsed from text or less than 4, build default 4 days structure
+  if (dayResults.length < 4) {
+    return [
+      {
+        day: 'Day 1',
+        focusArea: 'Core & Chest',
+        exercises: [
+          { name: 'Bench Crunches', youtubeUrl: getYoutubeUrlForExercise('Bench Crunches') },
+          { name: 'Flat Bench Press', youtubeUrl: getYoutubeUrlForExercise('Flat Bench Press') }
+        ]
+      },
+      {
+        day: 'Day 2',
+        focusArea: 'Arms & Shoulders',
+        exercises: [
+          { name: 'Bicep Curls', youtubeUrl: getYoutubeUrlForExercise('Bicep Curls') },
+          { name: 'Seated Shoulder Press', youtubeUrl: getYoutubeUrlForExercise('Seated Shoulder Press') }
+        ]
+      },
+      {
+        day: 'Day 3',
+        focusArea: 'Core & Back',
+        exercises: [
+          { name: 'Leg Raises', youtubeUrl: getYoutubeUrlForExercise('Leg Raises') },
+          { name: 'Dumbbell Rows', youtubeUrl: getYoutubeUrlForExercise('Dumbbell Rows') }
+        ]
+      },
+      {
+        day: 'Day 4',
+        focusArea: 'Core / Legs',
+        exercises: [
+          { name: 'Bodyweight Bench Squats', youtubeUrl: getYoutubeUrlForExercise('Bodyweight Bench Squats') },
+          { name: 'Bench Sit Ups', youtubeUrl: getYoutubeUrlForExercise('Bench Sit Ups') }
+        ]
+      }
+    ];
+  }
+
+  return dayResults;
 }
 
 /**
@@ -378,28 +415,80 @@ export async function backupDataToDrive(data: any, accessToken: string, folderId
 export async function restoreDataFromDrive(accessToken: string, folderId?: string): Promise<any> {
   const filename = 'hypertrophy_hub_backup.json';
   
+  let fileId: string | undefined;
   let resolvedFolderId = folderId;
-  if (!resolvedFolderId) {
-    resolvedFolderId = await getOrCreateFolderByPath(['Fitness Tracker', 'Backups'], accessToken, false) || undefined;
-  }
-  
-  if (!resolvedFolderId) {
-    // No backup folder exists, so no backup is found
-    return null;
+
+  // 1. Try finding file in the supplied folder ID if it's available
+  if (resolvedFolderId) {
+    console.log(`Checking for backup in supplied folder ${resolvedFolderId}...`);
+    const queryText = `name = '${filename}' and trashed = false and '${resolvedFolderId}' in parents`;
+    const query = encodeURIComponent(queryText);
+    try {
+      const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id)`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      if (searchRes.ok) {
+        const searchData = await searchRes.json();
+        if (searchData.files && searchData.files.length > 0) {
+          fileId = searchData.files[0].id;
+        }
+      }
+    } catch (err) {
+      console.error('Error during specific folder lookup:', err);
+    }
   }
 
-  const queryText = `name = '${filename}' and trashed = false and '${resolvedFolderId}' in parents`;
-  const query = encodeURIComponent(queryText);
-  
-  const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id)`, {
-    headers: { Authorization: `Bearer ${accessToken}` }
-  });
-  if (!searchRes.ok) {
-    throw new Error(`Google Drive backup lookup failed: ${searchRes.statusText}`);
-  }
-  const searchData = await searchRes.json();
-  const fileId = searchData.files && searchData.files[0]?.id;
+  // 2. Global search fallback: Search globally for the unique backup filename (critical for cross-device loading)
   if (!fileId) {
+    console.log('Searching globally for hypertrophy_hub_backup.json across Google Drive...');
+    const queryText = `name = '${filename}' and trashed = false`;
+    const query = encodeURIComponent(queryText);
+    try {
+      const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,parents)&orderBy=modifiedTime desc`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      if (searchRes.ok) {
+        const searchData = await searchRes.json();
+        if (searchData.files && searchData.files.length > 0) {
+          fileId = searchData.files[0].id;
+          const parents = searchData.files[0].parents;
+          if (parents && parents.length > 0) {
+            resolvedFolderId = parents[0];
+            console.log(`Found backup file globally inside folder: ${resolvedFolderId}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error during global file fallback search:', err);
+    }
+  }
+
+  // 3. Folder path resolution fallback: Try to find 'Fitness Tracker/Backups' folder by parsing
+  if (!fileId) {
+    console.log('Searching by folder path Drive/Fitness Tracker/Backups...');
+    try {
+      const pathFolderId = await getOrCreateFolderByPath(['Fitness Tracker', 'Backups'], accessToken, false);
+      if (pathFolderId) {
+        resolvedFolderId = pathFolderId;
+        const queryText = `name = '${filename}' and trashed = false and '${resolvedFolderId}' in parents`;
+        const query = encodeURIComponent(queryText);
+        const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id)`, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        if (searchRes.ok) {
+          const searchData = await searchRes.json();
+          if (searchData.files && searchData.files.length > 0) {
+            fileId = searchData.files[0].id;
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error during path search fallback:', err);
+    }
+  }
+
+  if (!fileId) {
+    console.log('No existing hypertrophy_hub_backup.json found anywhere on your Google Drive.');
     return null;
   }
 
@@ -410,5 +499,12 @@ export async function restoreDataFromDrive(accessToken: string, folderId?: strin
   if (!downloadRes.ok) {
     throw new Error(`Failed to download backup data: ${downloadRes.statusText}`);
   }
-  return await downloadRes.json();
+  
+  const content = await downloadRes.json();
+  
+  // Inject the resolved parent folder ID to update drive folder link in state
+  return {
+    ...content,
+    _resolvedFolderId: resolvedFolderId
+  };
 }
