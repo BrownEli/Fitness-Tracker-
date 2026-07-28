@@ -1,4 +1,4 @@
-import { DailyLog, UserGoals, CoachingInsight } from './types';
+import { DailyLog, UserGoals, CoachingInsight, ParsedWorkoutDay } from './types';
 
 export const INITIAL_GOALS: UserGoals = {
   currentWeight: 75,
@@ -13,4 +13,7 @@ export const INITIAL_GOALS: UserGoals = {
 export const INITIAL_LOGS: DailyLog[] = [];
 
 export const INITIAL_INSIGHTS: CoachingInsight[] = [];
+
+export const DEFAULT_USER_WORKOUT_PLAN: ParsedWorkoutDay[] = [];
+
 

@@ -10,7 +10,8 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: "10mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
   // Initialize Gemini client lazily to avoid crashing on startup if the key is missing.
   let aiClient: GoogleGenAI | null = null;
@@ -91,6 +92,91 @@ async function startServer() {
     } catch (error) {
       console.error("Error generating insights:", error);
       res.status(500).json({ error: "Failed to generate coaching insights" });
+    }
+  });
+
+  // API Route: Analyze food plate image with Gemini AI
+  app.post("/api/analyze-food", async (req, res) => {
+    try {
+      const { image, hint } = req.body;
+      const ai = getAiClient();
+
+      if (!image) {
+        return res.status(400).json({ error: "No image provided" });
+      }
+
+      if (!ai) {
+        return res.json({
+          name: hint ? hint.trim() : "Custom Meal Plate",
+          protein: 30,
+          calories: 450,
+          note: "GEMINI_API_KEY is not configured in Settings > Secrets. Provided default estimates."
+        });
+      }
+
+      // Process base64 data URL
+      let base64Data = image;
+      let mimeType = "image/jpeg";
+
+      if (image.includes(";base64,")) {
+        const parts = image.split(";base64,");
+        const mimeMatch = parts[0].match(/data:(.*?);/);
+        if (mimeMatch) {
+          mimeType = mimeMatch[1];
+        }
+        base64Data = parts[1];
+      }
+
+      const promptText = `
+        Analyze this food plate / meal image.
+        ${hint && hint.trim() ? `User provided this additional hint or description: "${hint.trim()}". Use this to help accurately identify the ingredients or portion size.` : 'No text description was provided by the user, so rely purely on visual detection of the food on the plate.'}
+
+        Task:
+        1. Identify the name of the meal or primary food items.
+        2. Estimate the total protein content in grams (integer).
+        3. Estimate the total calories in kcal (integer).
+
+        Provide realistic, accurate nutrition estimates based on the visual portion size.
+        Respond ONLY with a JSON object matching this schema:
+        {
+          "name": "Concise meal title (e.g. Grilled Chicken Breast with Rice & Vegetables)",
+          "protein": 35,
+          "calories": 520
+        }
+      `;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.6-flash",
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                mimeType: mimeType,
+                data: base64Data,
+              },
+            },
+            {
+              text: promptText,
+            },
+          ],
+        },
+        config: {
+          systemInstruction: "You are an expert nutritional analyst and food recognition AI. Analyze images of food plates accurately and estimate protein in grams and calories in kcal realistically.",
+          responseMimeType: "application/json",
+        },
+      });
+
+      const responseText = response.text || "{}";
+      const parsed = JSON.parse(responseText.trim());
+
+      res.json({
+        name: parsed.name || "Detected Meal Plate",
+        protein: Math.max(0, parseInt(parsed.protein) || 0),
+        calories: Math.max(0, parseInt(parsed.calories) || 0)
+      });
+    } catch (error) {
+      console.error("Error analyzing food image with Gemini:", error);
+      res.status(500).json({ error: "Failed to analyze food image" });
     }
   });
 

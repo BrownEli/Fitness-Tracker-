@@ -8,7 +8,7 @@ export interface SetLog {
 export interface Workout {
   id: string;
   name: string;
-  category: 'Chest' | 'Back' | 'Legs' | 'Shoulders' | 'Arms' | 'Core' | 'Cardio';
+  category: 'Chest' | 'Back' | 'Legs' | 'Shoulders' | 'Arms' | 'Core' | 'Cardio' | 'Rest';
   sets: SetLog[];
   completed: boolean;
   youtubeUrl?: string;
@@ -52,12 +52,15 @@ export interface ParsedWorkoutExercise {
   reps?: number;
   weight?: number;
   category?: string;
+  isBodyweight?: boolean;
 }
 
 export interface ParsedWorkoutDay {
-  day: string; // e.g. "Day 1"
-  focusArea: string; // e.g. "Core & Chest"
+  day: string; // e.g. "Day 1" or "Monday"
+  focusArea: string; // e.g. "Core & Chest" or "Rest & Recovery"
   exercises: ParsedWorkoutExercise[];
+  isRestDay?: boolean;
+  dayOfWeek?: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday' | string;
 }
 
 export interface CoachingInsight {

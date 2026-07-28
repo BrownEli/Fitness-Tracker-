@@ -24,7 +24,15 @@ import {
   RotateCcw,
   PlusCircle,
   Sparkles,
-  Settings2
+  Settings2,
+  Coffee,
+  Moon,
+  Sun,
+  Activity,
+  HeartPulse,
+  Calendar,
+  ChevronUp,
+  ChevronDown
 } from 'lucide-react';
 
 interface WorkoutLoggerProps {
@@ -105,8 +113,85 @@ export default function WorkoutLogger({
   parsedWorkouts = [],
   onUpdateParsedWorkouts
 }: WorkoutLoggerProps) {
-  const [isWorkoutActive, setIsWorkoutActive] = useState(false);
-  const [activeExerciseIndex, setActiveExerciseIndex] = useState(0);
+  const STORAGE_KEY_ACTIVE_WORKOUT = 'active_workout_session_state_v1';
+
+  const [isWorkoutActive, setIsWorkoutActive] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('active_workout_session_state_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return Boolean(parsed.isWorkoutActive);
+      }
+    } catch (e) {
+      console.error('Failed to load active workout session', e);
+    }
+    return false;
+  });
+
+  const [activeExerciseIndex, setActiveExerciseIndex] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('active_workout_session_state_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return typeof parsed.activeExerciseIndex === 'number' ? parsed.activeExerciseIndex : 0;
+      }
+    } catch (e) {}
+    return 0;
+  });
+
+  // Track inputs for each set in active workout
+  const [workoutProgress, setWorkoutProgress] = useState<Record<string, { reps: number; weight: number; completed: boolean }>>(() => {
+    try {
+      const saved = localStorage.getItem('active_workout_session_state_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.workoutProgress && typeof parsed.workoutProgress === 'object') {
+          return parsed.workoutProgress;
+        }
+      }
+    } catch (e) {}
+    return {};
+  });
+
+  const [hasRestoredSession, setHasRestoredSession] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('active_workout_session_state_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return Boolean(parsed.isWorkoutActive);
+      }
+    } catch (e) {}
+    return false;
+  });
+
+  // Automatically persist active workout state to localStorage
+  useEffect(() => {
+    if (isWorkoutActive) {
+      try {
+        localStorage.setItem(
+          STORAGE_KEY_ACTIVE_WORKOUT,
+          JSON.stringify({
+            isWorkoutActive: true,
+            activeExerciseIndex,
+            workoutProgress,
+            savedAt: new Date().toISOString()
+          })
+        );
+      } catch (e) {
+        console.error('Failed to save workout session to localStorage', e);
+      }
+    } else {
+      localStorage.removeItem(STORAGE_KEY_ACTIVE_WORKOUT);
+    }
+  }, [isWorkoutActive, activeExerciseIndex, workoutProgress]);
+
+  const handleExitWorkout = () => {
+    localStorage.removeItem(STORAGE_KEY_ACTIVE_WORKOUT);
+    setIsWorkoutActive(false);
+    setWorkoutProgress({});
+    setActiveExerciseIndex(0);
+    setHasRestoredSession(false);
+  };
 
   // Active view tab when workout is not active: 'session' | 'manage'
   const [activeTabMode, setActiveTabMode] = useState<'session' | 'manage'>('session');
@@ -150,18 +235,35 @@ export default function WorkoutLogger({
   const [editingExKey, setEditingExKey] = useState<string | null>(null); // "dayIdx-exIdx"
   const [editExNameInput, setEditExNameInput] = useState('');
   const [editExUrlInput, setEditExUrlInput] = useState('');
+  const [editExIsBodyweightInput, setEditExIsBodyweightInput] = useState(false);
+  const [editExRepsInput, setEditExRepsInput] = useState(10);
+  const [editExSetsInput, setEditExSetsInput] = useState(3);
+  const [editExWeightInput, setEditExWeightInput] = useState(30);
 
   // State for adding a new exercise to a day
   const [addingExToDayIdx, setAddingExToDayIdx] = useState<number | null>(null);
   const [newExName, setNewExName] = useState('');
   const [newExUrl, setNewExUrl] = useState('');
+  const [newExIsBodyweight, setNewExIsBodyweight] = useState(false);
+  const [newExReps, setNewExReps] = useState(10);
+  const [newExSets, setNewExSets] = useState(3);
+  const [newExWeight, setNewExWeight] = useState(30);
+
+  // Selected Day state for manual day selection / schedule view
+  const [selectedDayIdx, setSelectedDayIdx] = useState<number | null>(null);
 
   // State for adding a brand new workout day
   const [isAddingDay, setIsAddingDay] = useState(false);
   const [newDayTitle, setNewDayTitle] = useState('');
   const [newDayFocus, setNewDayFocus] = useState('');
+  const [newDayIsRest, setNewDayIsRest] = useState(false);
+  const [newDayOfWeek, setNewDayOfWeek] = useState<string>('Unassigned');
   const [firstExName, setFirstExName] = useState('');
   const [firstExUrl, setFirstExUrl] = useState('');
+  const [firstExIsBodyweight, setFirstExIsBodyweight] = useState(false);
+  const [firstExReps, setFirstExReps] = useState(10);
+  const [firstExSets, setFirstExSets] = useState(3);
+  const [firstExWeight, setFirstExWeight] = useState(30);
 
   // State for editing day header
   const [editingDayHeaderIdx, setEditingDayHeaderIdx] = useState<number | null>(null);
@@ -171,26 +273,100 @@ export default function WorkoutLogger({
   // Calculate consistency streak
   const streak = calculateStreak(logs, selectedDate || new Date().toISOString().split('T')[0]);
 
-  // Track inputs for each set in active workout
-  const [workoutProgress, setWorkoutProgress] = useState<Record<string, { reps: number; weight: number; completed: boolean }>>({});
   const [completedSuccessMsg, setCompletedSuccessMsg] = useState(false);
+
+  // Helper for today's day of week
+  const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const getTodayDayOfWeek = (): string => {
+    const d = selectedDate ? new Date(selectedDate + 'T12:00:00') : new Date();
+    return DAYS_OF_WEEK[d.getDay()];
+  };
+  const todayDayOfWeek = getTodayDayOfWeek();
+
+  const WEEKDAY_ORDER = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+  const getDayWeekdayOrder = (item: ParsedWorkoutDay, originalIdx: number): number => {
+    if (item.dayOfWeek) {
+      const dowLower = item.dayOfWeek.trim().toLowerCase();
+      const idx = WEEKDAY_ORDER.indexOf(dowLower);
+      if (idx !== -1) return idx;
+    }
+    if (item.day) {
+      const dayLower = item.day.trim().toLowerCase();
+      for (let i = 0; i < WEEKDAY_ORDER.length; i++) {
+        if (dayLower.includes(WEEKDAY_ORDER[i])) {
+          return i;
+        }
+      }
+    }
+    if (item.focusArea) {
+      const focusLower = item.focusArea.trim().toLowerCase();
+      for (let i = 0; i < WEEKDAY_ORDER.length; i++) {
+        if (focusLower.includes(WEEKDAY_ORDER[i])) {
+          return i;
+        }
+      }
+    }
+    return 100 + originalIdx;
+  };
 
   // Normalized Display Days (uses parsedWorkouts if present, else empty array)
   const getDisplayDays = (): ParsedWorkoutDay[] => {
     if (parsedWorkouts && parsedWorkouts.length > 0) {
-      return parsedWorkouts.map((item, idx) => {
+      const mapped = parsedWorkouts.map((item, idx) => {
+        const focusStr = item.focusArea || item.category || 'Full Body';
+        const isRest = Boolean(item.isRestDay || focusStr.toLowerCase().includes('rest'));
+        const dayTitle = item.day || `Day ${idx + 1}`;
         if (item && item.exercises && Array.isArray(item.exercises)) {
-          return item as ParsedWorkoutDay;
+          return {
+            ...item,
+            day: dayTitle,
+            focusArea: isRest ? 'Rest & Recovery' : focusStr,
+            isRestDay: isRest,
+            dayOfWeek: item.dayOfWeek
+          } as ParsedWorkoutDay;
         }
         return {
-          day: item.day || `Day ${idx + 1}`,
-          focusArea: item.focusArea || item.category || 'Full Body',
-          exercises: item.name ? [{ name: item.name, youtubeUrl: item.youtubeUrl }] : []
+          day: dayTitle,
+          focusArea: isRest ? 'Rest & Recovery' : focusStr,
+          exercises: item.name ? [{ name: item.name, youtubeUrl: item.youtubeUrl }] : [],
+          isRestDay: isRest,
+          dayOfWeek: item.dayOfWeek
         };
       });
+
+      const DAYS_ORDER = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const sorted = [...mapped].sort((a, b) => {
+        const idxA = mapped.indexOf(a);
+        const idxB = mapped.indexOf(b);
+        return getDayWeekdayOrder(a, idxA) - getDayWeekdayOrder(b, idxB);
+      });
+
+      // Ensure constant size of 7 days
+      while (sorted.length < 7) {
+        const nextIdx = sorted.length;
+        const assignedDow = DAYS_ORDER[nextIdx] || undefined;
+        sorted.push({
+          day: `Day ${nextIdx + 1}`,
+          focusArea: 'Rest & Recovery',
+          isRestDay: true,
+          dayOfWeek: assignedDow,
+          exercises: []
+        });
+      }
+
+      return sorted.slice(0, 7);
     }
 
-    return [];
+    // Default 7 days if empty
+    const DAYS_ORDER = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    return DAYS_ORDER.map((dow, idx) => ({
+      day: `Day ${idx + 1}`,
+      focusArea: 'Rest & Recovery',
+      isRestDay: true,
+      dayOfWeek: dow,
+      exercises: []
+    }));
   };
 
   const displayDays = getDisplayDays();
@@ -202,67 +378,118 @@ export default function WorkoutLogger({
     }
   };
 
-  // Determine current plan day based on streak and available displayDays
-  const currentDayIndex = displayDays.length > 0 ? (streak - 1) % displayDays.length : 0;
+  // Determine active day index: selected tab > today's day of week match > streak rotation
+  const getActiveDayIndex = (): number => {
+    if (displayDays.length === 0) return 0;
+
+    if (selectedDayIdx !== null && selectedDayIdx >= 0 && selectedDayIdx < displayDays.length) {
+      return selectedDayIdx;
+    }
+
+    // Try to match today's Day of Week (e.g. 'Monday' or 'Monday' in day title)
+    const matchDowIdx = displayDays.findIndex(d => 
+      (d.dayOfWeek && d.dayOfWeek.toLowerCase() === todayDayOfWeek.toLowerCase()) ||
+      (d.day && d.day.toLowerCase().includes(todayDayOfWeek.toLowerCase()))
+    );
+    if (matchDowIdx !== -1) {
+      return matchDowIdx;
+    }
+
+    return (streak - 1) % displayDays.length;
+  };
+
+  const currentDayIndex = getActiveDayIndex();
   const currentDayObj = displayDays.length > 0 ? (displayDays[currentDayIndex] || displayDays[0]) : null;
+
+  const isCurrentDayRest = Boolean(currentDayObj && (currentDayObj.isRestDay || currentDayObj.focusArea?.toLowerCase().includes('rest')));
 
   const currentPlan = currentDayObj ? {
     day: currentDayIndex + 1,
     title: currentDayObj.day || `Day ${currentDayIndex + 1}`,
-    focus: currentDayObj.focusArea || 'Full Body',
-    category: currentDayObj.focusArea ? currentDayObj.focusArea.split('&')[0].trim() : 'Full Body',
+    focus: isCurrentDayRest ? 'Rest & Recovery' : (currentDayObj.focusArea || 'Full Body'),
+    category: isCurrentDayRest ? 'Rest' : (currentDayObj.focusArea ? currentDayObj.focusArea.split('&')[0].trim() : 'Full Body'),
     rawExercises: currentDayObj.exercises || [],
-    exercises: (currentDayObj.exercises || []).map(e => e.name)
+    exercises: (currentDayObj.exercises || []).map(e => e.name),
+    isRestDay: isCurrentDayRest,
+    dayOfWeek: currentDayObj.dayOfWeek
   } : null;
 
-  // Helper to accurately find YouTube URL matching an exercise name
+  // Find next non-rest workout day in sequence for preview / smooth progression
+  const getNextNonRestDay = () => {
+    if (displayDays.length === 0) return { idx: -1, dayObj: null };
+    for (let i = 1; i <= displayDays.length; i++) {
+      const checkIdx = (currentDayIndex + i) % displayDays.length;
+      const d = displayDays[checkIdx];
+      const isRest = Boolean(d && (d.isRestDay || d.focusArea?.toLowerCase().includes('rest')));
+      if (!isRest) {
+        return { idx: checkIdx, dayObj: d };
+      }
+    }
+    return { idx: -1, dayObj: null };
+  };
+  const { idx: nextNonRestDayIdx, dayObj: nextNonRestDayObj } = getNextNonRestDay();
+
+  // Log Rest Day Handler (creates completed Rest entry to preserve counting/streak)
+  const handleLogRestDay = () => {
+    const restWorkout: Omit<Workout, 'id'> = {
+      name: `${currentPlan?.title || 'Rest Day'} (Rest & Recovery)`,
+      category: 'Rest',
+      completed: true,
+      sets: []
+    };
+    onAddWorkout(restWorkout);
+    setCompletedSuccessMsg(true);
+    setTimeout(() => setCompletedSuccessMsg(false), 4000);
+  };
+
+  // Toggle Rest Day for a day in routine editor
+  const handleToggleRestDay = (dayIdx: number) => {
+    const currentDays = getDisplayDays();
+    if (!currentDays[dayIdx]) return;
+
+    const updated = [...currentDays];
+    const target = updated[dayIdx];
+    const newIsRest = !target.isRestDay;
+
+    updated[dayIdx] = {
+      ...target,
+      isRestDay: newIsRest,
+      focusArea: newIsRest ? 'Rest & Recovery' : (target.focusArea === 'Rest & Recovery' ? 'Full Body' : target.focusArea)
+    };
+    saveDisplayDays(updated);
+  };
+
+  // Set Day of Week for a day in routine editor
+  const handleChangeDayOfWeek = (dayIdx: number, newDow: string) => {
+    const currentDays = getDisplayDays();
+    if (!currentDays[dayIdx]) return;
+
+    const updated = [...currentDays];
+    updated[dayIdx] = {
+      ...updated[dayIdx],
+      dayOfWeek: newDow === 'Unassigned' ? undefined : newDow
+    };
+    saveDisplayDays(updated);
+  };
+
+  // Helper to accurately find YouTube URL matching an exercise name (Exact Match Only)
   const findMatchingYoutubeUrl = (exerciseName: string): string | null => {
     if (!exerciseName || !displayDays || displayDays.length === 0) return null;
     const target = exerciseName.toLowerCase().trim();
 
-    const exerciseItems: { name: string; youtubeUrl?: string }[] = [];
     for (const dayItem of displayDays) {
       if (dayItem && dayItem.exercises && Array.isArray(dayItem.exercises)) {
         for (const ex of dayItem.exercises) {
-          if (ex && ex.name) exerciseItems.push(ex);
+          if (ex && ex.name && ex.youtubeUrl) {
+            if (ex.name.toLowerCase().trim() === target) {
+              return ex.youtubeUrl;
+            }
+          }
         }
       }
     }
 
-    for (const ex of exerciseItems) {
-      if (!ex.youtubeUrl) continue;
-      const exLower = ex.name.toLowerCase().trim();
-      if (exLower === target) {
-        return ex.youtubeUrl;
-      }
-    }
-
-    const tokenize = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean);
-    const stem = (w: string) => w.replace(/(es|s)$/, '');
-    const targetStems = tokenize(target).map(stem);
-
-    let bestUrl: string | null = null;
-    let maxScore = 0;
-
-    for (const ex of exerciseItems) {
-      if (!ex.youtubeUrl || !ex.name) continue;
-      const exStems = tokenize(ex.name).map(stem);
-
-      let score = 0;
-      for (const ts of targetStems) {
-        if (exStems.includes(ts)) {
-          if (['row', 'curl', 'crunch', 'squat', 'stretch', 'situp', 'press'].includes(ts)) score += 10;
-          else if (['raise', 'bicep', 'shoulder', 'leg', 'lats'].includes(ts)) score += 5;
-          else score += 2;
-        }
-      }
-      if (score >= 4 && score > maxScore) {
-        maxScore = score;
-        bestUrl = ex.youtubeUrl;
-      }
-    }
-
-    return bestUrl;
+    return null;
   };
 
   const getActiveYoutubeId = (): string | null => {
@@ -271,7 +498,7 @@ export default function WorkoutLogger({
     if (!rawEx) return null;
 
     // 1. First priority: Direct YouTube URL on active exercise object
-    if (rawEx.youtubeUrl) {
+    if (rawEx.youtubeUrl && rawEx.youtubeUrl.trim() !== '') {
       const videoId = extractYoutubeVideoId(rawEx.youtubeUrl);
       if (videoId) return videoId;
     }
@@ -283,7 +510,7 @@ export default function WorkoutLogger({
       return dbEntry.youtubeVideoId;
     }
 
-    // 3. Fallback: Search across other days if no direct URL or DB match found
+    // 3. Fallback: Search exact exercise name match across days
     const matchUrl = findMatchingYoutubeUrl(rawEx.name);
     if (matchUrl) {
       const videoId = extractYoutubeVideoId(matchUrl);
@@ -303,22 +530,29 @@ export default function WorkoutLogger({
     if (!currentPlan || currentPlan.exercises.length === 0) return;
     const initialProgress: Record<string, { reps: number; weight: number; completed: boolean }> = {};
     
-    currentPlan.exercises.forEach(exName => {
-      const dbEntry = EXERCISES_DATABASE[exName];
-      const setsCount = 3;
+    currentPlan.rawExercises.forEach((rawEx) => {
+      const exName = rawEx.name;
+      const dbEntry = EXERCISES_DATABASE[matchExerciseKey(exName)];
       
-      let defaultReps = 10;
-      if (dbEntry) {
+      const isBodyweight = rawEx.isBodyweight !== undefined
+        ? rawEx.isBodyweight
+        : (exName.toLowerCase().includes('bodyweight') || exName.toLowerCase().includes('stretching') || exName.toLowerCase().includes('crunch') || exName.toLowerCase().includes('leg raise') || exName.toLowerCase().includes('pushup') || exName.toLowerCase().includes('pullup'));
+
+      let defaultReps = rawEx.reps || 10;
+      if (!rawEx.reps && dbEntry) {
         const matches = dbEntry.volume.match(/(\d+)\s+repetitions/i) || dbEntry.volume.match(/(\d+)-(\d+)\s+repetitions/i);
         if (matches) {
           defaultReps = parseInt(matches[1]);
         }
       }
 
+      const setsCount = rawEx.sets || 3;
+      const initialWeight = isBodyweight ? 0 : (rawEx.weight !== undefined ? rawEx.weight : 30);
+
       for (let s = 0; s < setsCount; s++) {
         initialProgress[`${exName}-${s}`] = {
           reps: defaultReps,
-          weight: exName.includes('Bodyweight') || exName.includes('Stretching') || exName.includes('Crunches') || exName.includes('Leg Raises') ? 0 : 30,
+          weight: initialWeight,
           completed: false
         };
       }
@@ -329,17 +563,70 @@ export default function WorkoutLogger({
     setIsWorkoutActive(true);
   };
 
+  const handleAddExtraSetToExercise = (exName: string, rawEx: any) => {
+    const setKeysForEx = Object.keys(workoutProgress)
+      .filter(k => k.startsWith(`${exName}-`))
+      .map(k => parseInt(k.replace(`${exName}-`, ''), 10))
+      .filter(n => !isNaN(n));
+    const maxSetIdx = setKeysForEx.length > 0 ? Math.max(...setKeysForEx) : (rawEx?.sets ? rawEx.sets - 1 : 2);
+    const newIdx = maxSetIdx + 1;
+    const newSetKey = `${exName}-${newIdx}`;
+
+    const isBodyweight = rawEx?.isBodyweight !== undefined
+      ? rawEx.isBodyweight
+      : (exName.toLowerCase().includes('bodyweight') ||
+         exName.toLowerCase().includes('stretching') ||
+         exName.toLowerCase().includes('crunch') ||
+         exName.toLowerCase().includes('leg raise') ||
+         exName.toLowerCase().includes('pushup') ||
+         exName.toLowerCase().includes('pullup'));
+
+    setWorkoutProgress(prev => ({
+      ...prev,
+      [newSetKey]: {
+        reps: rawEx?.reps || 10,
+        weight: isBodyweight ? 0 : (rawEx?.weight !== undefined ? rawEx.weight : 30),
+        completed: false
+      }
+    }));
+
+    // Update routine day in parsedWorkouts as well so set count is stored permanently in user routine
+    const currentDays = getDisplayDays();
+    if (currentDays[currentDayIndex]) {
+      const updated = [...currentDays];
+      const dayObj = { ...updated[currentDayIndex] };
+      const exercises = [...(dayObj.exercises || [])];
+      const targetExIdx = exercises.findIndex(e => e.name === exName);
+      if (targetExIdx >= 0) {
+        exercises[targetExIdx] = {
+          ...exercises[targetExIdx],
+          sets: newIdx + 1
+        };
+        dayObj.exercises = exercises;
+        updated[currentDayIndex] = dayObj;
+        saveDisplayDays(updated);
+      }
+    }
+  };
+
   const handleFinishAndSaveWorkout = () => {
     if (!currentPlan) return;
     const workoutsToSave: Omit<Workout, 'id'>[] = [];
 
     currentPlan.exercises.forEach((exName, exIdx) => {
+      const rawEx = currentPlan.rawExercises[exIdx];
+      const setKeysForEx = Object.keys(workoutProgress)
+        .filter(k => k.startsWith(`${exName}-`))
+        .map(k => parseInt(k.replace(`${exName}-`, ''), 10))
+        .filter(n => !isNaN(n));
+      const maxSetIdx = setKeysForEx.length > 0 ? Math.max(...setKeysForEx) : -1;
+      const setsCount = Math.max(rawEx?.sets || 3, maxSetIdx + 1);
+
       const setsForExercise: Omit<SetLog, 'id'>[] = [];
-      const setsCount = 3;
       
       for (let s = 0; s < setsCount; s++) {
         const setKey = `${exName}-${s}`;
-        const p = workoutProgress[setKey] || { reps: 10, weight: 30, completed: true };
+        const p = workoutProgress[setKey] || { reps: rawEx?.reps || 10, weight: rawEx?.isBodyweight ? 0 : (rawEx?.weight !== undefined ? rawEx.weight : 30), completed: true };
         setsForExercise.push({
           reps: p.reps,
           weight: p.weight,
@@ -364,7 +651,11 @@ export default function WorkoutLogger({
       workoutsToSave.forEach(w => onAddWorkout(w));
     }
 
+    localStorage.removeItem(STORAGE_KEY_ACTIVE_WORKOUT);
     setIsWorkoutActive(false);
+    setWorkoutProgress({});
+    setActiveExerciseIndex(0);
+    setHasRestoredSession(false);
     setCompletedSuccessMsg(true);
     setTimeout(() => setCompletedSuccessMsg(false), 3000);
   };
@@ -393,8 +684,17 @@ export default function WorkoutLogger({
 
   const allSetsCompleted = React.useMemo(() => {
     if (!currentPlan || !currentPlan.exercises || currentPlan.exercises.length === 0) return false;
-    for (const exName of currentPlan.exercises) {
-      for (let s = 0; s < 3; s++) {
+    for (let i = 0; i < currentPlan.exercises.length; i++) {
+      const exName = currentPlan.exercises[i];
+      const rawEx = currentPlan.rawExercises?.[i];
+      const setKeysForEx = Object.keys(workoutProgress)
+        .filter(k => k.startsWith(`${exName}-`))
+        .map(k => parseInt(k.replace(`${exName}-`, ''), 10))
+        .filter(n => !isNaN(n));
+      const maxSetIdx = setKeysForEx.length > 0 ? Math.max(...setKeysForEx) : -1;
+      const setsCount = Math.max(rawEx?.sets || 3, maxSetIdx + 1);
+
+      for (let s = 0; s < setsCount; s++) {
         const setKey = `${exName}-${s}`;
         if (!workoutProgress[setKey]?.completed) {
           return false;
@@ -414,7 +714,11 @@ export default function WorkoutLogger({
 
     exercises.push({
       name: newExName.trim(),
-      youtubeUrl: newExUrl.trim() || undefined
+      youtubeUrl: newExUrl.trim() || undefined,
+      isBodyweight: newExIsBodyweight,
+      reps: newExReps > 0 ? newExReps : 10,
+      sets: newExSets > 0 ? newExSets : 3,
+      weight: !newExIsBodyweight ? (newExWeight >= 0 ? newExWeight : 30) : 0
     });
 
     dayObj.exercises = exercises;
@@ -423,6 +727,10 @@ export default function WorkoutLogger({
 
     setNewExName('');
     setNewExUrl('');
+    setNewExIsBodyweight(false);
+    setNewExReps(10);
+    setNewExSets(3);
+    setNewExWeight(30);
     setAddingExToDayIdx(null);
   };
 
@@ -436,7 +744,11 @@ export default function WorkoutLogger({
     exercises[exIdx] = {
       ...exercises[exIdx],
       name: editExNameInput.trim(),
-      youtubeUrl: editExUrlInput.trim() || undefined
+      youtubeUrl: editExUrlInput.trim() || undefined,
+      isBodyweight: editExIsBodyweightInput,
+      reps: editExRepsInput > 0 ? editExRepsInput : 10,
+      sets: editExSetsInput > 0 ? editExSetsInput : 3,
+      weight: !editExIsBodyweightInput ? (editExWeightInput >= 0 ? editExWeightInput : 30) : 0
     };
 
     dayObj.exercises = exercises;
@@ -457,15 +769,24 @@ export default function WorkoutLogger({
   const handleAddNewDay = () => {
     const currentDays = getDisplayDays();
     const title = newDayTitle.trim() || `Day ${currentDays.length + 1}`;
-    const focus = newDayFocus.trim() || 'Full Body';
+    const focus = newDayIsRest ? 'Rest & Recovery' : (newDayFocus.trim() || 'Full Body');
 
-    const initialEx = firstExName.trim()
-      ? [{ name: firstExName.trim(), youtubeUrl: firstExUrl.trim() || undefined }]
+    const initialEx = (!newDayIsRest && firstExName.trim())
+      ? [{
+          name: firstExName.trim(),
+          youtubeUrl: firstExUrl.trim() || undefined,
+          isBodyweight: firstExIsBodyweight,
+          reps: firstExReps > 0 ? firstExReps : 10,
+          sets: firstExSets > 0 ? firstExSets : 3,
+          weight: !firstExIsBodyweight ? (firstExWeight >= 0 ? firstExWeight : 30) : 0
+        }]
       : [];
 
     const newDayObj: ParsedWorkoutDay = {
       day: title,
       focusArea: focus,
+      isRestDay: newDayIsRest,
+      dayOfWeek: newDayOfWeek === 'Unassigned' ? undefined : newDayOfWeek,
       exercises: initialEx
     };
 
@@ -473,8 +794,14 @@ export default function WorkoutLogger({
 
     setNewDayTitle('');
     setNewDayFocus('');
+    setNewDayIsRest(false);
+    setNewDayOfWeek('Unassigned');
     setFirstExName('');
     setFirstExUrl('');
+    setFirstExIsBodyweight(false);
+    setFirstExReps(10);
+    setFirstExSets(3);
+    setFirstExWeight(30);
     setIsAddingDay(false);
   };
 
@@ -490,6 +817,81 @@ export default function WorkoutLogger({
       'Delete Day',
       'danger'
     );
+  };
+
+  const handleMoveDay = (dayIdx: number, direction: 'up' | 'down') => {
+    const currentDays = getDisplayDays();
+    const targetIdx = direction === 'up' ? dayIdx - 1 : dayIdx + 1;
+    if (targetIdx < 0 || targetIdx >= currentDays.length) return;
+    const updated = [...currentDays];
+    const temp = updated[dayIdx];
+    updated[dayIdx] = updated[targetIdx];
+    updated[targetIdx] = temp;
+    saveDisplayDays(updated);
+  };
+
+  const handleSortDaysSundayToSaturday = () => {
+    const currentDays = getDisplayDays();
+    if (currentDays.length === 0) return;
+
+    const DAYS_ORDER = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+    const getOrder = (d: ParsedWorkoutDay, originalIdx: number): number => {
+      if (d.dayOfWeek) {
+        const idx = DAYS_ORDER.indexOf(d.dayOfWeek.toLowerCase());
+        if (idx !== -1) return idx;
+      }
+      if (d.day) {
+        const dayLower = d.day.toLowerCase();
+        for (let i = 0; i < DAYS_ORDER.length; i++) {
+          if (dayLower.includes(DAYS_ORDER[i])) return i;
+        }
+      }
+      return 100 + originalIdx;
+    };
+
+    const sorted = [...currentDays].sort((a, b) => {
+      const idxA = currentDays.indexOf(a);
+      const idxB = currentDays.indexOf(b);
+      return getOrder(a, idxA) - getOrder(b, idxB);
+    });
+
+    saveDisplayDays(sorted);
+  };
+
+  const handleAutoAssignDaysOfWeek = () => {
+    const currentDays = getDisplayDays();
+    if (currentDays.length === 0) return;
+    const updated = currentDays.map((d, idx) => ({
+      ...d,
+      dayOfWeek: DAYS_OF_WEEK[idx % 7]
+    }));
+    saveDisplayDays(updated);
+  };
+
+  const handleClearDaysOfWeek = () => {
+    const currentDays = getDisplayDays();
+    if (currentDays.length === 0) return;
+    const updated = currentDays.map(d => ({
+      ...d,
+      dayOfWeek: undefined
+    }));
+    saveDisplayDays(updated);
+  };
+
+  const handleClearAllDays = () => {
+    setConfirmConfig({
+      isOpen: true,
+      title: 'Clear All Routine Days?',
+      message: 'Are you sure you want to remove all routine days? This will wipe the stored routine so you can create or paste your own custom workouts completely fresh.',
+      confirmText: 'Clear All Days',
+      variant: 'danger',
+      onConfirm: () => {
+        saveDisplayDays([]);
+        setSelectedDayIdx(null);
+        setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+      }
+    });
   };
 
   const handleSaveDayHeader = (dayIdx: number) => {
@@ -577,16 +979,102 @@ export default function WorkoutLogger({
                 </div>
               ) : currentPlan ? (
                 <>
+                  {/* 7-Day Weekly Schedule & Day Navigation Bar */}
+                  <div className="bg-slate-50/80 border border-slate-200/90 rounded-2xl p-4 shadow-xs space-y-3">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                      <div className="flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-indigo-600 shrink-0" />
+                        <span className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                          Weekly Schedule & Routine Navigation
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-[11px] font-bold text-slate-500">
+                        <span>Today is <strong className="text-indigo-600">{todayDayOfWeek}</strong></span>
+                        {selectedDayIdx !== null && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedDayIdx(null)}
+                            aria-label="Reset to Today's Scheduled Day"
+                            className="text-[11px] text-indigo-600 font-extrabold hover:underline flex items-center gap-1 cursor-pointer bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-150"
+                          >
+                            <RotateCcw className="w-3 h-3" /> Reset to Today
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
+                      {displayDays.map((d, idx) => {
+                        const isSelected = idx === currentDayIndex;
+                        const isRest = Boolean(d.isRestDay || d.focusArea?.toLowerCase().includes('rest'));
+                        const isTodayMatch = Boolean(
+                          (d.dayOfWeek && d.dayOfWeek.toLowerCase() === todayDayOfWeek.toLowerCase()) ||
+                          (d.day && d.day.toLowerCase().includes(todayDayOfWeek.toLowerCase()))
+                        );
+
+                        return (
+                          <button
+                            key={`day-nav-${idx}`}
+                            type="button"
+                            onClick={() => setSelectedDayIdx(idx)}
+                            className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between min-h-[68px] relative ${
+                              isSelected
+                                ? 'bg-indigo-600 border-indigo-600 text-white shadow-md ring-2 ring-indigo-200'
+                                : isRest
+                                  ? 'bg-amber-50/80 hover:bg-amber-100/80 border-amber-200 text-amber-900'
+                                  : 'bg-white hover:bg-slate-100 border-slate-200 text-slate-800'
+                            }`}
+                          >
+                            {isTodayMatch && (
+                              <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md absolute top-1.5 right-1.5 ${
+                                isSelected ? 'bg-white text-indigo-700' : 'bg-indigo-600 text-white'
+                              }`}>
+                                Today
+                              </span>
+                            )}
+
+                            <div>
+                              <span className={`text-[10px] font-black uppercase tracking-wider block ${
+                                isSelected ? 'text-indigo-100' : isRest ? 'text-amber-700' : 'text-slate-400'
+                              }`}>
+                                {d.dayOfWeek ? d.dayOfWeek.substring(0, 3) : (d.day || `Day ${idx + 1}`)}
+                              </span>
+                              <span className={`text-xs font-black line-clamp-1 mt-0.5 ${
+                                isSelected ? 'text-white' : 'text-slate-800'
+                              }`}>
+                                {isRest ? 'Rest' : d.focusArea}
+                              </span>
+                            </div>
+
+                            <div className="mt-1 flex items-center justify-between">
+                              {isRest ? (
+                                <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md flex items-center gap-1 ${
+                                  isSelected ? 'bg-white/20 text-white' : 'bg-amber-200/70 text-amber-900'
+                                }`}>
+                                  <Coffee className="w-2.5 h-2.5" /> Rest Day
+                                </span>
+                              ) : (
+                                <span className={`text-[9px] font-bold ${isSelected ? 'text-indigo-200' : 'text-slate-500'}`}>
+                                  {d.exercises?.length || 0} exercises
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   {/* Consistency Streak Hero Box */}
                   <div
-                    className="w-full bg-linear-to-r from-indigo-500 to-violet-600 rounded-3xl p-6 sm:p-8 text-white shadow-lg shadow-indigo-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 min-h-[150px]"
+                    className="w-full bg-linear-to-r from-indigo-500 to-violet-600 rounded-3xl p-6 sm:p-8 text-white shadow-lg shadow-indigo-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 min-h-[140px]"
                     id="workout-streak-box"
                   >
                     <div className="space-y-2">
                       <span className="text-[10px] font-black uppercase tracking-widest bg-white/20 text-white px-3 py-1 rounded-full border border-white/10 inline-block">
                         Consistency Calendar Streak
                       </span>
-                      <h3 className="text-3xl font-black tracking-tight">Day {streak}</h3>
+                      <h3 className="text-3xl font-black tracking-tight">Day {streak} Active</h3>
                       <p className="text-indigo-100 text-sm font-semibold">
                         Today's Focus: <span className="text-white font-black">{currentPlan.focus}</span> ({currentPlan.title})
                       </p>
@@ -597,118 +1085,213 @@ export default function WorkoutLogger({
                         Routine Schedule
                       </span>
                       <span className="font-mono text-xs font-black text-white bg-slate-950/30 px-3.5 py-1.5 rounded-xl inline-block">
-                        {displayDays.length}-Day Rotation (Plan #{currentPlan.day})
+                        {displayDays.length}-Day Plan (#{currentPlan.day})
                       </span>
                     </div>
                   </div>
 
-                  {/* Routine Actions and Targets Card */}
-                  <div className="bg-slate-50/70 border border-slate-200/80 rounded-2xl p-6 sm:p-8 space-y-6">
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                      <div>
-                        <span className="text-xs uppercase font-black px-3 py-1 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-150">
-                          {currentPlan.category} TARGETS
-                        </span>
-                        <h3 className="text-lg font-black text-slate-800 mt-2">
-                          Start Today's Lift ({currentPlan.title})
-                        </h3>
-                      </div>
-
-                      {isWorkoutCompletedToday ? (
-                        <div
-                          className="flex items-center gap-2 px-5 py-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl font-black text-xs shrink-0 self-center"
-                          id="workout-already-completed-badge"
-                        >
-                          <CheckCircle2 className="w-5 h-5 text-emerald-600 animate-pulse" />
-                          <span>Daily Lift Completed & Saved</span>
+                  {/* Main Day Content: Rest Day OR Workout Lifts Card */}
+                  {currentPlan.isRestDay ? (
+                    /* --- REST & RECOVERY DAY VIEW --- */
+                    <div className="bg-gradient-to-br from-amber-50 via-orange-50/40 to-indigo-50/30 border border-amber-200 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xs">
+                      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[10px] font-black uppercase tracking-widest bg-amber-500 text-white px-3 py-1 rounded-full shadow-xs flex items-center gap-1">
+                              <Coffee className="w-3.5 h-3.5" /> Scheduled Rest & Recovery Day
+                            </span>
+                            {currentPlan.dayOfWeek && (
+                              <span className="text-xs font-extrabold text-amber-800 bg-amber-100 border border-amber-200 px-2.5 py-0.5 rounded-lg">
+                                {currentPlan.dayOfWeek}
+                              </span>
+                            )}
+                          </div>
+                          <h3 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
+                            {currentPlan.title} — Rest & Muscle Repair 🧘‍♂️
+                          </h3>
+                          <p className="text-slate-600 text-xs sm:text-sm font-medium max-w-xl leading-relaxed">
+                            Hypertrophy and recovery occur during rest days. Taking today as scheduled allows your central nervous system to reset, muscle glycogen to replenish, and protein synthesis to rebuild lean tissue.
+                          </p>
                         </div>
-                      ) : currentPlan.exercises.length > 0 ? (
-                        <button
-                          type="button"
-                          onClick={handleStartWorkout}
-                          className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-sm rounded-2xl transition-all shadow-md hover:shadow-lg shadow-indigo-150 cursor-pointer active:scale-95"
-                          id="start-workout-btn"
-                        >
-                          <PlayCircle className="w-5 h-5" />
-                          Start Day {streak} Workout
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setActiveTabMode('manage')}
-                          className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-2xl transition-all cursor-pointer"
-                        >
-                          <Plus className="w-4 h-4" /> Add Exercises to {currentPlan.title}
-                        </button>
-                      )}
-                    </div>
 
-                    <div className="border-t border-slate-200/60 pt-6 space-y-4">
-                      <div className="flex justify-between items-center">
-                        <span className="text-xs font-black text-slate-400 uppercase tracking-wider block">
-                          Exercises for this routine:
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setActiveTabMode('manage')}
-                          className="text-xs text-indigo-600 font-extrabold hover:underline flex items-center gap-1 cursor-pointer"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" /> Edit Exercises / Add Days
-                        </button>
-                      </div>
-
-                      {currentPlan.rawExercises.length > 0 ? (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          {currentPlan.rawExercises.map((rawEx, idx) => {
-                            const dbEntry = EXERCISES_DATABASE[matchExerciseKey(rawEx.name)];
-                            const matchUrl = rawEx.youtubeUrl || findMatchingYoutubeUrl(rawEx.name);
-                            return (
-                              <div
-                                key={idx}
-                                className="bg-white border border-slate-200 rounded-xl p-4 flex items-start justify-between gap-4 shadow-xs"
-                              >
-                                <div className="flex items-start gap-3 min-w-0">
-                                  <div className="w-9 h-9 rounded-lg bg-indigo-50 text-indigo-600 font-mono font-black text-sm flex items-center justify-center shrink-0">
-                                    {idx + 1}
-                                  </div>
-                                  <div className="min-w-0">
-                                    <h4 className="text-sm font-bold text-slate-800 truncate">{rawEx.name}</h4>
-                                    <span className="text-xs text-indigo-600 font-extrabold block mt-0.5">
-                                      {dbEntry?.volume || '3 sets'}
-                                    </span>
-                                  </div>
-                                </div>
-
-                                {matchUrl && (
-                                  <a
-                                    href={matchUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-[10px] font-extrabold flex items-center gap-1 shrink-0 transition-colors"
-                                    title="Watch Video"
-                                  >
-                                    <PlayCircle className="w-3.5 h-3.5 text-red-600" />
-                                    Video
-                                  </a>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <div className="py-6 text-center text-slate-400 bg-white rounded-xl border border-dashed border-slate-200">
-                          <p className="text-xs font-bold text-slate-500">No exercises added to {currentPlan.title} yet.</p>
+                        {isWorkoutCompletedToday ? (
+                          <div className="flex items-center gap-2.5 px-6 py-4 bg-emerald-500 text-white rounded-2xl font-black text-sm shadow-md shrink-0 self-start md:self-center">
+                            <CheckCircle2 className="w-5 h-5 animate-bounce" />
+                            <span>Rest Day Completed & Preserved 🔥</span>
+                          </div>
+                        ) : (
                           <button
                             type="button"
-                            onClick={() => setActiveTabMode('manage')}
-                            className="mt-2 text-xs text-indigo-600 font-extrabold hover:underline inline-flex items-center gap-1 cursor-pointer"
+                            onClick={handleLogRestDay}
+                            className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-4 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-black text-sm sm:text-base rounded-2xl transition-all shadow-md hover:shadow-lg shadow-amber-200 cursor-pointer shrink-0"
                           >
-                            <Plus className="w-3.5 h-3.5" /> Add Exercises in Routine Manager
+                            <HeartPulse className="w-5 h-5 animate-pulse" />
+                            Log Rest Day (Keep Streak Alive)
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Rest Day Recovery Targets */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+                        <div className="bg-white/80 border border-amber-200/80 rounded-2xl p-4 space-y-1.5 shadow-xs">
+                          <div className="flex items-center gap-2 text-amber-800 font-bold text-xs">
+                            <Activity className="w-4 h-4 text-amber-600" />
+                            <span>Hydration Target</span>
+                          </div>
+                          <p className="text-sm font-extrabold text-slate-800">3.5 - 4.0 Liters Water</p>
+                          <p className="text-[11px] text-slate-500 font-medium">Flushes metabolic waste products and aids nutrient transport into muscle tissue.</p>
+                        </div>
+
+                        <div className="bg-white/80 border border-amber-200/80 rounded-2xl p-4 space-y-1.5 shadow-xs">
+                          <div className="flex items-center gap-2 text-amber-800 font-bold text-xs">
+                            <Moon className="w-4 h-4 text-indigo-600" />
+                            <span>Sleep & Growth Hormone</span>
+                          </div>
+                          <p className="text-sm font-extrabold text-slate-800">8+ Hours Quality Sleep</p>
+                          <p className="text-[11px] text-slate-500 font-medium">Natural Growth Hormone (GH) spikes during deep sleep cycles.</p>
+                        </div>
+
+                        <div className="bg-white/80 border border-amber-200/80 rounded-2xl p-4 space-y-1.5 shadow-xs">
+                          <div className="flex items-center gap-2 text-amber-800 font-bold text-xs">
+                            <Sun className="w-4 h-4 text-amber-500" />
+                            <span>Active Recovery</span>
+                          </div>
+                          <p className="text-sm font-extrabold text-slate-800">15–20 Min Light Walk</p>
+                          <p className="text-[11px] text-slate-500 font-medium">Promotes soft tissue blood flow and foam rolling mobility work.</p>
+                        </div>
+                      </div>
+
+                      {/* Next Workout in Sequence Preview */}
+                      {nextNonRestDayObj && (
+                        <div className="border-t border-amber-200/80 pt-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                          <div>
+                            <span className="text-[10px] font-black uppercase text-amber-800 tracking-wider block">
+                              Next Scheduled Workout Session Up in Order
+                            </span>
+                            <p className="text-xs sm:text-sm font-bold text-slate-800">
+                              {nextNonRestDayObj.day} ({nextNonRestDayObj.focusArea}) — {nextNonRestDayObj.exercises?.length || 0} exercises
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedDayIdx(nextNonRestDayIdx)}
+                            className="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-xl text-xs font-extrabold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                          >
+                            <span>Preview Next Lifting Session</span>
+                            <ChevronRight className="w-4 h-4 text-slate-500" />
                           </button>
                         </div>
                       )}
                     </div>
-                  </div>
+                  ) : (
+                    /* --- WORKOUT DAY VIEW (Standard Lifting Card) --- */
+                    <div className="bg-slate-50/70 border border-slate-200/80 rounded-2xl p-6 sm:p-8 space-y-6">
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                        <div>
+                          <span className="text-xs uppercase font-black px-3 py-1 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-150">
+                            {currentPlan.category} TARGETS
+                          </span>
+                          <h3 className="text-lg font-black text-slate-800 mt-2">
+                            Start Today's Lift ({currentPlan.title})
+                          </h3>
+                        </div>
+
+                        {isWorkoutCompletedToday ? (
+                          <div
+                            className="flex items-center gap-2 px-5 py-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl font-black text-xs shrink-0 self-center"
+                            id="workout-already-completed-badge"
+                          >
+                            <CheckCircle2 className="w-5 h-5 text-emerald-600 animate-pulse" />
+                            <span>Daily Lift Completed & Saved</span>
+                          </div>
+                        ) : currentPlan.exercises.length > 0 ? (
+                          <button
+                            type="button"
+                            onClick={handleStartWorkout}
+                            className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-sm rounded-2xl transition-all shadow-md hover:shadow-lg shadow-indigo-150 cursor-pointer active:scale-95"
+                            id="start-workout-btn"
+                          >
+                            <PlayCircle className="w-5 h-5" />
+                            Start Day {streak} Workout
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setActiveTabMode('manage')}
+                            className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-2xl transition-all cursor-pointer"
+                          >
+                            <Plus className="w-4 h-4" /> Add Exercises to {currentPlan.title}
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="border-t border-slate-200/60 pt-6 space-y-4">
+                        <div className="flex justify-between items-center">
+                          <span className="text-xs font-black text-slate-400 uppercase tracking-wider block">
+                            Exercises for this routine:
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTabMode('manage')}
+                            className="text-xs text-indigo-600 font-extrabold hover:underline flex items-center gap-1 cursor-pointer"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" /> Edit Exercises / Add Days
+                          </button>
+                        </div>
+
+                        {currentPlan.rawExercises.length > 0 ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            {currentPlan.rawExercises.map((rawEx, idx) => {
+                              const dbEntry = EXERCISES_DATABASE[matchExerciseKey(rawEx.name)];
+                              const matchUrl = rawEx.youtubeUrl || findMatchingYoutubeUrl(rawEx.name);
+                              return (
+                                <div
+                                  key={idx}
+                                  className="bg-white border border-slate-200 rounded-xl p-4 flex items-start justify-between gap-4 shadow-xs"
+                                >
+                                  <div className="flex items-start gap-3 min-w-0">
+                                    <div className="w-9 h-9 rounded-lg bg-indigo-50 text-indigo-600 font-mono font-black text-sm flex items-center justify-center shrink-0">
+                                      {idx + 1}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <h4 className="text-sm font-bold text-slate-800 truncate">{rawEx.name}</h4>
+                                      <span className="text-xs text-indigo-600 font-extrabold block mt-0.5">
+                                        {dbEntry?.volume || '3 sets'}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {matchUrl && (
+                                    <a
+                                      href={matchUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-[10px] font-extrabold flex items-center gap-1 shrink-0 transition-colors"
+                                      title="Watch Video"
+                                    >
+                                      <PlayCircle className="w-3.5 h-3.5 text-red-600" />
+                                      Video
+                                    </a>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="py-6 text-center text-slate-400 bg-white rounded-xl border border-dashed border-slate-200">
+                            <p className="text-xs font-bold text-slate-500">No exercises added to {currentPlan.title} yet.</p>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTabMode('manage')}
+                              className="mt-2 text-xs text-indigo-600 font-extrabold hover:underline inline-flex items-center gap-1 cursor-pointer"
+                            >
+                              <Plus className="w-3.5 h-3.5" /> Add Exercises in Routine Manager
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Quick tips */}
                   <div className="flex gap-3 items-start bg-amber-50/50 border border-amber-200/60 p-5 rounded-2xl text-xs sm:text-sm text-amber-800">
@@ -727,35 +1310,16 @@ export default function WorkoutLogger({
           ) : (
             // --- SUB-TAB B: MANAGE ROUTINES & DAYS ---
             <div className="space-y-6" id="routine-manager-panel">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-indigo-50/60 border border-indigo-100 p-5 rounded-2xl">
+              <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-indigo-50/70 border border-indigo-100 p-5 rounded-2xl shadow-xs">
                 <div>
                   <h3 className="text-base font-extrabold text-indigo-950 flex items-center gap-2">
                     <ListPlus className="w-5 h-5 text-indigo-600" />
-                    Custom Workout Routines & Days Manager
+                    Custom Workout Routines & Weekly Schedule Manager
                   </h3>
                   <p className="text-xs text-indigo-800 mt-1">
-                    Add custom workout days, insert new exercises, edit YouTube demonstration video links, or delete days.
+                    Manage your 7-day weekly schedule, exercises, rest days, and assigned weekdays.
                   </p>
                 </div>
-
-                {displayDays.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      requestConfirm(
-                        'Clear All Workout Days',
-                        'Are you sure you want to clear all workout routine days from your plan? This will remove all stored routine days.',
-                        () => saveDisplayDays([]),
-                        'Clear All Days',
-                        'danger'
-                      );
-                    }}
-                    className="px-3 py-1.5 bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-700 border border-slate-200 hover:border-rose-200 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5 text-rose-500" />
-                    Clear All Days
-                  </button>
-                )}
               </div>
 
               {/* List of Days */}
@@ -764,7 +1328,7 @@ export default function WorkoutLogger({
                   <div className="p-8 text-center bg-slate-50 border border-dashed border-slate-200 rounded-2xl text-slate-500 space-y-2">
                     <p className="text-xs font-bold text-slate-700">No Routine Days Added Yet</p>
                     <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                      Use the "+ Add New Day" button below to create your first routine day, or paste a routine plan in the text box above to auto-generate days.
+                      Use the "+ Add New Day" button above to create your custom routine days, or paste your plan into the AI Workout Routine Builder above.
                     </p>
                   </div>
                 )}
@@ -780,19 +1344,19 @@ export default function WorkoutLogger({
                       {/* Day Header */}
                       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-200 pb-3">
                         {isEditingHeader ? (
-                          <div className="flex items-center gap-2 w-full sm:w-auto">
+                          <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
                             <input
                               type="text"
                               value={editDayTitle}
                               onChange={e => setEditDayTitle(e.target.value)}
-                              placeholder="Day Title (e.g. Day 1)"
+                              placeholder="Day Title (e.g. Monday)"
                               className="px-2.5 py-1 bg-white border border-indigo-300 rounded-lg text-xs font-bold text-slate-900"
                             />
                             <input
                               type="text"
                               value={editDayFocus}
                               onChange={e => setEditDayFocus(e.target.value)}
-                              placeholder="Focus (e.g. Core & Chest)"
+                              placeholder="Focus (e.g. Chest & Triceps)"
                               className="px-2.5 py-1 bg-white border border-indigo-300 rounded-lg text-xs font-bold text-slate-900"
                             />
                             <button
@@ -811,23 +1375,83 @@ export default function WorkoutLogger({
                             </button>
                           </div>
                         ) : (
-                          <div className="flex items-center gap-3">
-                            <span className="px-3 py-1 bg-indigo-600 text-white font-extrabold text-xs rounded-lg shadow-xs">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {/* Reorder Day Up / Down Arrows */}
+                            <div className="flex items-center bg-white border border-slate-200 rounded-lg overflow-hidden shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleMoveDay(dayIdx, 'up')}
+                                disabled={dayIdx === 0}
+                                title="Move Day Up"
+                                className="p-1 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-white text-slate-600 transition-colors cursor-pointer"
+                              >
+                                <ChevronUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleMoveDay(dayIdx, 'down')}
+                                disabled={dayIdx === displayDays.length - 1}
+                                title="Move Day Down"
+                                className="p-1 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-white text-slate-600 transition-colors cursor-pointer border-l border-slate-200"
+                              >
+                                <ChevronDown className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+
+                            <span className={`px-3 py-1 font-extrabold text-xs rounded-lg shadow-xs flex items-center gap-1 ${
+                              dayObj.isRestDay ? 'bg-amber-500 text-white' : 'bg-indigo-600 text-white'
+                            }`}>
+                              {dayObj.isRestDay && <Coffee className="w-3 h-3" />}
                               {dayObj.day || `Day ${dayIdx + 1}`}
                             </span>
                             <div>
-                              <h4 className="text-sm font-extrabold text-slate-900">
-                                {dayObj.focusArea || 'Full Body'}
+                              <h4 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+                                <span>{dayObj.focusArea || 'Full Body'}</span>
+                                {dayObj.isRestDay && (
+                                  <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-black rounded-md border border-amber-200">
+                                    REST DAY 🧘
+                                  </span>
+                                )}
                               </h4>
                               <span className="text-[11px] text-slate-500 font-medium">
-                                {dayObj.exercises ? dayObj.exercises.length : 0} Exercises
+                                {dayObj.dayOfWeek ? `Scheduled for ${dayObj.dayOfWeek}` : (dayObj.isRestDay ? 'Scheduled Rest Day' : `${dayObj.exercises ? dayObj.exercises.length : 0} Exercises`)}
                               </span>
                             </div>
                           </div>
                         )}
 
                         {!isEditingHeader && (
-                          <div className="flex items-center gap-2 self-end sm:self-center">
+                          <div className="flex items-center gap-2 flex-wrap self-end sm:self-center">
+                            {/* Rest Day Toggle Button */}
+                            <button
+                              type="button"
+                              onClick={() => handleToggleRestDay(dayIdx)}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1 cursor-pointer border ${
+                                dayObj.isRestDay
+                                  ? 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200'
+                                  : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
+                              }`}
+                            >
+                              <Coffee className="w-3.5 h-3.5 text-amber-600" />
+                              <span>{dayObj.isRestDay ? 'Rest' : 'Mark Rest'}</span>
+                            </button>
+
+                            {/* Day of Week Dropdown */}
+                            <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-xs font-bold text-slate-700">
+                              <Calendar className="w-3 h-3 text-slate-400" />
+                              <select
+                                value={dayObj.dayOfWeek || 'Unassigned'}
+                                onChange={e => handleChangeDayOfWeek(dayIdx, e.target.value)}
+                                className="bg-transparent font-bold text-slate-800 focus:outline-none cursor-pointer py-0.5"
+                              >
+                                <option value="Unassigned">Day: None</option>
+                                {DAYS_OF_WEEK.map(dow => (
+                                  <option key={dow} value={dow}>{dow}</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Rename / Edit Header */}
                             <button
                               type="button"
                               onClick={() => {
@@ -840,14 +1464,6 @@ export default function WorkoutLogger({
                               <Edit3 className="w-3 h-3 text-slate-500" />
                               Rename
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveDay(dayIdx)}
-                              className="px-2 py-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                              title="Delete Day"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
                           </div>
                         )}
                       </div>
@@ -858,6 +1474,14 @@ export default function WorkoutLogger({
                           dayObj.exercises.map((ex, exIdx) => {
                             const exKey = `${dayIdx}-${exIdx}`;
                             const isEditing = editingExKey === exKey;
+                            const isBodyweight = ex.isBodyweight !== undefined
+                              ? ex.isBodyweight
+                              : (ex.name.toLowerCase().includes('bodyweight') ||
+                                 ex.name.toLowerCase().includes('stretching') ||
+                                 ex.name.toLowerCase().includes('crunch') ||
+                                 ex.name.toLowerCase().includes('leg raise') ||
+                                 ex.name.toLowerCase().includes('pushup') ||
+                                 ex.name.toLowerCase().includes('pullup'));
 
                             return (
                               <div
@@ -865,35 +1489,106 @@ export default function WorkoutLogger({
                                 className="bg-white p-3.5 rounded-xl border border-slate-200/90 space-y-2"
                               >
                                 {isEditing ? (
-                                  <div className="space-y-2">
+                                  <div className="space-y-3 bg-slate-50/80 p-3 rounded-xl border border-indigo-200">
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                      <input
-                                        type="text"
-                                        value={editExNameInput}
-                                        onChange={e => setEditExNameInput(e.target.value)}
-                                        placeholder="Exercise Name"
-                                        className="px-3 py-1.5 border border-indigo-300 rounded-lg text-xs font-bold text-slate-900 focus:outline-none"
-                                      />
-                                      <input
-                                        type="text"
-                                        value={editExUrlInput}
-                                        onChange={e => setEditExUrlInput(e.target.value)}
-                                        placeholder="YouTube Demonstration URL"
-                                        className="px-3 py-1.5 border border-indigo-300 rounded-lg text-xs font-mono text-slate-800 focus:outline-none"
-                                      />
+                                      <div>
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Exercise Name</label>
+                                        <input
+                                          type="text"
+                                          value={editExNameInput}
+                                          onChange={e => setEditExNameInput(e.target.value)}
+                                          placeholder="Exercise Name"
+                                          className="w-full px-3 py-1.5 bg-white border border-indigo-300 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">YouTube Demonstration URL</label>
+                                        <input
+                                          type="text"
+                                          value={editExUrlInput}
+                                          onChange={e => setEditExUrlInput(e.target.value)}
+                                          placeholder="YouTube Demonstration URL"
+                                          className="w-full px-3 py-1.5 bg-white border border-indigo-300 rounded-lg text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                        />
+                                      </div>
                                     </div>
-                                    <div className="flex justify-end gap-2">
+
+                                    <div className={`grid grid-cols-1 ${!editExIsBodyweightInput ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-2 pt-1 border-t border-slate-200`}>
+                                      <div>
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Workout Type</label>
+                                        <div className="flex bg-slate-200/80 p-0.5 rounded-lg">
+                                          <button
+                                            type="button"
+                                            onClick={() => setEditExIsBodyweightInput(false)}
+                                            className={`flex-1 py-1 text-[11px] font-extrabold rounded-md transition-all cursor-pointer ${
+                                              !editExIsBodyweightInput ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                                            }`}
+                                          >
+                                            Weight
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => setEditExIsBodyweightInput(true)}
+                                            className={`flex-1 py-1 text-[11px] font-extrabold rounded-md transition-all cursor-pointer ${
+                                              editExIsBodyweightInput ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                                            }`}
+                                          >
+                                            Bodyweight
+                                          </button>
+                                        </div>
+                                      </div>
+
+                                      <div>
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Target Sets</label>
+                                        <input
+                                          type="number"
+                                          min={1}
+                                          max={20}
+                                          value={editExSetsInput}
+                                          onChange={e => setEditExSetsInput(Math.max(1, parseInt(e.target.value) || 1))}
+                                          className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                        />
+                                      </div>
+
+                                      <div>
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Target Reps / Set</label>
+                                        <input
+                                          type="number"
+                                          min={1}
+                                          max={200}
+                                          value={editExRepsInput}
+                                          onChange={e => setEditExRepsInput(Math.max(1, parseInt(e.target.value) || 1))}
+                                          className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                        />
+                                      </div>
+
+                                      {!editExIsBodyweightInput && (
+                                        <div>
+                                          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Target Weight (lbs)</label>
+                                          <input
+                                            type="number"
+                                            min={0}
+                                            max={1000}
+                                            value={editExWeightInput}
+                                            onChange={e => setEditExWeightInput(Math.max(0, parseInt(e.target.value) || 0))}
+                                            className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                          />
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    <div className="flex justify-end gap-2 pt-1">
                                       <button
                                         type="button"
                                         onClick={() => handleSaveExerciseEdit(dayIdx, exIdx)}
-                                        className="px-3 py-1 bg-indigo-600 text-white font-bold text-xs rounded-lg cursor-pointer"
+                                        className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg shadow-sm transition-colors cursor-pointer"
                                       >
                                         Save Changes
                                       </button>
                                       <button
                                         type="button"
                                         onClick={() => setEditingExKey(null)}
-                                        className="px-3 py-1 bg-slate-100 text-slate-600 font-bold text-xs rounded-lg cursor-pointer"
+                                        className="px-3 py-1.5 bg-white border border-slate-200 text-slate-600 font-bold text-xs rounded-lg cursor-pointer"
                                       >
                                         Cancel
                                       </button>
@@ -902,7 +1597,30 @@ export default function WorkoutLogger({
                                 ) : (
                                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                                     <div className="space-y-1 min-w-0">
-                                      <h5 className="text-xs font-extrabold text-slate-900">{ex.name}</h5>
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRemoveExercise(dayIdx, exIdx)}
+                                          className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors cursor-pointer mr-0.5"
+                                          title="Remove Exercise"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                        <h5 className="text-xs font-extrabold text-slate-900">{ex.name}</h5>
+                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
+                                          isBodyweight ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-indigo-100 text-indigo-800 border border-indigo-200'
+                                        }`}>
+                                          {isBodyweight ? 'Bodyweight' : 'Weight Workout'}
+                                        </span>
+                                        <span className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded-full text-[10px] font-bold border border-slate-200">
+                                          {ex.sets || 3} Sets × {ex.reps || 10} Reps
+                                        </span>
+                                        {!isBodyweight && (
+                                          <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full text-[10px] font-bold border border-indigo-200/80">
+                                            {ex.weight !== undefined ? ex.weight : 30} lbs
+                                          </span>
+                                        )}
+                                      </div>
                                       <div className="flex items-center gap-2 text-[11px] text-slate-500 font-mono">
                                         <Link2 className="w-3 h-3 text-indigo-500 shrink-0" />
                                         <span className="truncate max-w-[280px]">
@@ -929,18 +1647,14 @@ export default function WorkoutLogger({
                                           setEditingExKey(exKey);
                                           setEditExNameInput(ex.name);
                                           setEditExUrlInput(ex.youtubeUrl || '');
+                                          setEditExIsBodyweightInput(isBodyweight);
+                                          setEditExSetsInput(ex.sets || 3);
+                                          setEditExRepsInput(ex.reps || 10);
+                                          setEditExWeightInput(ex.weight !== undefined ? ex.weight : 30);
                                         }}
                                         className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[11px] font-bold transition-colors cursor-pointer"
                                       >
                                         Edit
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleRemoveExercise(dayIdx, exIdx)}
-                                        className="p-1 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
-                                        title="Remove Exercise"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
                                       </button>
                                     </div>
                                   </div>
@@ -957,7 +1671,7 @@ export default function WorkoutLogger({
 
                       {/* Add Exercise Form to this day */}
                       {isAddingEx ? (
-                        <div className="p-3.5 bg-indigo-50/80 border border-indigo-200 rounded-xl space-y-2.5">
+                        <div className="p-3.5 bg-indigo-50/80 border border-indigo-200 rounded-xl space-y-3">
                           <h6 className="text-xs font-black text-indigo-900">Add Exercise to {dayObj.day || `Day ${dayIdx + 1}`}</h6>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                             <input
@@ -976,6 +1690,71 @@ export default function WorkoutLogger({
                               className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             />
                           </div>
+
+                          <div className={`grid grid-cols-1 ${!newExIsBodyweight ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-2`}>
+                            <div>
+                              <label className="block text-[10px] font-bold text-indigo-800 uppercase mb-1">Workout Type</label>
+                              <div className="flex bg-white/80 p-0.5 rounded-lg border border-slate-200">
+                                <button
+                                  type="button"
+                                  onClick={() => setNewExIsBodyweight(false)}
+                                  className={`flex-1 py-1 text-[11px] font-extrabold rounded-md transition-all cursor-pointer ${
+                                    !newExIsBodyweight ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                                  }`}
+                                >
+                                  Weight
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setNewExIsBodyweight(true)}
+                                  className={`flex-1 py-1 text-[11px] font-extrabold rounded-md transition-all cursor-pointer ${
+                                    newExIsBodyweight ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                                  }`}
+                                >
+                                  Bodyweight
+                                </button>
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold text-indigo-800 uppercase mb-1">Target Sets</label>
+                              <input
+                                type="number"
+                                min={1}
+                                max={20}
+                                value={newExSets}
+                                onChange={e => setNewExSets(Math.max(1, parseInt(e.target.value) || 1))}
+                                className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold text-indigo-800 uppercase mb-1">Target Reps / Set</label>
+                              <input
+                                type="number"
+                                min={1}
+                                max={200}
+                                value={newExReps}
+                                onChange={e => setNewExReps(Math.max(1, parseInt(e.target.value) || 1))}
+                                className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                              />
+                            </div>
+
+                            {!newExIsBodyweight && (
+                              <div>
+                                <label className="block text-[10px] font-bold text-indigo-800 uppercase mb-1">Target Weight (lbs)</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={1000}
+                                  value={newExWeight}
+                                  onChange={e => setNewExWeight(Math.max(0, parseInt(e.target.value) || 0))}
+                                  className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                />
+                              </div>
+                            )}
+                          </div>
+
                           <div className="flex justify-end gap-2">
                             <button
                               type="button"
@@ -1001,6 +1780,10 @@ export default function WorkoutLogger({
                             setAddingExToDayIdx(dayIdx);
                             setNewExName('');
                             setNewExUrl('');
+                            setNewExIsBodyweight(false);
+                            setNewExSets(3);
+                            setNewExReps(10);
+                            setNewExWeight(30);
                           }}
                           className="w-full py-2 bg-white hover:bg-indigo-50/50 border border-dashed border-indigo-200 text-indigo-600 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
                         >
@@ -1010,110 +1793,6 @@ export default function WorkoutLogger({
                     </div>
                   );
                 })}
-              </div>
-
-              {/* Add New Workout Day Card */}
-              <div className="bg-white border-2 border-dashed border-indigo-200 rounded-2xl p-6 space-y-4">
-                {isAddingDay ? (
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-center border-b border-slate-100 pb-2">
-                      <h4 className="text-sm font-black text-slate-900 flex items-center gap-2">
-                        <PlusCircle className="w-4 h-4 text-indigo-600" /> Create a New Workout Day
-                      </h4>
-                      <button
-                        type="button"
-                        onClick={() => setIsAddingDay(false)}
-                        className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                          Day Name / Number
-                        </label>
-                        <input
-                          type="text"
-                          value={newDayTitle}
-                          onChange={e => setNewDayTitle(e.target.value)}
-                          placeholder={`e.g. Day ${displayDays.length + 1}`}
-                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                          Focus Area
-                        </label>
-                        <input
-                          type="text"
-                          value={newDayFocus}
-                          onChange={e => setNewDayFocus(e.target.value)}
-                          placeholder="e.g. Legs & Hamstrings"
-                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-2 pt-2 border-t border-slate-100">
-                      <span className="text-xs font-bold text-slate-700 block">First Exercise (Optional):</span>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <input
-                          type="text"
-                          value={firstExName}
-                          onChange={e => setFirstExName(e.target.value)}
-                          placeholder="Exercise Name (e.g. Barbell Squats)"
-                          className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        />
-                        <input
-                          type="text"
-                          value={firstExUrl}
-                          onChange={e => setFirstExUrl(e.target.value)}
-                          placeholder="YouTube Link (optional)"
-                          className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex justify-end gap-2 pt-2">
-                      <button
-                        type="button"
-                        onClick={handleAddNewDay}
-                        className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-colors cursor-pointer"
-                      >
-                        Save New Workout Day
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setIsAddingDay(false)}
-                        className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-colors cursor-pointer"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-center space-y-3 py-2">
-                    <div className="w-10 h-10 rounded-full bg-indigo-50 text-indigo-600 mx-auto flex items-center justify-center">
-                      <Plus className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-extrabold text-slate-900">Need another workout day?</h4>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        Add Day {displayDays.length + 1} or a custom focus routine day to your workout rotation.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setIsAddingDay(true)}
-                      className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl transition-colors shadow-sm inline-flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Plus className="w-4 h-4" /> Add Another Workout Day
-                    </button>
-                  </div>
-                )}
               </div>
             </div>
           )}
@@ -1136,8 +1815,8 @@ export default function WorkoutLogger({
               onClick={() => {
                 requestConfirm(
                   'Exit Active Workout',
-                  'Are you sure you want to exit active workout mode? Your set entries for this session will be lost.',
-                  () => setIsWorkoutActive(false),
+                  'Are you sure you want to exit active workout mode? Your set entries for this session will be cleared.',
+                  handleExitWorkout,
                   'Exit Workout',
                   'warning'
                 );
@@ -1148,6 +1827,29 @@ export default function WorkoutLogger({
               Exit Workout
             </button>
           </div>
+
+          {hasRestoredSession && (
+            <div className="bg-indigo-50 border border-indigo-200/80 rounded-2xl p-4 flex items-center justify-between gap-3 text-indigo-950 text-xs font-semibold shadow-xs">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-indigo-600 text-white rounded-xl flex items-center justify-center shrink-0 shadow-xs">
+                  <RotateCcw className="w-4.5 h-4.5" />
+                </div>
+                <div>
+                  <span className="font-extrabold text-indigo-900 block text-xs">Active Workout Restored</span>
+                  <span className="text-indigo-700 text-[11px]">
+                    Your completed sets, reps, and weights were automatically recovered from your session.
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHasRestoredSession(false)}
+                className="px-3 py-1 bg-white hover:bg-indigo-100 text-indigo-700 font-bold text-[11px] rounded-lg border border-indigo-200 transition-colors shrink-0 cursor-pointer"
+              >
+                Got It
+              </button>
+            </div>
+          )}
 
           {/* Steps Navigator Bar */}
           <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 overflow-x-auto custom-scrollbar" id="workout-steps-bar">
@@ -1210,85 +1912,122 @@ export default function WorkoutLogger({
 
           {/* Dynamic Interactive Sets Entry */}
           <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 space-y-4">
-            <div className="flex justify-between items-center">
-              <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest">
-                Logged Working Sets (Recommend: 3 Sets)
-              </h4>
-              <span className="text-[10px] text-slate-400 font-semibold flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5" /> Check the boxes as you finish each set
-              </span>
-            </div>
+            {(() => {
+              const activeExName = currentPlan.exercises[activeExerciseIndex];
+              const activeRawEx = currentPlan.rawExercises?.[activeExerciseIndex];
+              const setKeysForEx = Object.keys(workoutProgress)
+                .filter(k => k.startsWith(`${activeExName}-`))
+                .map(k => parseInt(k.replace(`${activeExName}-`, ''), 10))
+                .filter(n => !isNaN(n));
+              const maxSetIdx = setKeysForEx.length > 0 ? Math.max(...setKeysForEx) : -1;
+              const targetSetsCount = Math.max(activeRawEx?.sets || 3, maxSetIdx + 1);
+              const targetRepsCount = activeRawEx?.reps || 10;
+              const isBodyweight = activeRawEx?.isBodyweight !== undefined
+                ? activeRawEx.isBodyweight
+                : (activeExName.toLowerCase().includes('bodyweight') ||
+                   activeExName.toLowerCase().includes('stretching') ||
+                   activeExName.toLowerCase().includes('crunch') ||
+                   activeExName.toLowerCase().includes('leg raise') ||
+                   activeExName.toLowerCase().includes('pushup') ||
+                   activeExName.toLowerCase().includes('pullup'));
+              const setIndices = Array.from({ length: targetSetsCount }, (_, i) => i);
 
-            <div className="space-y-3">
-              {[0, 1, 2].map(setIdx => {
-                const exName = currentPlan.exercises[activeExerciseIndex];
-                const key = `${exName}-${setIdx}`;
-                const setProgress = workoutProgress[key] || { reps: 10, weight: 30, completed: false };
-
-                const isBodyweight =
-                  exName.includes('Bodyweight') ||
-                  exName.includes('Stretching') ||
-                  exName.includes('Crunches') ||
-                  exName.includes('Leg Raises');
-
-                return (
-                  <div
-                    key={setIdx}
-                    className={`flex items-center justify-between gap-3 p-3.5 rounded-xl border transition-all ${
-                      setProgress.completed
-                        ? 'bg-indigo-50/50 border-indigo-200'
-                        : 'bg-slate-50/50 border-slate-200'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => handleToggleSetCompleted(exName, setIdx)}
-                        className={`w-7 h-7 rounded-lg border flex items-center justify-center transition-all cursor-pointer ${
-                          setProgress.completed
-                            ? 'bg-indigo-600 border-indigo-600 text-white'
-                            : 'bg-white border-slate-300 text-transparent hover:border-indigo-400'
-                        }`}
-                      >
-                        <Check className="w-4 h-4" />
-                      </button>
-                      <span className="text-xs font-bold text-slate-700">Set {setIdx + 1}</span>
-                    </div>
-
-                    <div className="flex items-center gap-3">
-                      {/* Weight Input */}
-                      {!isBodyweight && (
-                        <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
-                          <input
-                            type="number"
-                            value={setProgress.weight}
-                            onChange={e =>
-                              handleUpdateSetField(exName, setIdx, 'weight', parseFloat(e.target.value) || 0)
-                            }
-                            className="w-12 text-xs font-bold text-slate-800 text-center focus:outline-none"
-                            step="2.5"
-                          />
-                          <span className="text-[10px] font-extrabold text-slate-400 uppercase">{weightUnit}</span>
-                        </div>
-                      )}
-
-                      {/* Reps Input */}
-                      <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
-                        <input
-                          type="number"
-                          value={setProgress.reps}
-                          onChange={e =>
-                            handleUpdateSetField(exName, setIdx, 'reps', parseInt(e.target.value) || 0)
-                          }
-                          className="w-10 text-xs font-bold text-slate-800 text-center focus:outline-none"
-                        />
-                        <span className="text-[10px] font-extrabold text-slate-400 uppercase">reps</span>
-                      </div>
-                    </div>
+              return (
+                <>
+                  <div className="flex justify-between items-center flex-wrap gap-2">
+                    <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                      <span>Logged Working Sets</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 font-extrabold">
+                        Target: {targetSetsCount} Sets × {targetRepsCount} Reps
+                      </span>
+                    </h4>
+                    <span className="text-[10px] text-slate-400 font-semibold flex items-center gap-1">
+                      <Clock className="w-3.5 h-3.5" /> Check the boxes as you finish each set
+                    </span>
                   </div>
-                );
-              })}
-            </div>
+
+                  <div className="space-y-3">
+                    {setIndices.map(setIdx => {
+                      const exName = activeExName;
+                      const key = `${exName}-${setIdx}`;
+                      const setProgress = workoutProgress[key] || { reps: targetRepsCount, weight: isBodyweight ? 0 : 30, completed: false };
+
+                      return (
+                        <div
+                          key={setIdx}
+                          className={`flex items-center justify-between gap-3 p-3.5 rounded-xl border transition-all ${
+                            setProgress.completed
+                              ? 'bg-indigo-50/50 border-indigo-200'
+                              : 'bg-slate-50/50 border-slate-200'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleSetCompleted(exName, setIdx)}
+                              className={`w-7 h-7 rounded-lg border flex items-center justify-center transition-all cursor-pointer ${
+                                setProgress.completed
+                                  ? 'bg-indigo-600 border-indigo-600 text-white'
+                                  : 'bg-white border-slate-300 text-transparent hover:border-indigo-400'
+                              }`}
+                            >
+                              <Check className="w-4 h-4" />
+                            </button>
+                            <span className="text-xs font-bold text-slate-700">Set {setIdx + 1}</span>
+                          </div>
+
+                          <div className="flex items-center gap-3">
+                            {/* Weight Input */}
+                            {!isBodyweight ? (
+                              <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
+                                <input
+                                  type="number"
+                                  value={setProgress.weight}
+                                  onChange={e =>
+                                    handleUpdateSetField(exName, setIdx, 'weight', parseFloat(e.target.value) || 0)
+                                  }
+                                  className="w-12 text-xs font-bold text-slate-800 text-center focus:outline-none"
+                                  step="2.5"
+                                />
+                                <span className="text-[10px] font-extrabold text-slate-400 uppercase">{weightUnit}</span>
+                              </div>
+                            ) : (
+                              <span className="text-xs font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">
+                                Bodyweight
+                              </span>
+                            )}
+
+                            {/* Reps Input */}
+                            <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
+                              <input
+                                type="number"
+                                value={setProgress.reps}
+                                onChange={e =>
+                                  handleUpdateSetField(exName, setIdx, 'reps', parseInt(e.target.value) || 0)
+                                }
+                                className="w-10 text-xs font-bold text-slate-800 text-center focus:outline-none"
+                              />
+                              <span className="text-[10px] font-extrabold text-slate-400 uppercase">reps</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="pt-2 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => handleAddExtraSetToExercise(activeExName, activeRawEx)}
+                      className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-xs rounded-xl border border-indigo-200/80 transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                    >
+                      <Plus className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Add Extra Set</span>
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
 
             {/* Next / Finish Navigation Buttons */}
             <div className="pt-4 border-t border-slate-100 flex items-center justify-between gap-3">

@@ -158,15 +158,14 @@ export default function App() {
   const [parsedWorkouts, setParsedWorkouts] = useState<ParsedWorkoutDay[]>(() => {
     try {
       const saved = localStorage.getItem('hypertrophy_parsed_workouts');
-      if (!saved) return [];
-      const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed)) {
-        return parsed;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
       }
-      return [];
-    } catch (e) {
-      return [];
-    }
+    } catch (e) {}
+    return [];
   });
   const [rawPlanText, setRawPlanText] = useState('');
 
@@ -345,7 +344,7 @@ export default function App() {
             localStorage.setItem('hypertrophy_insights', JSON.stringify(restored.insights));
           } catch (e) {}
         }
-        if (restored.parsedFoods) {
+        if (restored.parsedFoods && Array.isArray(restored.parsedFoods) && restored.parsedFoods.length > 0) {
           finalFoods = restored.parsedFoods;
           setParsedFoods(restored.parsedFoods);
           try {
@@ -353,56 +352,11 @@ export default function App() {
           } catch (e) {}
         }
         if (restored.parsedWorkouts && Array.isArray(restored.parsedWorkouts) && restored.parsedWorkouts.length > 0) {
-          setParsedWorkouts((prevLocal) => {
-            if (!prevLocal || prevLocal.length === 0) {
-              finalWorkouts = restored.parsedWorkouts;
-              return restored.parsedWorkouts;
-            }
-
-            // Intelligently merge restored days with local days to preserve local workout edits and YouTube links
-            const mergedDays = restored.parsedWorkouts.map((restoredDay: ParsedWorkoutDay, idx: number) => {
-              const localDay = prevLocal[idx] || prevLocal.find((d) => d.day === restoredDay.day);
-              if (!localDay) return restoredDay;
-
-              const restoredExMap = new Map((restoredDay.exercises || []).map((e: any) => [e.name.toLowerCase().trim(), e]));
-              const localExList = localDay.exercises || [];
-
-              const mergedExercises = localExList.map((localEx: any) => {
-                const key = localEx.name.toLowerCase().trim();
-                const restoredEx = restoredExMap.get(key);
-                return {
-                  name: localEx.name,
-                  youtubeUrl: localEx.youtubeUrl || restoredEx?.youtubeUrl || ''
-                };
-              });
-
-              const localNames = new Set(localExList.map((e: any) => e.name.toLowerCase().trim()));
-              (restoredDay.exercises || []).forEach((restoredEx: any) => {
-                if (!localNames.has(restoredEx.name.toLowerCase().trim())) {
-                  mergedExercises.push(restoredEx);
-                }
-              });
-
-              return {
-                ...restoredDay,
-                day: localDay.day || restoredDay.day,
-                focusArea: localDay.focusArea || restoredDay.focusArea,
-                exercises: mergedExercises
-              };
-            });
-
-            if (prevLocal.length > restored.parsedWorkouts.length) {
-              for (let i = restored.parsedWorkouts.length; i < prevLocal.length; i++) {
-                mergedDays.push(prevLocal[i]);
-              }
-            }
-
-            finalWorkouts = mergedDays;
-            try {
-              localStorage.setItem('hypertrophy_parsed_workouts', JSON.stringify(mergedDays));
-            } catch (e) {}
-            return mergedDays;
-          });
+          finalWorkouts = restored.parsedWorkouts;
+          setParsedWorkouts(restored.parsedWorkouts);
+          try {
+            localStorage.setItem('hypertrophy_parsed_workouts', JSON.stringify(restored.parsedWorkouts));
+          } catch (e) {}
         }
 
         const nowStr = new Date().toLocaleString();

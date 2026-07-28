@@ -155,21 +155,21 @@ export function parseWorkoutsFromText(text: string): ParsedWorkoutDay[] {
 
   // Helper to resolve YouTube URL for an exercise name
   const getYoutubeUrlForExercise = (exName: string): string => {
-    const lower = exName.toLowerCase();
+    const lower = exName.toLowerCase().trim();
     for (const [key, url] of Object.entries(youtubeUrlMap)) {
       if (lower.includes(key) || key.includes(lower)) {
         return url;
       }
     }
-    if (lower.includes('row')) return 'https://www.youtube.com/watch?v=dFzUjzfih7k';
+    if (lower.includes('dumbbell row') || lower === 'rows' || lower === 'row') return 'https://www.youtube.com/watch?v=dFzUjzfih7k';
     if (lower.includes('leg raise')) return 'https://www.youtube.com/watch?v=2o1bwZT5nE0';
     if (lower.includes('crunch') || lower.includes('sit up')) return 'https://www.youtube.com/watch?v=MKs7Gv_9Ghc';
     if (lower.includes('bench press')) return 'https://www.youtube.com/watch?v=VmB1G1K7v94';
     if (lower.includes('shoulder press')) return 'https://www.youtube.com/watch?v=qEwKCR5JCog';
-    if (lower.includes('curl')) return 'https://www.youtube.com/watch?v=ykJgrb560_Y';
+    if (lower.includes('bicep curl') || lower === 'curl' || lower === 'curls') return 'https://www.youtube.com/watch?v=ykJgrb560_Y';
     if (lower.includes('squat')) return 'https://www.youtube.com/watch?v=aclHkVaku9U';
     if (lower.includes('stretch')) return 'https://www.youtube.com/watch?v=g_tea8ZNk5A';
-    return 'https://www.youtube.com/watch?v=dFzUjzfih7k';
+    return '';
   };
 
   const dayResults: ParsedWorkoutDay[] = [];
