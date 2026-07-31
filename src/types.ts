@@ -19,6 +19,8 @@ export interface Meal {
   name: string;
   protein: number; // in grams
   calories: number;
+  carbs?: number; // in grams
+  fiber?: number; // in grams
   timestamp: string; // e.g. "08:30"
 }
 
@@ -34,6 +36,8 @@ export interface UserGoals {
   currentWeight: number;
   targetWeight: number;
   weightUnit: 'lbs' | 'kg';
+  initialWeight?: number;
+  initialWeightDate?: string;
   currentHeight?: number; // in cm
   dailyProteinTarget: number; // grams
   dailyCalorieTarget: number; // kcal
@@ -43,6 +47,8 @@ export interface UserGoals {
   driveFolderLink?: string;
   lastSyncTime?: string;
   syncDocsOnBackup?: boolean;
+  backupReminderEnabled?: boolean;
+  backupReminderTime?: string; // e.g. "22:00"
 }
 
 export interface ParsedWorkoutExercise {

@@ -373,8 +373,9 @@ export default function WorkoutLogger({
 
   // Save updated days to parent state / persistence
   const saveDisplayDays = (updatedDays: ParsedWorkoutDay[]) => {
+    const cleanedDays = JSON.parse(JSON.stringify(updatedDays));
     if (onUpdateParsedWorkouts) {
-      onUpdateParsedWorkouts(updatedDays);
+      onUpdateParsedWorkouts(cleanedDays);
     }
   };
 
@@ -523,10 +524,27 @@ export default function WorkoutLogger({
   const activeYoutubeId = getActiveYoutubeId();
 
   const selectedDateStr = selectedDate || new Date().toISOString().split('T')[0];
-  const isWorkoutCompletedToday = logs && logs.some(l => l.date === selectedDateStr && l.workouts && l.workouts.length > 0);
+  const todayStr = new Date().toISOString().split('T')[0];
+  const isPreviousDay = selectedDateStr < todayStr;
+
+  const selectedDateLog = logs ? logs.find((l: any) => l.date === selectedDateStr) : null;
+  const loggedWorkouts = selectedDateLog?.workouts || [];
+  
+  const hasLiftingWorkoutsLogged = loggedWorkouts.some(
+    (w: any) => w.category !== 'Rest' && !w.name?.toLowerCase().includes('rest')
+  );
+  const hasRestDayLogged = loggedWorkouts.some(
+    (w: any) => w.category === 'Rest' || w.name?.toLowerCase().includes('rest')
+  );
+  const hasWorkoutsLogged = loggedWorkouts.length > 0;
+  const isWorkoutCompletedToday = hasWorkoutsLogged;
+
+  // Should we render the Rest Day UI? If it's a rest day and no lifting workouts were logged, render Rest Day UI
+  const showRestDayView = Boolean(currentPlan?.isRestDay) && !hasLiftingWorkoutsLogged;
 
   // Initialize progress state when starting workout
   const handleStartWorkout = () => {
+    if (isPreviousDay) return; // Cannot start live guided session for past days
     if (!currentPlan || currentPlan.exercises.length === 0) return;
     const initialProgress: Record<string, { reps: number; weight: number; completed: boolean }> = {};
     
@@ -1091,7 +1109,7 @@ export default function WorkoutLogger({
                   </div>
 
                   {/* Main Day Content: Rest Day OR Workout Lifts Card */}
-                  {currentPlan.isRestDay ? (
+                  {showRestDayView ? (
                     /* --- REST & RECOVERY DAY VIEW --- */
                     <div className="bg-gradient-to-br from-amber-50 via-orange-50/40 to-indigo-50/30 border border-amber-200 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xs">
                       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
@@ -1189,14 +1207,32 @@ export default function WorkoutLogger({
                       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                         <div>
                           <span className="text-xs uppercase font-black px-3 py-1 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-150">
-                            {currentPlan.category} TARGETS
+                            {hasWorkoutsLogged && isPreviousDay
+                              ? `LOGGED EXERCISES (${selectedDateStr})`
+                              : `${currentPlan.category} TARGETS`}
                           </span>
                           <h3 className="text-lg font-black text-slate-800 mt-2">
-                            Start Today's Lift ({currentPlan.title})
+                            {isPreviousDay
+                              ? hasWorkoutsLogged
+                                ? `Completed Workout for ${selectedDateStr}`
+                                : `Scheduled Routine (${currentPlan.title}) — ${selectedDateStr}`
+                              : `Start Today's Lift (${currentPlan.title})`}
                           </h3>
                         </div>
 
-                        {isWorkoutCompletedToday ? (
+                        {isPreviousDay ? (
+                          hasWorkoutsLogged ? (
+                            <div className="flex items-center gap-2 px-5 py-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl font-black text-xs shrink-0 self-center">
+                              <CheckCircle2 className="w-5 h-5 text-emerald-600 animate-pulse" />
+                              <span>{loggedWorkouts.length} Lifts Logged for {selectedDateStr}</span>
+                            </div>
+                          ) : (
+                            <div className="px-4 py-2.5 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl text-xs font-bold shrink-0 self-center flex items-center gap-2">
+                              <Info className="w-4 h-4 text-amber-600 shrink-0" />
+                              <span>Past Date — Live mode is for Today only. Use '+ Add Lift' on the right to log past exercises.</span>
+                            </div>
+                          )
+                        ) : isWorkoutCompletedToday ? (
                           <div
                             className="flex items-center gap-2 px-5 py-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl font-black text-xs shrink-0 self-center"
                             id="workout-already-completed-badge"
@@ -1228,7 +1264,7 @@ export default function WorkoutLogger({
                       <div className="border-t border-slate-200/60 pt-6 space-y-4">
                         <div className="flex justify-between items-center">
                           <span className="text-xs font-black text-slate-400 uppercase tracking-wider block">
-                            Exercises for this routine:
+                            {hasWorkoutsLogged ? `Logged Exercises for ${selectedDateStr}:` : 'Exercises for this routine:'}
                           </span>
                           <button
                             type="button"
@@ -1239,7 +1275,54 @@ export default function WorkoutLogger({
                           </button>
                         </div>
 
-                        {currentPlan.rawExercises.length > 0 ? (
+                        {hasWorkoutsLogged ? (
+                          <div className="space-y-3">
+                            {loggedWorkouts.map((w: any, idx: number) => {
+                              const matchUrl = findMatchingYoutubeUrl(w.name);
+                              return (
+                                <div key={w.id || idx} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3 shadow-xs">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                      <span className="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-700 font-mono font-black text-xs flex items-center justify-center">
+                                        {idx + 1}
+                                      </span>
+                                      <div>
+                                        <h4 className="text-sm font-bold text-slate-800">{w.name}</h4>
+                                        <span className="text-[10px] font-black uppercase text-indigo-600 bg-indigo-50/70 px-2 py-0.5 rounded border border-indigo-100 mt-0.5 inline-block">
+                                          {w.category || 'Exercise'}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    {matchUrl && (
+                                      <a
+                                        href={matchUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-[10px] font-extrabold flex items-center gap-1 transition-colors"
+                                      >
+                                        <PlayCircle className="w-3.5 h-3.5 text-red-600" />
+                                        Video
+                                      </a>
+                                    )}
+                                  </div>
+
+                                  {w.sets && w.sets.length > 0 && (
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-slate-100">
+                                      {w.sets.map((s: any, sIdx: number) => (
+                                        <div key={s.id || sIdx} className="bg-slate-50 border border-slate-150 p-2 rounded-xl text-center">
+                                          <span className="text-[9px] font-mono font-bold text-slate-400 uppercase block">Set {sIdx + 1}</span>
+                                          <span className="text-xs font-black font-mono text-slate-800">
+                                            {s.weight > 0 ? `${s.weight} ${weightUnit}` : 'BW'} × {s.reps} reps
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : currentPlan.rawExercises.length > 0 ? (
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             {currentPlan.rawExercises.map((rawEx, idx) => {
                               const dbEntry = EXERCISES_DATABASE[matchExerciseKey(rawEx.name)];

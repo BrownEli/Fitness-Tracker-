@@ -1,0 +1,67 @@
+{
+  "entities": {
+    "users": {
+      "title": "User Profile",
+      "description": "User account and profile data",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid"]
+    },
+    "userGoals": {
+      "title": "User Goals",
+      "description": "User target weights, height, and macro targets",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "currentWeight": { "type": "number" },
+        "targetWeight": { "type": "number" },
+        "weightUnit": { "type": "string" },
+        "currentHeight": { "type": "number" },
+        "dailyProteinTarget": { "type": "number" },
+        "dailyCalorieTarget": { "type": "number" },
+        "weeklyWorkoutDaysTarget": { "type": "number" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId"]
+    },
+    "dailyLogs": {
+      "title": "Daily Logs",
+      "description": "Daily food entries, workout sets, and weight tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "date": { "type": "string" },
+        "meals": { "type": "array" },
+        "workouts": { "type": "array" },
+        "weight": { "type": "number" },
+        "notes": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId", "date"]
+    },
+    "routineDays": {
+      "title": "Routine Days",
+      "description": "Custom weekly workout routine days",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "day": { "type": "string" },
+        "focusArea": { "type": "string" },
+        "exercises": { "type": "array" },
+        "isRestDay": { "type": "boolean" },
+        "dayOfWeek": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId"]
+    }
+  }
+}

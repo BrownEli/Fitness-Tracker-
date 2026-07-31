@@ -339,10 +339,29 @@ export async function getOrCreateFolderByPath(
 }
 
 /**
- * Backs up all application data (logs, goals, insights) to Google Drive in JSON format
+ * Generates a timestamped backup filename (e.g. fitness_tracker_backup_2026-07-29_02-47-10.json)
  */
-export async function backupDataToDrive(data: any, accessToken: string, folderId?: string): Promise<{ fileId: string; folderId: string }> {
-  const filename = 'hypertrophy_hub_backup.json';
+export function getBackupFilename(prefix: string = 'fitness_tracker_backup'): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const seconds = String(now.getSeconds()).padStart(2, '0');
+  return `${prefix}_${year}-${month}-${day}_${hours}-${minutes}-${seconds}.json`;
+}
+
+/**
+ * Backs up all application data (logs, goals, insights) to Google Drive in JSON format.
+ * ALWAYS creates a brand new timestamped JSON file in the specified Google Drive location and never overwrites existing files.
+ */
+export async function backupDataToDrive(
+  data: any,
+  accessToken: string,
+  folderId?: string
+): Promise<{ fileId: string; folderId: string; filename: string }> {
+  const filename = getBackupFilename();
   
   let resolvedFolderId = folderId;
   if (!resolvedFolderId) {
@@ -352,48 +371,30 @@ export async function backupDataToDrive(data: any, accessToken: string, folderId
     }
   }
 
-  let queryText = `name = '${filename}' and trashed = false`;
+  // 1. Create a brand new file with the timestamped filename in the specified folder
+  const fileMetadata: any = {
+    name: filename,
+    mimeType: 'application/json'
+  };
   if (resolvedFolderId) {
-    queryText += ` and '${resolvedFolderId}' in parents`;
+    fileMetadata.parents = [resolvedFolderId];
   }
-  const query = encodeURIComponent(queryText);
-  
-  // 1. Search for existing backup file
-  const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id)`, {
-    headers: { Authorization: `Bearer ${accessToken}` }
+
+  const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(fileMetadata)
   });
-  if (!searchRes.ok) {
-    throw new Error(`Google Drive Search failed: ${searchRes.statusText}`);
+  if (!createRes.ok) {
+    throw new Error(`Failed to initialize Google Drive export file: ${createRes.statusText}`);
   }
-  const searchData = await searchRes.json();
-  let fileId = searchData.files && searchData.files[0]?.id;
+  const createData = await createRes.json();
+  const fileId = createData.id;
 
-  if (!fileId) {
-    // 2. File doesn't exist, create it
-    const body: any = {
-      name: filename,
-      mimeType: 'application/json'
-    };
-    if (resolvedFolderId) {
-      body.parents = [resolvedFolderId];
-    }
-
-    const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(body)
-    });
-    if (!createRes.ok) {
-      throw new Error(`Failed to initialize Google Drive backup: ${createRes.statusText}`);
-    }
-    const createData = await createRes.json();
-    fileId = createData.id;
-  }
-
-  // 3. Upload content
+  // 2. Upload JSON content to the newly created file
   const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
     method: 'PATCH',
     headers: {
@@ -403,28 +404,26 @@ export async function backupDataToDrive(data: any, accessToken: string, folderId
     body: JSON.stringify(data)
   });
   if (!uploadRes.ok) {
-    throw new Error(`Failed to upload sync data to Google Drive: ${uploadRes.statusText}`);
+    throw new Error(`Failed to upload backup JSON data to Google Drive: ${uploadRes.statusText}`);
   }
 
-  return { fileId, folderId: resolvedFolderId || '' };
+  return { fileId, folderId: resolvedFolderId || '', filename };
 }
 
 /**
- * Restores data from the hypertrophy_hub_backup.json file in Google Drive
+ * Restores data from the most recent backup JSON file in Google Drive
  */
 export async function restoreDataFromDrive(accessToken: string, folderId?: string): Promise<any> {
-  const filename = 'hypertrophy_hub_backup.json';
-  
   let fileId: string | undefined;
   let resolvedFolderId = folderId;
 
-  // 1. Try finding file in the supplied folder ID if it's available
+  // 1. Try finding latest timestamped backup file in the supplied folder ID if available
   if (resolvedFolderId) {
-    console.log(`Checking for backup in supplied folder ${resolvedFolderId}...`);
-    const queryText = `name = '${filename}' and trashed = false and '${resolvedFolderId}' in parents`;
+    console.log(`Checking for latest backup in supplied folder ${resolvedFolderId}...`);
+    const queryText = `(name contains 'fitness_tracker_backup' or name contains 'hypertrophy_hub_backup') and trashed = false and '${resolvedFolderId}' in parents`;
     const query = encodeURIComponent(queryText);
     try {
-      const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id)`, {
+      const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id)&orderBy=modifiedTime desc`, {
         headers: { Authorization: `Bearer ${accessToken}` }
       });
       if (searchRes.ok) {
@@ -438,10 +437,10 @@ export async function restoreDataFromDrive(accessToken: string, folderId?: strin
     }
   }
 
-  // 2. Global search fallback: Search globally for the unique backup filename (critical for cross-device loading)
+  // 2. Global search fallback: Search globally for the most recent backup file
   if (!fileId) {
-    console.log('Searching globally for hypertrophy_hub_backup.json across Google Drive...');
-    const queryText = `name = '${filename}' and trashed = false`;
+    console.log('Searching globally for latest backup JSON file across Google Drive...');
+    const queryText = `(name contains 'fitness_tracker_backup' or name contains 'hypertrophy_hub_backup') and trashed = false`;
     const query = encodeURIComponent(queryText);
     try {
       const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,parents)&orderBy=modifiedTime desc`, {
@@ -470,9 +469,9 @@ export async function restoreDataFromDrive(accessToken: string, folderId?: strin
       const pathFolderId = await getOrCreateFolderByPath(['Fitness Tracker', 'Backups'], accessToken, false);
       if (pathFolderId) {
         resolvedFolderId = pathFolderId;
-        const queryText = `name = '${filename}' and trashed = false and '${resolvedFolderId}' in parents`;
+        const queryText = `(name contains 'fitness_tracker_backup' or name contains 'hypertrophy_hub_backup') and trashed = false and '${resolvedFolderId}' in parents`;
         const query = encodeURIComponent(queryText);
-        const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id)`, {
+        const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id)&orderBy=modifiedTime desc`, {
           headers: { Authorization: `Bearer ${accessToken}` }
         });
         if (searchRes.ok) {
@@ -488,7 +487,7 @@ export async function restoreDataFromDrive(accessToken: string, folderId?: strin
   }
 
   if (!fileId) {
-    console.log('No existing hypertrophy_hub_backup.json found anywhere on your Google Drive.');
+    console.log('No existing hypertrophy_hub_backup JSON file found anywhere on your Google Drive.');
     return null;
   }
 

@@ -1,13 +1,18 @@
-import React, { useState } from 'react';
-import { UserGoals } from '../types';
-import { Settings, Check, Sparkles } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { UserGoals, DailyLog } from '../types';
+import { Settings, Check, Sparkles, Scale, Calendar, Plus, Trash2, History } from 'lucide-react';
 
 interface GoalsConfigProps {
   goals: UserGoals;
   onUpdateGoals: (goals: UserGoals) => void;
+  onLogWeight?: (date: string, weight: number) => void;
+  onDeleteWeight?: (date: string) => void;
+  logs?: DailyLog[];
 }
 
-export default function GoalsConfig({ goals, onUpdateGoals }: GoalsConfigProps) {
+const getTodayString = () => new Date().toISOString().split('T')[0];
+
+export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDeleteWeight, logs = [] }: GoalsConfigProps) {
   const [currentWeight, setCurrentWeight] = useState(goals.currentWeight.toString());
   const [targetWeight, setTargetWeight] = useState(goals.targetWeight.toString());
   const [weightUnit, setWeightUnit] = useState<UserGoals['weightUnit']>(goals.weightUnit);
@@ -16,6 +21,20 @@ export default function GoalsConfig({ goals, onUpdateGoals }: GoalsConfigProps) 
   const [calories, setCalories] = useState(goals.dailyCalorieTarget.toString());
   const [workoutDays, setWorkoutDays] = useState(goals.weeklyWorkoutDaysTarget.toString());
   const [saved, setSaved] = useState(false);
+
+  // Weight entry logging state in settings
+  const [logWeightInput, setLogWeightInput] = useState(() => goals.currentWeight.toString());
+  const [logDateInput, setLogDateInput] = useState(() => getTodayString());
+  const [showHistoryList, setShowHistoryList] = useState(false);
+  const [weightSavedAlert, setWeightSavedAlert] = useState<string | null>(null);
+
+  // Compute all recorded weight entries sorted chronologically
+  const allWeightEntries = useMemo(() => {
+    return logs
+      .filter((l) => typeof l.weight === 'number' && !isNaN(l.weight) && l.weight! > 0)
+      .map((l) => ({ date: l.date, weight: l.weight! }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }, [logs]);
 
   // Synchronize local state with props when goals change
   React.useEffect(() => {
@@ -26,6 +45,7 @@ export default function GoalsConfig({ goals, onUpdateGoals }: GoalsConfigProps) 
     setProtein(goals.dailyProteinTarget.toString());
     setCalories(goals.dailyCalorieTarget.toString());
     setWorkoutDays(goals.weeklyWorkoutDaysTarget.toString());
+    setLogWeightInput(goals.currentWeight.toString());
   }, [goals]);
 
   // Auto-calculate optimized target protein based on hypertrophy standards: 1.0g per lb of bodyweight
@@ -45,11 +65,34 @@ export default function GoalsConfig({ goals, onUpdateGoals }: GoalsConfigProps) 
     setCalories(optimizedCalories.toString());
   };
 
+  const handleSaveSpecificWeight = (e: React.FormEvent) => {
+    e.preventDefault();
+    const val = parseFloat(logWeightInput);
+    if (isNaN(val) || val <= 0) return;
+
+    if (onLogWeight) {
+      onLogWeight(logDateInput, val);
+      // Also sync current weight goal if logging for today
+      if (logDateInput === getTodayString()) {
+        setCurrentWeight(val.toString());
+        onUpdateGoals({
+          ...goals,
+          currentWeight: val,
+          weightUnit
+        });
+      }
+      setWeightSavedAlert(`✓ Recorded ${val} ${weightUnit} for ${logDateInput}`);
+      setTimeout(() => setWeightSavedAlert(null), 3000);
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const parsedCurrentWeight = parseFloat(currentWeight) || 75;
+    
     onUpdateGoals({
       ...goals,
-      currentWeight: parseFloat(currentWeight) || 75,
+      currentWeight: parsedCurrentWeight,
       targetWeight: parseFloat(targetWeight) || 80,
       weightUnit,
       currentHeight: parseFloat(currentHeight) || 178,
@@ -57,6 +100,11 @@ export default function GoalsConfig({ goals, onUpdateGoals }: GoalsConfigProps) 
       dailyCalorieTarget: parseInt(calories) || 2500,
       weeklyWorkoutDaysTarget: parseInt(workoutDays) || 5
     });
+
+    // Also auto-record current weight for today's log if handler is provided
+    if (onLogWeight && parsedCurrentWeight > 0) {
+      onLogWeight(getTodayString(), parsedCurrentWeight);
+    }
 
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
@@ -218,7 +266,7 @@ export default function GoalsConfig({ goals, onUpdateGoals }: GoalsConfigProps) 
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-3 pt-2">
+        <div className="flex items-center justify-end gap-3 pt-2 border-b border-slate-100 pb-5">
           {saved && (
             <span className="text-emerald-600 text-xs font-bold flex items-center gap-1" id="goals-saved-alert">
               <Check className="w-3.5 h-3.5" />
@@ -234,6 +282,113 @@ export default function GoalsConfig({ goals, onUpdateGoals }: GoalsConfigProps) 
           </button>
         </div>
       </form>
+
+      {/* Bodyweight Logger & History in Settings */}
+      {onLogWeight && (
+        <div className="mt-6 pt-5 border-t border-slate-100 space-y-4" id="settings-bodyweight-logger">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Scale className="w-4 h-4 text-purple-600" />
+                Scale Weight Log & History
+              </h3>
+              <p className="text-slate-500 text-xs mt-0.5">Record or edit scale weight entries for specific dates</p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowHistoryList(!showHistoryList)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                showHistoryList
+                  ? 'bg-purple-50 text-purple-700 border-purple-200'
+                  : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+              }`}
+            >
+              <History className="w-3.5 h-3.5" />
+              {showHistoryList ? 'Hide Log History' : `View Log History (${allWeightEntries.length})`}
+            </button>
+          </div>
+
+          <form onSubmit={handleSaveSpecificWeight} className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3 sm:space-y-0 sm:flex sm:items-center sm:gap-3">
+            <div className="flex-1">
+              <label className="block text-[10px] font-extrabold text-slate-500 uppercase mb-1">Entry Date</label>
+              <input
+                type="date"
+                required
+                value={logDateInput}
+                onChange={(e) => setLogDateInput(e.target.value)}
+                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-800 focus:outline-none focus:border-purple-500"
+              />
+            </div>
+
+            <div className="flex-1">
+              <label className="block text-[10px] font-extrabold text-slate-500 uppercase mb-1">Scale Weight ({weightUnit})</label>
+              <input
+                type="number"
+                step="0.1"
+                required
+                min="20"
+                max="500"
+                value={logWeightInput}
+                onChange={(e) => setLogWeightInput(e.target.value)}
+                placeholder={`e.g. ${goals.currentWeight}`}
+                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-800 focus:outline-none focus:border-purple-500"
+              />
+            </div>
+
+            <div className="pt-2 sm:pt-4">
+              <button
+                type="submit"
+                className="w-full sm:w-auto px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Record Reading
+              </button>
+            </div>
+          </form>
+
+          {weightSavedAlert && (
+            <div className="p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-xl flex items-center gap-2">
+              <Check className="w-4 h-4 text-emerald-600" />
+              {weightSavedAlert}
+            </div>
+          )}
+
+          {/* Weight history records */}
+          {showHistoryList && (
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+              <h5 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Weight History Records</h5>
+              {allWeightEntries.length > 0 ? (
+                <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+                  {allWeightEntries.map((entry) => (
+                    <div key={entry.date} className="flex items-center justify-between bg-white border border-slate-200 rounded-lg p-2.5 text-xs">
+                      <div className="flex items-center gap-2">
+                        <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                        <span className="font-bold text-slate-700">{entry.date}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="font-mono font-black text-purple-700">{entry.weight} {weightUnit}</span>
+                        {onDeleteWeight && (
+                          <button
+                            type="button"
+                            onClick={() => onDeleteWeight(entry.date)}
+                            className="text-slate-400 hover:text-red-600 p-1 rounded-md transition-colors cursor-pointer"
+                            title="Delete weight entry for this date"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400">No weight entries logged yet.</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

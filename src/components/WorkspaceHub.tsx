@@ -4,8 +4,8 @@ import { auth, googleSignIn, logout, initAuth, isTokenExpired } from '../lib/goo
 import { ConfirmModal } from './ConfirmModal';
 import {
   backupDataToDrive,
-  restoreDataFromDrive,
-  extractFolderId
+  extractFolderId,
+  getBackupFilename
 } from '../lib/googleApi';
 import { User } from 'firebase/auth';
 
@@ -21,7 +21,11 @@ import {
   Plus,
   Flame,
   Folder,
-  Trash2
+  Trash2,
+  Bell,
+  Smartphone,
+  Clock,
+  Check
 } from 'lucide-react';
 
 interface WorkspaceHubProps {
@@ -68,11 +72,94 @@ export default function WorkspaceHub({
   const [syncStatus, setSyncStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [syncMessage, setSyncMessage] = useState('');
 
-  // Local Import / Export state
+  // Local Export state
   const [fileError, setFileError] = useState<string | null>(null);
   const [fileSuccess, setFileSuccess] = useState<string | null>(null);
 
   const [sessionExpired, setSessionExpired] = useState(false);
+
+  // Notification states
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission>(() => {
+    return typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default';
+  });
+  const [reminderTimeInput, setReminderTimeInput] = useState(goals.backupReminderTime || '22:00');
+  const [notifFeedback, setNotifFeedback] = useState<string | null>(null);
+
+  const handleToggleReminder = (enabled: boolean) => {
+    onUpdateGoals((prev) => ({
+      ...prev,
+      backupReminderEnabled: enabled
+    }));
+    setNotifFeedback(enabled ? 'Daily backup reminders enabled!' : 'Daily backup reminders disabled');
+    setTimeout(() => setNotifFeedback(null), 3000);
+  };
+
+  const handleSaveReminderTime = (e: React.FormEvent) => {
+    e.preventDefault();
+    onUpdateGoals((prev) => ({
+      ...prev,
+      backupReminderTime: reminderTimeInput
+    }));
+    setNotifFeedback(`Reminder time updated to ${reminderTimeInput}!`);
+    setTimeout(() => setNotifFeedback(null), 3000);
+  };
+
+  const handleRequestPermission = async () => {
+    if (!('Notification' in window)) {
+      setNotifFeedback('Web Notifications are not supported by this browser.');
+      return;
+    }
+    const result = await Notification.requestPermission();
+    setNotifPermission(result);
+    if (result === 'granted') {
+      setNotifFeedback('✓ Notification permission granted!');
+    } else {
+      setNotifFeedback('Notification permission was not granted.');
+    }
+    setTimeout(() => setNotifFeedback(null), 4000);
+  };
+
+  const triggerTestNotification = () => {
+    try {
+      const notif = new Notification('Fitness Tracker - Time to Backup! ☁️', {
+        body: "Don't forget to export your daily workout & nutrition logs to Google Drive.",
+        icon: '/favicon.ico',
+        tag: 'test-backup-reminder'
+      });
+
+      notif.onclick = () => {
+        window.focus();
+        window.location.hash = 'google-sync-section';
+        const el = document.getElementById('google-sync-section');
+        if (el) el.scrollIntoView({ behavior: 'smooth' });
+      };
+
+      setNotifFeedback('✓ Test notification sent! Check your notification tray or phone top bar.');
+      setTimeout(() => setNotifFeedback(null), 5000);
+    } catch (e: any) {
+      setNotifFeedback('Failed to send notification: ' + (e.message || 'Check browser permissions'));
+    }
+  };
+
+  const handleSendTestNotification = () => {
+    if (!('Notification' in window)) {
+      setNotifFeedback('Web Notifications are not supported in this browser.');
+      return;
+    }
+
+    if (Notification.permission !== 'granted') {
+      Notification.requestPermission().then((res) => {
+        setNotifPermission(res);
+        if (res === 'granted') {
+          triggerTestNotification();
+        } else {
+          setNotifFeedback('Please allow notifications in browser settings to receive test alert.');
+        }
+      });
+    } else {
+      triggerTestNotification();
+    }
+  };
 
   // Custom confirmation modal state
   const [confirmConfig, setConfirmConfig] = useState<{
@@ -220,16 +307,16 @@ export default function WorkspaceHub({
     }));
 
     setIsSavingFolder(false);
-    setDocSuccess('Google Drive folder link saved successfully!');
+    setDocSuccess('Google Drive storage location saved successfully!');
     setTimeout(() => setDocSuccess(null), 4000);
   };
 
-  // Backup state payload to Google Drive
-  const handleBackupToDrive = async () => {
+  // Export JSON backup payload to Google Drive (creates new timestamped file every time)
+  const handleExportToDrive = async () => {
     const activeToken = await getOrRenewToken();
     if (!activeToken) {
       setSyncStatus('error');
-      setSyncMessage('Please authenticate with Google before backing up.');
+      setSyncMessage('Please authenticate with Google before exporting JSON.');
       return;
     }
 
@@ -249,7 +336,7 @@ export default function WorkspaceHub({
       };
 
       const folderId = goals.driveFolderLink ? extractFolderId(goals.driveFolderLink) : undefined;
-      const { fileId, folderId: resolvedFolderId } = await backupDataToDrive(payload, activeToken, folderId);
+      const { filename, folderId: resolvedFolderId } = await backupDataToDrive(payload, activeToken, folderId);
       const nowStr = new Date().toLocaleString();
 
       onUpdateGoals((prev) => ({
@@ -259,71 +346,17 @@ export default function WorkspaceHub({
       }));
 
       setSyncStatus('success');
-      setSyncMessage(`JSON backup saved to your Google Drive! File ID: ${fileId}. Last synced: ${nowStr}`);
+      setSyncMessage(`✓ New JSON backup exported to Google Drive! File created: "${filename}"`);
     } catch (err: any) {
       console.error(err);
       setSyncStatus('error');
-      setSyncMessage(err.message || 'Drive Backup failed.');
+      setSyncMessage(err.message || 'Exporting JSON to Google Drive failed.');
     } finally {
       setIsSyncing(false);
     }
   };
 
-  // Restore state payload from Google Drive
-  const handleRestoreFromDrive = async () => {
-    const activeToken = await getOrRenewToken();
-    if (!activeToken) {
-      setSyncStatus('error');
-      setSyncMessage('Please authenticate with Google before restoring.');
-      return;
-    }
-
-    requestConfirm(
-      'Restore from Google Drive',
-      'Are you sure you want to download and restore your data from Google Drive? This will overwrite your current logs, routines, goals, and insights!',
-      async () => {
-        setIsSyncing(true);
-        setSyncStatus('idle');
-        setSyncMessage('');
-
-        try {
-          const folderId = goals.driveFolderLink ? extractFolderId(goals.driveFolderLink) : undefined;
-          const data = await restoreDataFromDrive(activeToken, folderId);
-          if (data && data.goals && data.logs) {
-            onUpdateGoals((prev) => {
-              const driveFolderLink = data._resolvedFolderId
-                ? `https://drive.google.com/drive/folders/${data._resolvedFolderId}`
-                : (data.goals.driveFolderLink || prev.driveFolderLink);
-              return {
-                ...prev,
-                ...data.goals,
-                driveFolderLink
-              };
-            });
-            onUpdateLogs(data.logs);
-            if (data.insights) onUpdateInsights(data.insights);
-            if (data.parsedFoods) onUpdateParsedFoods(data.parsedFoods);
-            if (data.parsedWorkouts) onUpdateParsedWorkouts(data.parsedWorkouts);
-
-            setSyncStatus('success');
-            setSyncMessage('Hypertrophy logs, routines, and goals successfully restored from Google Drive JSON backup!');
-          } else {
-            throw new Error('No backup file found, or retrieved file is missing valid properties.');
-          }
-        } catch (err: any) {
-          console.error(err);
-          setSyncStatus('error');
-          setSyncMessage(err.message || 'Drive Restore failed.');
-        } finally {
-          setIsSyncing(false);
-        }
-      },
-      'Restore Data',
-      'warning'
-    );
-  };
-
-  // Manual Local Export (Download JSON file)
+  // Manual Local Export (Download JSON file with timestamp)
   const handleLocalExport = () => {
     try {
       const payload = {
@@ -335,63 +368,20 @@ export default function WorkspaceHub({
         backupVersion: '1.0',
         exportedAt: new Date().toISOString()
       };
+      const filename = getBackupFilename('fitness_tracker_backup');
       const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(payload, null, 2))}`;
       const downloadAnchor = document.createElement('a');
       downloadAnchor.setAttribute('href', jsonString);
-      downloadAnchor.setAttribute('download', `hypertrophy_hub_backup_${new Date().toISOString().split('T')[0]}.json`);
+      downloadAnchor.setAttribute('download', filename);
       document.body.appendChild(downloadAnchor);
       downloadAnchor.click();
       downloadAnchor.remove();
 
-      setFileSuccess('Data exported successfully! Check your downloads for hypertrophy_hub_backup.json');
+      setFileSuccess(`Data exported successfully! Check downloads for "${filename}"`);
       setTimeout(() => setFileSuccess(null), 4000);
     } catch (err: any) {
       setFileError('Failed to export local JSON file.');
     }
-  };
-
-  // Manual Local Import (Upload JSON file)
-  const handleLocalImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const fileReader = new FileReader();
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    requestConfirm(
-      'Import Backup File',
-      'Are you sure you want to import this JSON backup file? It will update your current daily logs, routines, and goals.',
-      () => {
-        fileReader.onload = (event) => {
-          try {
-            const importedData = JSON.parse(event.target?.result as string);
-            if (importedData && importedData.goals && importedData.logs) {
-              onUpdateGoals(importedData.goals);
-              onUpdateLogs(importedData.logs);
-              if (importedData.insights) {
-                onUpdateInsights(importedData.insights);
-              }
-              if (importedData.parsedFoods) {
-                onUpdateParsedFoods(importedData.parsedFoods);
-              }
-              if (importedData.parsedWorkouts) {
-                onUpdateParsedWorkouts(importedData.parsedWorkouts);
-              }
-              setFileSuccess('Data backup imported and loaded successfully!');
-              setFileError(null);
-            } else {
-              setFileError('Invalid JSON backup format. Missing goals or logs properties.');
-            }
-          } catch (err) {
-            setFileError('Failed to parse uploaded JSON file. Please make sure it is a valid backup file.');
-          }
-        };
-
-        fileReader.readAsText(file);
-      },
-      'Import Data',
-      'warning'
-    );
-
-    e.target.value = ''; // Reset input
   };
 
   // Log parsed meal
@@ -408,14 +398,14 @@ export default function WorkspaceHub({
       <div className="bg-slate-900 border border-slate-800 text-white p-8 sm:p-10 rounded-3xl shadow-md">
         <h2 className="text-2xl sm:text-3xl font-black tracking-tight flex items-center gap-3">
           <Cloud className="w-8 h-8 text-sky-300 animate-pulse" />
-          Workspace Hub & JSON Storage
+          Google Sync & JSON Backup
         </h2>
         <p className="text-base sm:text-lg text-slate-300 mt-3 max-w-3xl leading-relaxed">
-          Manage your hypertrophy logs, custom exercise routines, and nutrition data using clean JSON storage. Backup directly to Google Drive or export and import local JSON files!
+          Export your hypertrophy logs, custom exercise routines, and nutrition data as timestamped JSON files. Each export automatically creates a unique new file directly in your designated Google Drive storage location!
         </p>
       </div>
 
-      {/* Grid: Google Connection and Local Backup */}
+      {/* Grid: Google Sync Export and Local Export */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         
         {/* Google Workspace Integration Card */}
@@ -425,9 +415,9 @@ export default function WorkspaceHub({
               <div>
                 <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
                   <Cloud className="w-5 h-5 text-indigo-600" />
-                  Google Drive Cloud Backup
+                  Google Drive Export JSON
                 </h3>
-                <p className="text-slate-500 text-sm mt-1">Automatically save and restore your JSON backup on Google Drive</p>
+                <p className="text-slate-500 text-sm mt-1">Export a timestamped JSON backup file to your Google Drive location</p>
               </div>
               <span className={`px-3 py-1 rounded-full text-sm font-extrabold font-mono uppercase ${
                 token ? 'bg-indigo-50 text-indigo-700 border border-indigo-100' : 'bg-amber-50 text-amber-700 border border-amber-100'
@@ -436,7 +426,7 @@ export default function WorkspaceHub({
               </span>
             </div>
 
-            {/* If authenticated, show user info and action buttons */}
+            {/* If authenticated, show user info and action button */}
             {token && user ? (
               <div className="space-y-6">
                 <div className="flex items-center gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-200">
@@ -453,38 +443,33 @@ export default function WorkspaceHub({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
                   <button
-                    onClick={handleBackupToDrive}
+                    onClick={handleExportToDrive}
                     disabled={isSyncing}
-                    className="flex items-center justify-center gap-2 px-5 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-extrabold cursor-pointer transition-all shadow-sm"
+                    className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-base font-extrabold cursor-pointer transition-all shadow-md shadow-indigo-100 hover:shadow-lg"
                   >
-                    {isSyncing ? <RefreshCw className="w-4 h-4 animate-spin text-white" /> : <Upload className="w-4 h-4 text-white" />}
-                    Backup JSON to Drive
+                    {isSyncing ? <RefreshCw className="w-5 h-5 animate-spin text-white" /> : <Upload className="w-5 h-5 text-white" />}
+                    <span>Export JSON to Google Drive</span>
                   </button>
-                  <button
-                    onClick={handleRestoreFromDrive}
-                    disabled={isSyncing}
-                    className="flex items-center justify-center gap-2 px-5 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-sm font-extrabold cursor-pointer transition-all border border-slate-200 shadow-sm"
-                  >
-                    {isSyncing ? <RefreshCw className="w-4 h-4 animate-spin text-slate-600" /> : <Download className="w-4 h-4 text-slate-600" />}
-                    Restore JSON from Drive
-                  </button>
+                  <p className="text-xs text-slate-500 text-center mt-2.5 font-medium">
+                    Creates a new timestamped JSON file (e.g., <span className="font-mono text-indigo-600 font-bold">fitness_tracker_backup_YYYY-MM-DD_HH-mm-ss.json</span>) in your Google Drive storage location. Never overwrites existing files.
+                  </p>
                 </div>
 
                 {/* Last Sync Info */}
                 <div className="flex flex-col gap-1 bg-slate-50 border border-slate-200/60 p-4 rounded-xl text-sm text-slate-700 font-extrabold">
-                  <span>Last Cloud Backup:</span>
-                  <span className="font-mono font-black text-indigo-600">{goals.lastSyncTime || 'Never backed up'}</span>
+                  <span>Last Google Drive Export:</span>
+                  <span className="font-mono font-black text-indigo-600">{goals.lastSyncTime || 'Never exported'}</span>
                 </div>
               </div>
             ) : (
               <div className="space-y-6 py-6 text-center">
                 <div className="max-w-md mx-auto">
                   <Lock className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-                  <h4 className="text-base font-bold text-slate-800">Google Workspace Backup Connection</h4>
+                  <h4 className="text-base font-bold text-slate-800">Google Workspace Connection</h4>
                   <p className="text-sm text-slate-500 mt-2 leading-relaxed">
-                    Connect your Google account to automatically store and restore your JSON backup files directly on your personal Google Drive.
+                    Connect your Google account to export timestamped JSON backup files directly to your personal Google Drive storage location.
                   </p>
                 </div>
 
@@ -534,40 +519,30 @@ export default function WorkspaceHub({
           )}
         </div>
 
-        {/* Local Manual Backup Card */}
+        {/* Local Manual Export Card */}
         <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm flex flex-col justify-between">
           <div>
             <div className="mb-6 border-b border-slate-100 pb-4">
               <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
                 <FileJson className="w-5 h-5 text-sky-600" />
-                Local JSON File Import / Export
+                Local JSON File Export
               </h3>
-              <p className="text-slate-500 text-sm mt-1">Export or restore your full database manually as a single JSON file</p>
+              <p className="text-slate-500 text-sm mt-1">Download a timestamped JSON backup file directly to your device</p>
             </div>
 
             <div className="space-y-6">
               <p className="text-sm text-slate-600 leading-relaxed font-medium">
-                Export your hypertrophy logs, exercise routines, and nutrition list as <span className="font-mono text-indigo-600 font-bold">hypertrophy_hub_backup.json</span>. You can restore this JSON file at any time on any device.
+                Export your current hypertrophy logs, routines, and goals as a standalone timestamped JSON file (e.g. <span className="font-mono text-indigo-600 font-bold">fitness_tracker_backup_YYYY-MM-DD_HH-mm-ss.json</span>).
               </p>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
                 <button
                   onClick={handleLocalExport}
-                  className="flex items-center justify-center gap-2 px-5 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-bold cursor-pointer transition-all border border-slate-200"
+                  className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl text-base font-extrabold cursor-pointer transition-all shadow-md"
                 >
-                  <Upload className="w-4 h-4 text-slate-500" />
-                  Export JSON File
+                  <Download className="w-5 h-5 text-slate-300" />
+                  <span>Export Local JSON File</span>
                 </button>
-                <label className="flex items-center justify-center gap-2 px-5 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-bold cursor-pointer transition-all border border-slate-200 border-dashed">
-                  <Download className="w-4 h-4 text-slate-500" />
-                  <span>Import JSON File</span>
-                  <input
-                    type="file"
-                    accept=".json"
-                    onChange={handleLocalImport}
-                    className="hidden"
-                  />
-                </label>
               </div>
             </div>
           </div>
@@ -585,7 +560,7 @@ export default function WorkspaceHub({
 
       </div>
 
-      {/* Google Drive Folder Configuration Panel */}
+      {/* Google Drive Storage Location Configuration Panel */}
       <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm space-y-6" id="google-folder-config-panel">
         <div className="border-b border-slate-100 pb-4">
           <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
@@ -593,7 +568,7 @@ export default function WorkspaceHub({
             Google Drive Storage Location
           </h3>
           <p className="text-slate-500 text-sm mt-1">
-            Specify an optional target folder for your Google Drive JSON backups
+            Specify the Google Drive target folder where every "Export JSON" action creates a new timestamped file
           </p>
         </div>
 
@@ -602,7 +577,7 @@ export default function WorkspaceHub({
           <div className="space-y-2">
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
               <Folder className="w-3.5 h-3.5 text-indigo-500" />
-              Google Drive Folder Link or ID (Optional)
+              Google Drive Folder Link or ID
             </label>
             <input
               type="text"
@@ -612,7 +587,7 @@ export default function WorkspaceHub({
               className="w-full bg-slate-50 border border-slate-200 px-4 py-3 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800 font-medium"
             />
             <p className="text-[11px] text-slate-400 font-medium mt-1">
-              Provide a folder link to save and restore your <span className="font-mono text-indigo-600 font-semibold">hypertrophy_hub_backup.json</span> backup file inside that specific directory. If left empty, backups default to your root Google Drive folder.
+              Set a folder link to store all exported timestamped <span className="font-mono text-indigo-600 font-semibold">fitness_tracker_backup_YYYY-MM-DD_HH-mm-ss.json</span> files inside that specific directory. Every export creates a brand new file and never overwrites previous files. If left empty, exports default to your <span className="font-semibold text-slate-600">Drive / Fitness Tracker / Backups</span> folder.
             </p>
           </div>
 
@@ -682,6 +657,130 @@ export default function WorkspaceHub({
           </div>
         )}
 
+      </div>
+
+      {/* Android & Mobile Backup Reminder Panel */}
+      <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm space-y-6" id="android-notification-panel">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+          <div>
+            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+              <Bell className="w-5 h-5 text-indigo-600" />
+              Daily Backup Reminder Notifications
+            </h3>
+            <p className="text-slate-500 text-sm mt-1">
+              Sends an evening notification to your Android device or mobile browser reminding you to open the app and perform a Google Drive backup
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+              notifPermission === 'granted'
+                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                : notifPermission === 'denied'
+                ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                : 'bg-amber-50 text-amber-700 border border-amber-200'
+            }`}>
+              {notifPermission === 'granted' ? '✓ Device Permission Granted' : notifPermission === 'denied' ? '❌ Blocked in Browser' : '⚠️ Permission Needed'}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+          {/* Settings & Toggle */}
+          <div className="space-y-4 bg-slate-50 border border-slate-200 rounded-2xl p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                  <Smartphone className="w-4 h-4 text-indigo-500" />
+                  Enable 10:00 PM Android Reminder
+                </h4>
+                <p className="text-xs text-slate-500 mt-0.5">Triggers daily evening backup notification</p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => handleToggleReminder(!goals.backupReminderEnabled)}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  goals.backupReminderEnabled ? 'bg-indigo-600' : 'bg-slate-300'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    goals.backupReminderEnabled ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveReminderTime} className="flex items-end gap-3 pt-2 border-t border-slate-200">
+              <div className="flex-1">
+                <label className="block text-[10px] font-extrabold text-slate-500 uppercase mb-1 flex items-center gap-1">
+                  <Clock className="w-3 h-3 text-slate-400" />
+                  Reminder Evening Time
+                </label>
+                <input
+                  type="time"
+                  required
+                  value={reminderTimeInput}
+                  onChange={(e) => setReminderTimeInput(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+              >
+                Save Time
+              </button>
+            </form>
+
+            <div className="flex flex-col sm:flex-row items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={handleRequestPermission}
+                className="w-full sm:w-auto px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl transition-all cursor-pointer"
+              >
+                Grant Device Permission
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSendTestNotification}
+                className="w-full sm:w-auto px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Bell className="w-3.5 h-3.5 text-white" />
+                Send Test Notification Now
+              </button>
+            </div>
+
+            {notifFeedback && (
+              <div className="p-3 bg-indigo-50 border border-indigo-150 text-indigo-900 text-xs font-bold rounded-xl flex items-center gap-2">
+                <Check className="w-4 h-4 text-indigo-600 shrink-0" />
+                <span>{notifFeedback}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Android How-To Card */}
+          <div className="bg-indigo-50/50 border border-indigo-100 rounded-2xl p-5 space-y-3">
+            <h4 className="text-sm font-bold text-indigo-900 flex items-center gap-2">
+              <Smartphone className="w-4 h-4 text-indigo-600" />
+              How Android Reminders Work
+            </h4>
+            <ol className="text-xs text-slate-600 space-y-2 font-medium list-decimal list-inside leading-relaxed">
+              <li>
+                <span className="font-bold text-slate-800">Permission:</span> Tap <span className="font-bold text-indigo-700">"Grant Device Permission"</span> or <span className="font-bold text-emerald-700">"Send Test Notification"</span> and tap <span className="font-bold text-slate-800">Allow</span> when Chrome asks for notification permission.
+              </li>
+              <li>
+                <span className="font-bold text-slate-800">Add to Home Screen (Recommended):</span> On Android Chrome, tap the menu (<b>⋮</b>) at top right and select <span className="font-bold text-indigo-700">"Add to Home Screen"</span> or <span className="font-bold text-indigo-700">"Install App"</span>.
+              </li>
+              <li>
+                <span className="font-bold text-slate-800">Direct Navigation:</span> At <span className="font-bold text-purple-700">{goals.backupReminderTime || '10:00 PM'}</span>, when you tap the Android notification, it opens the app directly into this <span className="font-bold text-indigo-700">Google Sync & Backup</span> area so you can tap <span className="font-bold text-slate-800">"Export JSON to Google Drive"</span> in 1 click!
+              </li>
+            </ol>
+          </div>
+        </div>
       </div>
 
       {/* Custom Confirmation Modal */}

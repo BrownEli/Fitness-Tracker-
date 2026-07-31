@@ -109,6 +109,8 @@ async function startServer() {
         return res.json({
           name: hint ? hint.trim() : "Custom Meal Plate",
           protein: 30,
+          carbs: 45,
+          fiber: 6,
           calories: 450,
           note: "GEMINI_API_KEY is not configured in Settings > Secrets. Provided default estimates."
         });
@@ -134,13 +136,17 @@ async function startServer() {
         Task:
         1. Identify the name of the meal or primary food items.
         2. Estimate the total protein content in grams (integer).
-        3. Estimate the total calories in kcal (integer).
+        3. Estimate the total carbohydrates (carbs) content in grams (integer).
+        4. Estimate the total dietary fiber content in grams (integer).
+        5. Estimate the total calories in kcal (integer).
 
         Provide realistic, accurate nutrition estimates based on the visual portion size.
         Respond ONLY with a JSON object matching this schema:
         {
           "name": "Concise meal title (e.g. Grilled Chicken Breast with Rice & Vegetables)",
           "protein": 35,
+          "carbs": 45,
+          "fiber": 6,
           "calories": 520
         }
       `;
@@ -161,7 +167,7 @@ async function startServer() {
           ],
         },
         config: {
-          systemInstruction: "You are an expert nutritional analyst and food recognition AI. Analyze images of food plates accurately and estimate protein in grams and calories in kcal realistically.",
+          systemInstruction: "You are an expert nutritional analyst and food recognition AI. Analyze images of food plates accurately and estimate protein, carbohydrates (carbs), dietary fiber in grams and calories in kcal realistically.",
           responseMimeType: "application/json",
         },
       });
@@ -172,6 +178,8 @@ async function startServer() {
       res.json({
         name: parsed.name || "Detected Meal Plate",
         protein: Math.max(0, parseInt(parsed.protein) || 0),
+        carbs: Math.max(0, parseInt(parsed.carbs) || 0),
+        fiber: Math.max(0, parseInt(parsed.fiber) || 0),
         calories: Math.max(0, parseInt(parsed.calories) || 0)
       });
     } catch (error) {

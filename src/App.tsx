@@ -11,6 +11,18 @@ import WorkspaceHub from './components/WorkspaceHub';
 import { ConfirmModal } from './components/ConfirmModal';
 import { auth, initAuth, getAccessToken, isTokenExpired, googleSignIn } from './lib/googleAuth';
 import { backupDataToDrive, extractFolderId, fetchGoogleDocText, parseFoodsFromText, parseWorkoutsFromText, restoreDataFromDrive } from './lib/googleApi';
+import {
+  auth as firebaseAuth,
+  signInWithGoogleFirebase,
+  signOutFirebase,
+  saveUserGoalsToFirestore,
+  getUserGoalsFromFirestore,
+  saveDailyLogToFirestore,
+  getDailyLogsFromFirestore,
+  saveRoutineDaysToFirestore,
+  getRoutineDaysFromFirestore
+} from './lib/firebase';
+import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 
 import {
   Dumbbell,
@@ -179,6 +191,8 @@ export default function App() {
   const [editingMealId, setEditingMealId] = useState<string | null>(null);
   const [editMealName, setEditMealName] = useState('');
   const [editMealProtein, setEditMealProtein] = useState('');
+  const [editMealCarbs, setEditMealCarbs] = useState('');
+  const [editMealFiber, setEditMealFiber] = useState('');
   const [editMealCalories, setEditMealCalories] = useState('');
   const [editMealTime, setEditMealTime] = useState('');
 
@@ -201,9 +215,245 @@ export default function App() {
   const [isSyncingDrive, setIsSyncingDrive] = useState(false);
   const [syncStatusMessage, setSyncStatusMessage] = useState<string | null>(null);
 
+  // Firebase Auth & Firestore Persistence state
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+  const [isFirebaseSyncing, setIsFirebaseSyncing] = useState(false);
+  const [isFirebaseReading, setIsFirebaseReading] = useState(false);
+  const [firebaseLoginError, setFirebaseLoginError] = useState<string | null>(null);
+
+  // Refs to track initial load completion and previous state snapshots to avoid unwanted writes on load/refresh
+  const isInitialLoadDone = useRef(false);
+  const prevGoalsRef = useRef(goals);
+  const prevLogsRef = useRef(logs);
+  const prevWorkoutsRef = useRef(parsedWorkouts);
+
+  // Listen to Firebase Auth state for persistent login across browser sessions
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
+      setFirebaseUser(user);
+      setIsAuthChecking(false);
+      if (user) {
+        console.log('Firebase user authenticated:', user.email);
+        try {
+          setIsFirebaseReading(true);
+          setSyncStatusMessage('Loading data from Cloud Firestore...');
+          const [cloudGoals, cloudLogs, cloudRoutine] = await Promise.all([
+            getUserGoalsFromFirestore(user.uid),
+            getDailyLogsFromFirestore(user.uid),
+            getRoutineDaysFromFirestore(user.uid)
+          ]);
+
+          if (cloudGoals) {
+            setGoals(cloudGoals);
+            prevGoalsRef.current = cloudGoals;
+          } else {
+            prevGoalsRef.current = goals;
+          }
+
+          if (cloudLogs && cloudLogs.length > 0) {
+            setLogs(cloudLogs);
+            prevLogsRef.current = cloudLogs;
+          } else {
+            prevLogsRef.current = logs;
+          }
+
+          if (cloudRoutine && cloudRoutine.length > 0) {
+            setParsedWorkouts(cloudRoutine);
+            prevWorkoutsRef.current = cloudRoutine;
+          } else {
+            prevWorkoutsRef.current = parsedWorkouts;
+          }
+
+          setSyncStatusMessage('✓ Connected to Cloud Firestore');
+          setTimeout(() => setSyncStatusMessage(null), 3000);
+        } catch (err) {
+          console.error('Error loading Firestore data on login:', err);
+        } finally {
+          setIsFirebaseReading(false);
+          // Mark initial load done after state updates settle
+          setTimeout(() => {
+            isInitialLoadDone.current = true;
+          }, 300);
+        }
+      } else {
+        isInitialLoadDone.current = false;
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Real-time auto-sync to Firebase Firestore ONLY when user makes actual state changes
+  useEffect(() => {
+    if (!firebaseUser || isAuthChecking || !isInitialLoadDone.current) return;
+
+    // Deep compare to ensure an actual change happened since last load/save
+    const goalsChanged = JSON.stringify(goals) !== JSON.stringify(prevGoalsRef.current);
+    const logsChanged = JSON.stringify(logs) !== JSON.stringify(prevLogsRef.current);
+    const workoutsChanged = JSON.stringify(parsedWorkouts) !== JSON.stringify(prevWorkoutsRef.current);
+
+    if (!goalsChanged && !logsChanged && !workoutsChanged) {
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setIsFirebaseSyncing(true);
+      setSyncStatusMessage('Saving changes to Cloud...');
+      try {
+        const promises: Promise<void>[] = [];
+
+        if (goalsChanged) {
+          promises.push(saveUserGoalsToFirestore(firebaseUser.uid, goals));
+        }
+
+        if (workoutsChanged) {
+          promises.push(saveRoutineDaysToFirestore(firebaseUser.uid, parsedWorkouts));
+        }
+
+        if (logsChanged) {
+          const prevLogsMap = new Map((prevLogsRef.current || []).map((l) => [l.date, JSON.stringify(l)]));
+          for (const log of logs) {
+            const prevStr = prevLogsMap.get(log.date);
+            if (!prevStr || prevStr !== JSON.stringify(log)) {
+              promises.push(saveDailyLogToFirestore(firebaseUser.uid, log));
+            }
+          }
+        }
+
+        if (promises.length > 0) {
+          await Promise.all(promises);
+        }
+
+        prevGoalsRef.current = goals;
+        prevLogsRef.current = logs;
+        prevWorkoutsRef.current = parsedWorkouts;
+
+        setSyncStatusMessage('✓ Saved to Cloud');
+        setTimeout(() => setSyncStatusMessage(null), 2500);
+      } catch (err) {
+        console.error('Real-time Firestore auto-save failed:', err);
+      } finally {
+        setIsFirebaseSyncing(false);
+      }
+    }, 800);
+
+    return () => clearTimeout(timer);
+  }, [goals, logs, parsedWorkouts, firebaseUser]);
+
   // State to manage entering today's bodyweight and height
   const [weightInput, setWeightInput] = useState('');
   const [heightInput, setHeightInput] = useState(() => (goals.currentHeight || 178).toString());
+
+  // Location hash & notification routing listener
+  useEffect(() => {
+    const handleLocation = () => {
+      const hash = window.location.hash;
+      const search = window.location.search;
+      if (hash === '#workspace' || hash === '#google-sync-section' || hash === '#android-notification-panel' || search.includes('tab=workspace')) {
+        setActiveTab('workspace');
+        setTimeout(() => {
+          const el = document.getElementById('google-sync-section') || document.getElementById('android-notification-panel');
+          if (el) el.scrollIntoView({ behavior: 'smooth' });
+        }, 300);
+      }
+    };
+
+    handleLocation();
+    window.addEventListener('hashchange', handleLocation);
+    return () => window.removeEventListener('hashchange', handleLocation);
+  }, []);
+
+  // Daily Evening Notification Scheduler (10:00 PM or custom time)
+  useEffect(() => {
+    if (!goals.backupReminderEnabled) return;
+
+    const checkReminderTime = () => {
+      if (!('Notification' in window) || Notification.permission !== 'granted') return;
+
+      const now = new Date();
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const currentTimeStr = `${hours}:${minutes}`;
+      const targetTime = goals.backupReminderTime || '22:00';
+
+      const todayStr = now.toISOString().split('T')[0];
+      const lastNotifiedDate = localStorage.getItem('hypertrophy_last_backup_notification');
+
+      if (currentTimeStr === targetTime && lastNotifiedDate !== todayStr) {
+        localStorage.setItem('hypertrophy_last_backup_notification', todayStr);
+        try {
+          const notif = new Notification('Fitness Tracker - Backup Reminder ☁️', {
+            body: "Don't forget to export your daily workout & nutrition logs to Google Drive!",
+            icon: '/favicon.ico',
+            tag: 'daily-backup-reminder'
+          });
+
+          notif.onclick = () => {
+            window.focus();
+            setActiveTab('workspace');
+            window.location.hash = 'google-sync-section';
+            const el = document.getElementById('google-sync-section');
+            if (el) el.scrollIntoView({ behavior: 'smooth' });
+          };
+        } catch (e) {
+          console.error('Failed to trigger daily backup notification:', e);
+        }
+      }
+    };
+
+    const interval = setInterval(checkReminderTime, 30000); // Check every 30 seconds
+    return () => clearInterval(interval);
+  }, [goals.backupReminderEnabled, goals.backupReminderTime]);
+
+  // Log weight entry for specific date
+  const handleLogWeight = (date: string, weight: number) => {
+    if (!date || isNaN(weight) || weight <= 0) return;
+
+    setLogs((prevLogs) => {
+      const existingLogIndex = prevLogs.findIndex((l) => l.date === date);
+      if (existingLogIndex >= 0) {
+        const updated = [...prevLogs];
+        updated[existingLogIndex] = {
+          ...updated[existingLogIndex],
+          weight
+        };
+        return updated;
+      } else {
+        return [
+          ...prevLogs,
+          {
+            date,
+            meals: [],
+            workouts: [],
+            weight
+          }
+        ];
+      }
+    });
+
+    setGoals((prevGoals) => {
+      const isInitialSet = !!prevGoals.initialWeight;
+      return {
+        ...prevGoals,
+        currentWeight: weight,
+        initialWeight: isInitialSet ? prevGoals.initialWeight : weight,
+        initialWeightDate: isInitialSet ? prevGoals.initialWeightDate : date
+      };
+    });
+  };
+
+  // Delete weight entry for specific date
+  const handleDeleteWeight = (date: string) => {
+    setLogs((prevLogs) => {
+      return prevLogs.map((l) => {
+        if (l.date === date) {
+          const { weight, ...rest } = l;
+          return rest;
+        }
+        return l;
+      });
+    });
+  };
 
   // Custom confirmation modal state
   const [confirmConfig, setConfirmConfig] = useState<{
@@ -619,6 +869,8 @@ export default function App() {
     setEditingMealId(meal.id);
     setEditMealName(meal.name);
     setEditMealProtein(meal.protein.toString());
+    setEditMealCarbs(meal.carbs !== undefined ? meal.carbs.toString() : '0');
+    setEditMealFiber(meal.fiber !== undefined ? meal.fiber.toString() : '0');
     setEditMealCalories(meal.calories.toString());
     setEditMealTime(meal.timestamp || '');
   };
@@ -627,6 +879,8 @@ export default function App() {
     setEditingMealId(null);
     setEditMealName('');
     setEditMealProtein('');
+    setEditMealCarbs('');
+    setEditMealFiber('');
     setEditMealCalories('');
     setEditMealTime('');
   };
@@ -637,6 +891,8 @@ export default function App() {
       id: mealId,
       name: editMealName.trim(),
       protein: Number(editMealProtein) || 0,
+      carbs: Number(editMealCarbs) || 0,
+      fiber: Number(editMealFiber) || 0,
       calories: Number(editMealCalories) || 0,
       timestamp: editMealTime ? formatTime12Hour(editMealTime) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
@@ -863,13 +1119,22 @@ export default function App() {
     return formattedDate;
   };
 
-  if (!googleToken || sessionExpired || isTokenExpired()) {
+  if (isAuthChecking) {
     return (
-      <div className="fixed inset-0 z-50 bg-slate-950 flex flex-col items-center justify-center p-4 sm:p-6 overflow-y-auto font-sans" id="full-screen-login-gate">
-        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6 text-slate-100 my-auto">
+      <div className="fixed inset-0 z-50 bg-slate-950 flex flex-col items-center justify-center p-6 text-white font-sans">
+        <Loader2 className="w-10 h-10 text-indigo-400 animate-spin mb-4" />
+        <p className="text-sm font-bold tracking-wide text-slate-300">Loading session status...</p>
+      </div>
+    );
+  }
+
+  if (!firebaseUser) {
+    return (
+      <div className="fixed inset-0 z-50 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex items-center justify-center p-4 sm:p-6 overflow-y-auto font-sans" id="full-screen-login-gate">
+        <div className="max-w-md w-full bg-white rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6 text-slate-900 my-auto border border-slate-100">
           {/* Logo & App Name Header */}
           <div className="flex flex-col items-center text-center space-y-3">
-            <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-xl ring-4 ring-indigo-500/20">
+            <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-xl ring-4 ring-indigo-500/10">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" className="w-full h-full">
                 <rect width="512" height="512" rx="120" fill="#0f172a"/>
                 <circle cx="256" cy="256" r="140" stroke="#4f46e5" strokeWidth="24" fill="none" opacity="0.3" />
@@ -880,69 +1145,74 @@ export default function App() {
               </svg>
             </div>
             <div>
-              <h2 className="text-2xl font-black tracking-tight text-white">Fitness Tracker</h2>
-              <p className="text-xs text-indigo-400 font-extrabold uppercase tracking-widest mt-1">Google Workspace Cloud Sync</p>
+              <h2 className="text-2xl font-black tracking-tight text-slate-900">Fitness Tracker</h2>
+              <p className="text-xs text-indigo-600 font-extrabold uppercase tracking-widest mt-1">Firebase Cloud Persistence</p>
             </div>
           </div>
 
-          {/* Session Expired / Lock Card */}
-          <div className="bg-slate-850 border border-slate-800/80 rounded-2xl p-5 space-y-4">
+          {/* Session Lock Notice Card */}
+          <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-5 space-y-4 text-left">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-indigo-500/10 text-indigo-400 rounded-xl border border-indigo-500/20">
+              <div className="p-2.5 bg-indigo-100 text-indigo-600 rounded-xl">
                 <Lock className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-sm font-black text-white">Google Session Expired</h3>
-                <p className="text-[11px] text-slate-400 font-semibold">Fresh sign in required to unlock app</p>
+                <h3 className="text-sm font-black text-slate-900">Sign In Required</h3>
+                <p className="text-[11px] text-slate-500 font-semibold">Valid session required to use app</p>
               </div>
             </div>
 
-            <p className="text-xs text-slate-300 leading-relaxed font-medium">
-              To guarantee that your food logs, workout routines, and targets stay 100% synchronized with Google Drive and prevent out-of-sync conflicts across devices, you must sign in with Google to use the app.
+            <p className="text-xs text-slate-600 leading-relaxed font-medium">
+              Sign in with Firebase (Google) to unlock your food logs, workout routines, and targets with real-time Cloud Firestore synchronization.
             </p>
 
-            <div className="space-y-2 border-t border-slate-800 pt-3 text-xs text-slate-300 font-medium">
+            <div className="space-y-2 border-t border-slate-200/80 pt-3 text-xs text-slate-600 font-medium">
               <div className="flex items-start gap-2">
-                <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                <span>Real-time automatic saving directly to Google Drive</span>
+                <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                <span>Real-time automatic saving to Cloud Firestore</span>
               </div>
               <div className="flex items-start gap-2">
-                <Cloud className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
-                <span>Multi-device parity with zero stale cache conflicts</span>
+                <Cloud className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                <span>Persistent long-term login across browser restarts</span>
               </div>
             </div>
           </div>
 
-          {/* Login Action Button */}
+          {/* Login Actions */}
           <div className="space-y-3">
+            {/* Google / Firebase Login Button */}
             <button
-              onClick={handleLoginFromOverlay}
-              disabled={isLoggingIn}
+              onClick={async () => {
+                setFirebaseLoginError(null);
+                try {
+                  await signInWithGoogleFirebase();
+                } catch (err: any) {
+                  console.error('Google login error:', err);
+                  setFirebaseLoginError(err.message || 'Firebase login failed. Try again.');
+                }
+              }}
               type="button"
-              className="w-full py-3.5 px-6 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-800 text-white font-black text-sm rounded-2xl shadow-lg shadow-indigo-950/60 flex items-center justify-center gap-2.5 transition-all active:scale-95 cursor-pointer"
+              className="w-full py-3.5 px-5 bg-amber-500 hover:bg-amber-600 active:scale-98 text-white font-black text-sm rounded-2xl shadow-md flex items-center justify-center gap-3 transition-all cursor-pointer"
             >
-              {isLoggingIn ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin text-white" />
-                  <span>Connecting to Google...</span>
-                </>
-              ) : (
-                <>
-                  <Lock className="w-4 h-4 text-indigo-200" />
-                  <span>Sign In with Google</span>
-                </>
-              )}
+              <svg className="w-5 h-5" viewBox="0 0 24 24">
+                <path fill="#ffffff" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                <path fill="#ffffff" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                <path fill="#ffffff" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                <path fill="#ffffff" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+              </svg>
+              <span>Sign In with Firebase</span>
             </button>
 
-            {loginError && (
-              <div className="p-3 bg-rose-950/50 border border-rose-800/80 rounded-xl text-rose-300 text-xs font-semibold leading-relaxed">
-                <p className="font-bold text-rose-200">Sign-in Error:</p>
-                <p className="mt-0.5">{loginError}</p>
-                <p className="mt-1.5 text-[11px] text-rose-400">
-                  Note: If using the preview frame, click <strong>"Open in New Tab"</strong> at top right if popup is blocked by preview iframe policy.
-                </p>
+            {firebaseLoginError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs font-semibold leading-relaxed text-left flex items-center gap-2">
+                <X className="w-4 h-4 text-red-500 shrink-0" />
+                <span>{firebaseLoginError}</span>
               </div>
             )}
+          </div>
+
+          <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-400 font-medium">
+            🔒 Secured with Firebase Authentication & Cloud Firestore
           </div>
         </div>
       </div>
@@ -980,25 +1250,32 @@ export default function App() {
         </button>
       </header>
 
-      {/* Top Banner Indicator for Google Drive Sync */}
+      {/* Top Banner Indicator for Firebase Cloud Saving & Sync */}
       <AnimatePresence>
-        {isSyncingDrive && (
+        {(isFirebaseSyncing || isFirebaseReading || isSyncingDrive) && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             className="bg-indigo-600 text-white text-xs sm:text-sm font-bold py-2.5 px-4 flex items-center justify-center gap-2.5 shadow-md overflow-hidden"
+            id="cloud-saving-top-banner"
           >
             <Loader2 className="w-4 h-4 animate-spin text-indigo-200 flex-shrink-0" />
-            <span>{syncingActionMessage}</span>
+            <span>
+              {syncStatusMessage ||
+                (isFirebaseReading
+                  ? 'Loading data from Cloud Firestore...'
+                  : syncingActionMessage || 'Saving changes to Cloud Firestore...')}
+            </span>
           </motion.div>
         )}
-        {!isSyncingDrive && syncStatusMessage && (
+        {!isFirebaseSyncing && !isFirebaseReading && !isSyncingDrive && syncStatusMessage && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             className="bg-emerald-600 text-white text-xs sm:text-sm font-bold py-2.5 px-4 flex items-center justify-center gap-2.5 shadow-md overflow-hidden"
+            id="cloud-saved-top-banner"
           >
             <CheckCircle2 className="w-4 h-4 text-emerald-200 flex-shrink-0" />
             <span>{syncStatusMessage}</span>
@@ -1025,33 +1302,84 @@ export default function App() {
               animate={{ x: 0 }}
               exit={{ x: '100%' }}
               transition={{ type: 'spring', damping: 25, stiffness: 220 }}
-              className="fixed inset-y-0 right-0 w-80 bg-white border-l border-slate-200 shadow-2xl z-50 flex flex-col justify-between"
+              className="fixed inset-y-0 right-0 w-80 max-w-[85vw] h-full max-h-screen bg-white border-l border-slate-200 shadow-2xl z-50 flex flex-col justify-between overflow-y-auto overscroll-contain"
             >
-              <div>
-                {/* Menu Header with Logo, Name & Close Button */}
-                <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-11 h-11 rounded-xl overflow-hidden shadow-md flex-shrink-0">
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" className="w-full h-full">
-                        <rect width="512" height="512" rx="120" fill="#0f172a"/>
-                        <circle cx="256" cy="256" r="140" stroke="#4f46e5" strokeWidth="24" fill="none" opacity="0.3" />
-                        <circle cx="256" cy="256" r="100" stroke="#6366f1" strokeWidth="24" fill="none" strokeDasharray="400" strokeDashoffset="100" strokeLinecap="round" />
-                        <path d="M 200 256 L 312 256" stroke="#ffffff" strokeWidth="28" strokeLinecap="round" />
-                        <rect x="176" y="216" width="24" height="80" rx="12" fill="#ffffff" />
-                        <rect x="312" y="216" width="24" height="80" rx="12" fill="#ffffff" />
-                      </svg>
+              <div className="shrink-0">
+                {/* Menu Header with Logo, Name, Close Button & Firebase Profile */}
+                <div className="p-5 border-b border-slate-100 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl overflow-hidden shadow-md flex-shrink-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" className="w-full h-full">
+                          <rect width="512" height="512" rx="120" fill="#0f172a"/>
+                          <circle cx="256" cy="256" r="140" stroke="#4f46e5" strokeWidth="24" fill="none" opacity="0.3" />
+                          <circle cx="256" cy="256" r="100" stroke="#6366f1" strokeWidth="24" fill="none" strokeDasharray="400" strokeDashoffset="100" strokeLinecap="round" />
+                          <path d="M 200 256 L 312 256" stroke="#ffffff" strokeWidth="28" strokeLinecap="round" />
+                          <rect x="176" y="216" width="24" height="80" rx="12" fill="#ffffff" />
+                          <rect x="312" y="216" width="24" height="80" rx="12" fill="#ffffff" />
+                        </svg>
+                      </div>
+                      <div>
+                        <h2 className="text-lg font-black text-slate-900 tracking-tight leading-none">Fitness Tracker</h2>
+                        <p className="text-[10px] text-indigo-600 font-extrabold uppercase tracking-widest mt-1">Personal Dashboard</p>
+                      </div>
                     </div>
-                    <div>
-                      <h2 className="text-lg font-black text-slate-900 tracking-tight leading-none">Fitness Tracker</h2>
-                      <p className="text-[10px] text-indigo-600 font-extrabold uppercase tracking-widest mt-1">Personal Dashboard</p>
-                    </div>
+                    <button
+                      onClick={() => setIsMenuOpen(false)}
+                      className="p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
+                    >
+                      <X className="w-6 h-6" />
+                    </button>
                   </div>
-                  <button
-                    onClick={() => setIsMenuOpen(false)}
-                    className="p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
-                  >
-                    <X className="w-6 h-6" />
-                  </button>
+
+                  {/* Firebase Auth Account Card */}
+                  <div className="bg-slate-50 border border-slate-200/80 p-3 rounded-2xl shadow-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-slate-400 uppercase tracking-widest font-black block">Firebase Account</span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 bg-amber-100 text-amber-800 rounded-full flex items-center gap-1">
+                        🔥 Firestore Active
+                      </span>
+                    </div>
+
+                    {firebaseUser ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          {firebaseUser.photoURL ? (
+                            <img src={firebaseUser.photoURL} alt="User avatar" className="w-6 h-6 rounded-full border border-slate-200" />
+                          ) : (
+                            <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-bold text-[10px] flex items-center justify-center">
+                              {firebaseUser.email ? firebaseUser.email[0].toUpperCase() : 'U'}
+                            </div>
+                          )}
+                          <span className="text-xs font-bold text-slate-800 truncate flex-1">{firebaseUser.displayName || firebaseUser.email}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => signOutFirebase()}
+                          className="w-full py-1.5 px-3 bg-white hover:bg-slate-100 border border-slate-200/80 text-slate-700 rounded-xl text-[11px] font-bold transition-colors cursor-pointer"
+                        >
+                          Sign Out of Firebase
+                        </button>
+                      </div>
+                    ) : (
+                      <div>
+                        <p className="text-[11px] text-slate-500 font-medium mb-2">Sign in to sync your data to Cloud Firestore</p>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await signInWithGoogleFirebase();
+                            } catch (e) {
+                              console.error('Firebase Google login error:', e);
+                            }
+                          }}
+                          className="w-full py-2 px-3 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white rounded-xl text-xs font-black shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <span>Sign In with Firebase</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Navigation Menu Links */}
@@ -1087,7 +1415,7 @@ export default function App() {
               </div>
 
               {/* Menu Footer with targets/profile summary */}
-              <div className="p-6 border-t border-slate-100 bg-slate-50/50 space-y-4">
+              <div className="p-6 border-t border-slate-100 bg-slate-50/50 space-y-4 shrink-0">
                 <div className="space-y-2">
                   <span className="text-[9px] text-slate-400 uppercase tracking-widest font-black block">Fitness Targets</span>
                   <div className="grid grid-cols-3 gap-1.5">
@@ -1107,8 +1435,8 @@ export default function App() {
                 </div>
 
                 <div className="text-[10px] text-slate-400 font-semibold flex items-center justify-between border-t border-slate-100 pt-3">
-                  <span>Sync status:</span>
-                  <span className="font-bold text-indigo-500 font-mono">{goals.lastSyncTime ? 'Synced' : 'Not configured'}</span>
+                  <span>Firestore Sync:</span>
+                  <span className="font-bold text-amber-600 font-mono">{firebaseUser ? 'Online & Persistent' : 'Local Cache'}</span>
                 </div>
               </div>
             </motion.div>
@@ -1194,13 +1522,31 @@ export default function App() {
                                     className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
                                   />
                                 </div>
-                                <div className="grid grid-cols-3 gap-2">
+                                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                                   <div>
                                     <label className="text-[9px] font-black text-slate-500 block mb-0.5">Protein (g)</label>
                                     <input
                                       type="number"
                                       value={editMealProtein}
                                       onChange={(e) => setEditMealProtein(e.target.value)}
+                                      className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[9px] font-black text-slate-500 block mb-0.5">Carbs (g)</label>
+                                    <input
+                                      type="number"
+                                      value={editMealCarbs}
+                                      onChange={(e) => setEditMealCarbs(e.target.value)}
+                                      className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[9px] font-black text-slate-500 block mb-0.5">Fiber (g)</label>
+                                    <input
+                                      type="number"
+                                      value={editMealFiber}
+                                      onChange={(e) => setEditMealFiber(e.target.value)}
                                       className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
                                     />
                                   </div>
@@ -1213,7 +1559,7 @@ export default function App() {
                                       className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
                                     />
                                   </div>
-                                  <div>
+                                  <div className="col-span-2 sm:col-span-1">
                                     <label className="text-[9px] font-black text-slate-500 block mb-0.5">Time</label>
                                     <input
                                       type="text"
@@ -1258,8 +1604,14 @@ export default function App() {
                               </span>
                               <div>
                                 <h4 className="text-xs font-bold text-slate-800 leading-tight">{meal.name}</h4>
-                                <div className="flex gap-2.5 mt-1">
+                                <div className="flex flex-wrap items-center gap-2 mt-1">
                                   <span className="text-[10px] text-emerald-600 font-black">{meal.protein}g protein</span>
+                                  {meal.carbs !== undefined && (
+                                    <span className="text-[10px] text-sky-600 font-black">• {meal.carbs}g carbs</span>
+                                  )}
+                                  {meal.fiber !== undefined && (
+                                    <span className="text-[10px] text-teal-600 font-black">• {meal.fiber}g fiber</span>
+                                  )}
                                   <span className="text-[10px] text-slate-400 font-bold font-mono">• {meal.calories} kcal</span>
                                 </div>
                               </div>
@@ -1682,17 +2034,13 @@ export default function App() {
                 <p className="text-slate-400 text-xs mt-1">Change your targets, daily protein thresholds, and weight units</p>
               </div>
               <div className="max-w-2xl space-y-6">
-                <GoalsConfig goals={goals} onUpdateGoals={setGoals} />
-                
-                <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-                  <h4 className="text-xs font-black text-rose-500 uppercase tracking-widest mb-2.5">Data Reset Center</h4>
-                  <button
-                    onClick={handleResetData}
-                    className="w-full py-3.5 border border-rose-200 hover:bg-rose-50 hover:border-rose-300 text-rose-600 font-bold text-xs rounded-xl transition-all cursor-pointer text-center"
-                  >
-                    Reset App Storage Data
-                  </button>
-                </div>
+                <GoalsConfig
+                  goals={goals}
+                  onUpdateGoals={setGoals}
+                  onLogWeight={handleLogWeight}
+                  onDeleteWeight={handleDeleteWeight}
+                  logs={logs}
+                />
               </div>
             </div>
           )}

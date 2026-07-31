@@ -7,7 +7,9 @@ export const INITIAL_GOALS: UserGoals = {
   currentHeight: 178,
   dailyProteinTarget: 165, // grams
   dailyCalorieTarget: 2800, // Surplus for lean bulk
-  weeklyWorkoutDaysTarget: 5
+  weeklyWorkoutDaysTarget: 5,
+  backupReminderEnabled: true,
+  backupReminderTime: '22:00'
 };
 
 export const INITIAL_LOGS: DailyLog[] = [];
