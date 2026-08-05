@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Meal } from '../types';
-import { Plus, Clock, Check, Utensils, Camera, Sparkles, Loader2, X, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { Plus, Clock, Check, Utensils, Camera, Sparkles, Loader2, X, RefreshCw, CheckCircle2, Image as ImageIcon, Trash2, FolderPlus } from 'lucide-react';
 
 interface MealLoggerProps {
   onAddMeal: (meal: Omit<Meal, 'id' | 'timestamp'> & { timestamp?: string }) => void;
@@ -19,14 +19,15 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
 
   // AI Modal & Analysis State
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [foodHint, setFoodHint] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [detectedData, setDetectedData] = useState<{ name: string; protein: number; carbs: number; fiber: number; calories: number } | null>(null);
   const [isFieldsHighlighted, setIsFieldsHighlighted] = useState(false);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   const handleOpenModal = () => {
     setIsModalOpen(true);
@@ -37,26 +38,67 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
     setIsModalOpen(false);
   };
 
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const processFiles = (files: FileList | File[]) => {
+    const fileArray = Array.from(files);
+    if (fileArray.length === 0) return;
 
-    if (file.size > 10 * 1024 * 1024) {
-      setAiError('Image size exceeds 10MB limit. Please choose a smaller image.');
+    const oversized = fileArray.filter(f => f.size > 10 * 1024 * 1024);
+    if (oversized.length > 0) {
+      setAiError('One or more images exceed the 10MB limit. Please choose smaller images.');
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      setImagePreview(result);
-      setDetectedData(null);
-      setAiError(null);
-    };
-    reader.readAsDataURL(file);
+    const newPreviews: string[] = [];
+    let loadedCount = 0;
+
+    fileArray.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (reader.result) {
+          newPreviews.push(reader.result as string);
+        }
+        loadedCount++;
+        if (loadedCount === fileArray.length) {
+          setImagePreviews(prev => [...prev, ...newPreviews]);
+          setDetectedData(null);
+          setAiError(null);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
   };
 
-  const runFoodAnalysis = async (imageDataUrl: string, hintText: string) => {
+  const handleCameraCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      processFiles(e.target.files);
+    }
+  };
+
+  const handleGallerySelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      processFiles(e.target.files);
+    }
+  };
+
+  const handleRemoveImage = (indexToRemove: number) => {
+    setImagePreviews(prev => prev.filter((_, idx) => idx !== indexToRemove));
+    setDetectedData(null);
+  };
+
+  const handleResetModalImages = () => {
+    setImagePreviews([]);
+    setDetectedData(null);
+    setAiError(null);
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
+    if (galleryInputRef.current) galleryInputRef.current.value = '';
+  };
+
+  const runFoodAnalysis = async (images: string[], hintText: string) => {
+    if (images.length === 0 && (!hintText || !hintText.trim())) {
+      setAiError('Please attach photo(s) OR enter a text description of your meal to analyze.');
+      return;
+    }
+
     setIsAnalyzing(true);
     setAiError(null);
     setDetectedData(null);
@@ -65,11 +107,11 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
       const res = await fetch('/api/analyze-food', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: imageDataUrl, hint: hintText })
+        body: JSON.stringify({ images, hint: hintText })
       });
 
       if (!res.ok) {
-        throw new Error('Failed to analyze food image.');
+        throw new Error('Failed to analyze food.');
       }
 
       const data = await res.json();
@@ -78,7 +120,7 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
       }
 
       setDetectedData({
-        name: data.name || 'Detected Meal Plate',
+        name: data.name || (hintText.trim() ? hintText.trim().slice(0, 40) : 'Detected Meal'),
         protein: data.protein ?? 0,
         carbs: data.carbs ?? 0,
         fiber: data.fiber ?? 0,
@@ -86,7 +128,7 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
       });
     } catch (err: any) {
       console.error('AI Food Analysis Error:', err);
-      setAiError(err.message || 'Error analyzing plate image. Please try again or fill in manually.');
+      setAiError(err.message || 'Error analyzing meal. Please try again or fill in manually.');
     } finally {
       setIsAnalyzing(false);
     }
@@ -107,11 +149,14 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
   };
 
   const handleResetModalImage = () => {
-    setImagePreview(null);
+    setImagePreviews([]);
     setDetectedData(null);
     setAiError(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+    if (cameraInputRef.current) {
+      cameraInputRef.current.value = '';
+    }
+    if (galleryInputRef.current) {
+      galleryInputRef.current.value = '';
     }
   };
 
@@ -146,13 +191,12 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
     setCarbs('');
     setFiber('');
     setCalories('');
-    setImagePreview(null);
+    setImagePreviews([]);
     setFoodHint('');
     setDetectedData(null);
     setAiError(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
+    if (galleryInputRef.current) galleryInputRef.current.value = '';
   };
 
   return (
@@ -168,7 +212,7 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
             <div>
               <h2 className="text-2xl font-black text-slate-900 tracking-tight leading-none">Log Food & Fuel</h2>
               <p className="text-slate-500 text-sm mt-2 font-semibold">
-                Snap a plate photo with Gemini AI or enter details manually below
+                Snap or upload plate photos with Gemini AI or enter details manually below
               </p>
             </div>
           </div>
@@ -182,7 +226,7 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
           >
             <Camera className="w-4 h-4" />
             <Sparkles className="w-3.5 h-3.5" />
-            <span>Scan Plate with AI</span>
+            <span>Scan Plate(s) with AI</span>
           </button>
         </div>
 
@@ -346,15 +390,24 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
         </form>
       </div>
 
-      {/* Hidden File Input for Camera/Upload */}
+      {/* Hidden File Inputs for Camera and Photo Library Selection */}
       <input
         type="file"
         accept="image/*"
         capture="environment"
-        ref={fileInputRef}
-        onChange={handleImageSelect}
+        ref={cameraInputRef}
+        onChange={handleCameraCapture}
         className="hidden"
         id="camera-file-input"
+      />
+      <input
+        type="file"
+        accept="image/*"
+        multiple
+        ref={galleryInputRef}
+        onChange={handleGallerySelect}
+        className="hidden"
+        id="gallery-file-input"
       />
 
       {/* Full-Screen Page Overlay for AI Plate Scanning */}
@@ -369,8 +422,8 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
                   <Camera className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="text-xl font-black text-slate-900 tracking-tight">Gemini AI Food Scanner</h3>
-                  <p className="text-xs sm:text-sm text-slate-500 font-medium">Scan your food plate to auto-detect calories, protein, carbs & dietary fiber</p>
+                  <h3 className="text-xl font-black text-slate-900 tracking-tight">Gemini AI Food & Meal Analyzer</h3>
+                  <p className="text-xs sm:text-sm text-slate-500 font-medium">Attach photo(s) of your meal OR type a text description to auto-estimate macros & calories</p>
                 </div>
               </div>
 
@@ -387,67 +440,165 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
             {/* Scanner Body */}
             <div className="space-y-6">
               
-              {/* Optional Text Hint - 6 rows text area */}
+              {/* Text Description Box */}
               <div>
                 <label className="block text-xs font-black uppercase tracking-wider text-slate-600 mb-2">
-                  Optional Description / Text Hint (Up to 6 lines)
+                  Food Description / Ingredients (Text Analysis or Photo Hint)
                 </label>
                 <textarea
-                  rows={6}
-                  placeholder="Describe your meal or add specific hints for the AI analyzer (e.g., 8oz grilled salmon fillet, 1 cup quinoa, 150g steamed broccoli, olive oil drizzle)"
+                  rows={5}
+                  placeholder="Describe your meal in detail to analyze via text (e.g. 2 scrambled eggs, 2 slices whole wheat toast with butter, 1 cup orange juice) or add hints for photo analysis..."
                   value={foodHint}
                   onChange={(e) => setFoodHint(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-2xl p-4 text-sm font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 min-h-[9rem] max-h-[16rem] resize-y transition-all"
+                  className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-2xl p-4 text-sm font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 min-h-[8rem] max-h-[16rem] resize-y transition-all"
                   id="food-hint-textarea"
                 />
               </div>
 
               {/* Photo Area */}
-              {!imagePreview ? (
-                <div
-                  onClick={() => fileInputRef.current?.click()}
-                  className="border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-indigo-50/40 hover:bg-indigo-50/80 rounded-2xl p-8 sm:p-10 text-center cursor-pointer transition-all space-y-3 group"
-                >
-                  <div className="w-14 h-14 bg-indigo-600 text-white rounded-2xl mx-auto flex items-center justify-center shadow-lg group-hover:scale-105 transition-transform">
-                    <Camera className="w-7 h-7" />
+              {imagePreviews.length === 0 ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <button
+                      type="button"
+                      onClick={() => cameraInputRef.current?.click()}
+                      className="border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-indigo-50/40 hover:bg-indigo-50/80 rounded-2xl p-5 text-center cursor-pointer transition-all space-y-2 group"
+                      id="open-camera-btn"
+                    >
+                      <div className="w-11 h-11 bg-indigo-600 text-white rounded-2xl mx-auto flex items-center justify-center shadow-md group-hover:scale-105 transition-transform">
+                        <Camera className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-black text-slate-900">Take Live Photo</p>
+                        <p className="text-xs text-slate-500 font-medium mt-0.5">Launches camera directly</p>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => galleryInputRef.current?.click()}
+                      className="border-2 border-dashed border-purple-200 hover:border-purple-400 bg-purple-50/40 hover:bg-purple-50/80 rounded-2xl p-5 text-center cursor-pointer transition-all space-y-2 group"
+                      id="open-gallery-btn"
+                    >
+                      <div className="w-11 h-11 bg-purple-600 text-white rounded-2xl mx-auto flex items-center justify-center shadow-md group-hover:scale-105 transition-transform">
+                        <ImageIcon className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-black text-slate-900">Choose from Photo Library</p>
+                        <p className="text-xs text-slate-500 font-medium mt-0.5">Select 1 or multiple saved photos</p>
+                      </div>
+                    </button>
                   </div>
-                  <div>
-                    <p className="text-base font-black text-slate-900">Take or Upload Plate Photo</p>
-                    <p className="text-xs sm:text-sm text-slate-500 font-medium mt-1">Camera will launch automatically on mobile devices</p>
-                  </div>
+
+                  {/* Text-Only Analyze Action */}
+                  {isAnalyzing ? (
+                    <div className="p-6 bg-slate-900 text-white rounded-2xl flex flex-col items-center justify-center gap-3 text-center">
+                      <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
+                      <span className="text-sm font-black tracking-wide">
+                        Gemini AI is analyzing your text description...
+                      </span>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => runFoodAnalysis([], foodHint)}
+                      disabled={!foodHint.trim()}
+                      className={`w-full py-3.5 rounded-2xl text-sm font-black shadow-lg transition-all flex items-center justify-center gap-2 ${
+                        foodHint.trim()
+                          ? 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white cursor-pointer active:scale-98'
+                          : 'bg-slate-100 text-slate-400 cursor-not-allowed shadow-none border border-slate-200'
+                      }`}
+                      id="analyze-text-only-btn"
+                    >
+                      <Sparkles className="w-5 h-5" />
+                      <span>
+                        {foodHint.trim()
+                          ? 'Analyze Text Description with AI'
+                          : 'Type a Food Description Above to Analyze via Text'}
+                      </span>
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {/* Photo Preview Card */}
-                  <div className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-900 max-h-72 flex items-center justify-center">
-                    <img src={imagePreview} alt="Plate photo" className="max-h-72 w-full object-cover" />
-                    {isAnalyzing && (
-                      <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-xs flex flex-col items-center justify-center gap-3 text-white p-4 text-center">
-                        <Loader2 className="w-9 h-9 text-indigo-400 animate-spin" />
-                        <span className="text-sm font-black tracking-wide">Gemini AI is analyzing your food plate...</span>
-                      </div>
-                    )}
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black uppercase text-slate-500 tracking-wider">
+                      Attached Photos ({imagePreviews.length})
+                    </span>
                     {!isAnalyzing && (
                       <button
                         type="button"
-                        onClick={handleResetModalImage}
-                        className="absolute top-3 right-3 px-3.5 py-2 bg-slate-900/80 hover:bg-slate-900 text-white text-xs font-bold rounded-xl backdrop-blur-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                        onClick={handleResetModalImages}
+                        className="text-xs font-bold text-rose-600 hover:text-rose-700 hover:underline flex items-center gap-1 cursor-pointer"
                       >
-                        <RefreshCw className="w-3.5 h-3.5" /> Change Photo
+                        <Trash2 className="w-3.5 h-3.5" /> Clear All
                       </button>
                     )}
                   </div>
 
-                  {/* Scan Plate / Analyze Button */}
+                  {/* Photo Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                    {imagePreviews.map((imgSrc, idx) => (
+                      <div key={idx} className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-900 aspect-square group shadow-xs">
+                        <img src={imgSrc} alt={`Meal photo ${idx + 1}`} className="w-full h-full object-cover" />
+                        <span className="absolute top-2 left-2 px-2 py-0.5 bg-slate-900/80 text-white rounded-md text-[10px] font-extrabold backdrop-blur-xs">
+                          #{idx + 1}
+                        </span>
+                        {!isAnalyzing && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveImage(idx)}
+                            className="absolute top-2 right-2 p-1.5 bg-rose-600/90 hover:bg-rose-600 text-white rounded-xl backdrop-blur-xs transition-colors cursor-pointer shadow-md opacity-90 hover:opacity-100"
+                            title="Remove photo"
+                          >
+                            <X className="w-3.5 h-3.5 stroke-[2.5]" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Add More Photos Buttons */}
                   {!isAnalyzing && (
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => cameraInputRef.current?.click()}
+                        className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Camera className="w-3.5 h-3.5" /> + Take Another Photo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => galleryInputRef.current?.click()}
+                        className="px-3.5 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+                      >
+                        <FolderPlus className="w-3.5 h-3.5" /> + Add Gallery Photo(s)
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Scan Plate / Analyze Button */}
+                  {isAnalyzing ? (
+                    <div className="p-6 bg-slate-900 text-white rounded-2xl flex flex-col items-center justify-center gap-3 text-center">
+                      <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
+                      <span className="text-sm font-black tracking-wide">
+                        Gemini AI is analyzing {imagePreviews.length} photo{imagePreviews.length > 1 ? 's' : ''} together...
+                      </span>
+                    </div>
+                  ) : (
                     <button
                       type="button"
-                      onClick={() => runFoodAnalysis(imagePreview, foodHint)}
+                      onClick={() => runFoodAnalysis(imagePreviews, foodHint)}
                       className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 active:scale-98 text-white text-sm font-black rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
                       id="analyze-food-btn"
                     >
                       <Sparkles className="w-5 h-5" />
-                      <span>{detectedData ? 'Re-Analyze Food Image' : 'Scan Plate with AI'}</span>
+                      <span>
+                        {detectedData
+                          ? `Re-Analyze ${imagePreviews.length} Photo${imagePreviews.length > 1 ? 's' : ''}`
+                          : `Scan ${imagePreviews.length} Photo${imagePreviews.length > 1 ? 's' : ''} with AI`}
+                      </span>
                     </button>
                   )}
                 </div>
@@ -466,28 +617,28 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
                 <div className="p-5 bg-emerald-50/80 border border-emerald-200 rounded-2xl space-y-3 animate-fadeIn">
                   <div className="flex items-center gap-2 text-emerald-800 font-black text-xs uppercase tracking-wider">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600 stroke-[3]" />
-                    <span>Gemini Detection Complete</span>
+                    <span>Gemini Multi-Photo Detection Complete</span>
                   </div>
 
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center bg-white p-4 rounded-xl border border-emerald-100 shadow-2xs">
                     <div className="col-span-2 sm:col-span-4 text-left border-b border-slate-100 pb-2">
-                      <span className="text-[10px] font-black uppercase text-slate-400 block">Detected Meal</span>
+                      <span className="text-[10px] font-black uppercase text-slate-400 block">Combined Meal Detection</span>
                       <span className="text-base font-extrabold text-slate-900">{detectedData.name}</span>
                     </div>
                     <div className="bg-slate-50 p-2.5 rounded-xl">
-                      <span className="text-[10px] font-black uppercase text-slate-400 block">Protein</span>
+                      <span className="text-[10px] font-black uppercase text-slate-400 block">Total Protein</span>
                       <span className="text-base font-black text-indigo-600 font-mono">{detectedData.protein}g</span>
                     </div>
                     <div className="bg-slate-50 p-2.5 rounded-xl">
-                      <span className="text-[10px] font-black uppercase text-slate-400 block">Carbs</span>
+                      <span className="text-[10px] font-black uppercase text-slate-400 block">Total Carbs</span>
                       <span className="text-base font-black text-sky-600 font-mono">{detectedData.carbs}g</span>
                     </div>
                     <div className="bg-slate-50 p-2.5 rounded-xl">
-                      <span className="text-[10px] font-black uppercase text-slate-400 block">Fiber</span>
+                      <span className="text-[10px] font-black uppercase text-slate-400 block">Total Fiber</span>
                       <span className="text-base font-black text-emerald-600 font-mono">{detectedData.fiber}g</span>
                     </div>
                     <div className="bg-slate-50 p-2.5 rounded-xl">
-                      <span className="text-[10px] font-black uppercase text-slate-400 block">Calories</span>
+                      <span className="text-[10px] font-black uppercase text-slate-400 block">Total Calories</span>
                       <span className="text-base font-black text-amber-600 font-mono">{detectedData.calories} kcal</span>
                     </div>
                   </div>

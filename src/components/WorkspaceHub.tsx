@@ -7,6 +7,7 @@ import {
   extractFolderId,
   getBackupFilename
 } from '../lib/googleApi';
+import { sendWebNotification, registerNotificationServiceWorker } from '../lib/notifications';
 import { User } from 'firebase/auth';
 
 import {
@@ -41,6 +42,7 @@ interface WorkspaceHubProps {
   parsedWorkouts: any[];
   onUpdateParsedFoods: React.Dispatch<React.SetStateAction<Omit<Meal, 'id' | 'timestamp'>[]>>;
   onUpdateParsedWorkouts: React.Dispatch<React.SetStateAction<any[]>>;
+  onPerformDriveBackup?: (overrideToken?: string) => Promise<{ filename?: string; folderId?: string }>;
 }
 
 export default function WorkspaceHub({
@@ -55,7 +57,8 @@ export default function WorkspaceHub({
   parsedFoods,
   parsedWorkouts,
   onUpdateParsedFoods,
-  onUpdateParsedWorkouts
+  onUpdateParsedWorkouts,
+  onPerformDriveBackup
 }: WorkspaceHubProps) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -112,6 +115,7 @@ export default function WorkspaceHub({
     const result = await Notification.requestPermission();
     setNotifPermission(result);
     if (result === 'granted') {
+      await registerNotificationServiceWorker();
       setNotifFeedback('✓ Notification permission granted!');
     } else {
       setNotifFeedback('Notification permission was not granted.');
@@ -119,45 +123,47 @@ export default function WorkspaceHub({
     setTimeout(() => setNotifFeedback(null), 4000);
   };
 
-  const triggerTestNotification = () => {
-    try {
-      const notif = new Notification('Fitness Tracker - Time to Backup! ☁️', {
+  const triggerTestNotification = async () => {
+    const res = await sendWebNotification(
+      'Fitness Tracker - Time to Backup! ☁️',
+      {
         body: "Don't forget to export your daily workout & nutrition logs to Google Drive.",
         icon: '/favicon.ico',
         tag: 'test-backup-reminder'
-      });
-
-      notif.onclick = () => {
+      },
+      () => {
         window.focus();
         window.location.hash = 'google-sync-section';
         const el = document.getElementById('google-sync-section');
         if (el) el.scrollIntoView({ behavior: 'smooth' });
-      };
+      }
+    );
 
-      setNotifFeedback('✓ Test notification sent! Check your notification tray or phone top bar.');
-      setTimeout(() => setNotifFeedback(null), 5000);
-    } catch (e: any) {
-      setNotifFeedback('Failed to send notification: ' + (e.message || 'Check browser permissions'));
+    if (res.success) {
+      setNotifFeedback('✓ Test notification sent! Check your notification tray or phone status bar.');
+    } else {
+      setNotifFeedback('Failed to send notification: ' + (res.error || 'Check browser permissions'));
     }
+    setTimeout(() => setNotifFeedback(null), 5000);
   };
 
-  const handleSendTestNotification = () => {
+  const handleSendTestNotification = async () => {
     if (!('Notification' in window)) {
       setNotifFeedback('Web Notifications are not supported in this browser.');
       return;
     }
 
     if (Notification.permission !== 'granted') {
-      Notification.requestPermission().then((res) => {
-        setNotifPermission(res);
-        if (res === 'granted') {
-          triggerTestNotification();
-        } else {
-          setNotifFeedback('Please allow notifications in browser settings to receive test alert.');
-        }
-      });
+      const res = await Notification.requestPermission();
+      setNotifPermission(res);
+      if (res === 'granted') {
+        await registerNotificationServiceWorker();
+        await triggerTestNotification();
+      } else {
+        setNotifFeedback('Please allow notifications in browser settings to receive test alert.');
+      }
     } else {
-      triggerTestNotification();
+      await triggerTestNotification();
     }
   };
 
@@ -325,28 +331,40 @@ export default function WorkspaceHub({
     setSyncMessage('');
 
     try {
-      const payload = {
-        goals,
-        logs,
-        insights,
-        parsedFoods,
-        parsedWorkouts,
-        backupVersion: '1.0',
-        exportedAt: new Date().toISOString()
-      };
+      let filename: string | undefined;
+      let resolvedFolderId: string | undefined;
 
-      const folderId = goals.driveFolderLink ? extractFolderId(goals.driveFolderLink) : undefined;
-      const { filename, folderId: resolvedFolderId } = await backupDataToDrive(payload, activeToken, folderId);
-      const nowStr = new Date().toLocaleString();
+      if (onPerformDriveBackup) {
+        const res = await onPerformDriveBackup(activeToken);
+        filename = res.filename;
+        resolvedFolderId = res.folderId;
+      } else {
+        const payload = {
+          goals,
+          logs,
+          insights,
+          parsedFoods,
+          parsedWorkouts,
+          backupVersion: '1.0',
+          exportedAt: new Date().toISOString()
+        };
 
-      onUpdateGoals((prev) => ({
-        ...prev,
-        lastSyncTime: nowStr,
-        driveFolderLink: resolvedFolderId ? `https://drive.google.com/drive/folders/${resolvedFolderId}` : prev.driveFolderLink
-      }));
+        const folderId = goals.driveFolderLink ? extractFolderId(goals.driveFolderLink) : undefined;
+        const res = await backupDataToDrive(payload, activeToken, folderId);
+        filename = res.filename;
+        resolvedFolderId = res.folderId;
+
+        const nowStr = new Date().toLocaleString();
+
+        onUpdateGoals((prev) => ({
+          ...prev,
+          lastSyncTime: nowStr,
+          driveFolderLink: resolvedFolderId ? `https://drive.google.com/drive/folders/${resolvedFolderId}` : prev.driveFolderLink
+        }));
+      }
 
       setSyncStatus('success');
-      setSyncMessage(`✓ New JSON backup exported to Google Drive! File created: "${filename}"`);
+      setSyncMessage(`✓ New JSON backup exported to Google Drive!${filename ? ` File created: "${filename}"` : ''}`);
     } catch (err: any) {
       console.error(err);
       setSyncStatus('error');

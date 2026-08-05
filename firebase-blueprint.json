@@ -62,6 +62,17 @@
         "updatedAt": { "type": "string" }
       },
       "required": ["userId"]
+    },
+    "userInsights": {
+      "title": "User Coaching Insights",
+      "description": "AI-generated hypertrophic and nutrition coaching evaluations",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "insights": { "type": "array" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId"]
     }
   }
 }

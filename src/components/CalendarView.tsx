@@ -76,10 +76,21 @@ export default function CalendarView({ logs, goals, selectedDate, onSelectDate }
           const isToday = today.toISOString().split('T')[0] === dateString;
 
           // Compute stats for the day
-          const totalProtein = log?.meals.reduce((sum, meal) => sum + meal.protein, 0) || 0;
+          const totalProtein = log?.meals.reduce((sum, meal) => sum + (meal.protein || 0), 0) || 0;
+          const totalCarbs = log?.meals.reduce((sum, meal) => sum + (meal.carbs || 0), 0) || 0;
+          const totalFiber = log?.meals.reduce((sum, meal) => sum + (meal.fiber || 0), 0) || 0;
+          const totalCalories = log?.meals.reduce((sum, meal) => sum + (meal.calories || 0), 0) || 0;
+
+          const targetCarbs = goals.dailyCarbsTarget || 250;
+          const targetFiber = goals.dailyFiberTarget || 30;
+
           const hasWorkout = log?.workouts && log.workouts.length > 0;
           const workoutCompleted = log?.workouts && log.workouts.some(w => w.completed);
+
           const proteinGoalMet = totalProtein >= goals.dailyProteinTarget;
+          const carbsGoalMet = totalCarbs >= targetCarbs;
+          const fiberGoalMet = totalFiber >= targetFiber;
+          const calorieGoalMet = totalCalories >= goals.dailyCalorieTarget;
 
           return (
             <button
@@ -96,8 +107,8 @@ export default function CalendarView({ logs, goals, selectedDate, onSelectDate }
               {/* Day Number */}
               <span className="text-xs font-mono self-start">{day}</span>
 
-              {/* Badges for protein and workouts */}
-              <div className="flex gap-1.5 mt-auto mb-0.5">
+              {/* Badges for macros and workouts */}
+              <div className="flex items-center gap-1 mt-auto mb-0.5 flex-wrap justify-center">
                 {/* Protein Goal Indicator */}
                 {log && totalProtein > 0 && (
                   <span
@@ -105,10 +116,52 @@ export default function CalendarView({ logs, goals, selectedDate, onSelectDate }
                       isSelected
                         ? 'bg-white'
                         : proteinGoalMet
-                        ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]'
-                        : 'bg-amber-500'
+                        ? 'bg-indigo-500'
+                        : 'bg-indigo-300'
                     }`}
-                    title={`Protein: ${totalProtein}g`}
+                    title={`Protein: ${totalProtein}g / ${goals.dailyProteinTarget}g`}
+                  ></span>
+                )}
+
+                {/* Carbs Goal Indicator */}
+                {log && totalCarbs > 0 && (
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      isSelected
+                        ? 'bg-sky-200'
+                        : carbsGoalMet
+                        ? 'bg-sky-500'
+                        : 'bg-sky-300'
+                    }`}
+                    title={`Carbs: ${totalCarbs}g / ${targetCarbs}g`}
+                  ></span>
+                )}
+
+                {/* Fiber Goal Indicator */}
+                {log && totalFiber > 0 && (
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      isSelected
+                        ? 'bg-emerald-200'
+                        : fiberGoalMet
+                        ? 'bg-emerald-500'
+                        : 'bg-emerald-300'
+                    }`}
+                    title={`Fiber: ${totalFiber}g / ${targetFiber}g`}
+                  ></span>
+                )}
+
+                {/* Calories Indicator */}
+                {log && totalCalories > 0 && (
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      isSelected
+                        ? 'bg-amber-200'
+                        : calorieGoalMet
+                        ? 'bg-amber-500'
+                        : 'bg-amber-300'
+                    }`}
+                    title={`Calories: ${totalCalories} / ${goals.dailyCalorieTarget} kcal`}
                   ></span>
                 )}
 
@@ -119,7 +172,7 @@ export default function CalendarView({ logs, goals, selectedDate, onSelectDate }
                       isSelected
                         ? 'text-white'
                         : workoutCompleted
-                        ? 'text-indigo-600'
+                        ? 'text-violet-600'
                         : 'text-slate-400'
                     }`}
                   />
@@ -131,18 +184,26 @@ export default function CalendarView({ logs, goals, selectedDate, onSelectDate }
       </div>
 
       {/* Calendar Legend */}
-      <div className="mt-6 pt-5 border-t border-slate-150 grid grid-cols-1 sm:grid-cols-3 gap-3 text-[11px]" id="calendar-legend">
-        <div className="flex items-center gap-2 text-slate-500 font-medium">
+      <div className="mt-6 pt-5 border-t border-slate-150 grid grid-cols-2 sm:grid-cols-5 gap-2.5 text-[11px]" id="calendar-legend">
+        <div className="flex items-center gap-1.5 text-slate-600 font-medium">
+          <span className="w-2.5 h-2.5 rounded-full bg-indigo-500"></span>
+          <span>Protein Met (≥{goals.dailyProteinTarget}g)</span>
+        </div>
+        <div className="flex items-center gap-1.5 text-slate-600 font-medium">
+          <span className="w-2.5 h-2.5 rounded-full bg-sky-500"></span>
+          <span>Carbs Met (≥{goals.dailyCarbsTarget || 250}g)</span>
+        </div>
+        <div className="flex items-center gap-1.5 text-slate-600 font-medium">
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-          <span>Protein Met (≥ {goals.dailyProteinTarget}g)</span>
+          <span>Fiber Met (≥{goals.dailyFiberTarget || 30}g)</span>
         </div>
-        <div className="flex items-center gap-2 text-slate-500 font-medium">
+        <div className="flex items-center gap-1.5 text-slate-600 font-medium">
           <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
-          <span>Protein Below Target</span>
+          <span>Calories Surplus</span>
         </div>
-        <div className="flex items-center gap-2 text-slate-500 font-medium">
-          <Dumbbell className="w-3.5 h-3.5 text-indigo-600" />
-          <span>Hypertrophy Lift Logged</span>
+        <div className="flex items-center gap-1.5 text-slate-600 font-medium col-span-2 sm:col-span-1">
+          <Dumbbell className="w-3.5 h-3.5 text-violet-600" />
+          <span>Hypertrophy Lift</span>
         </div>
       </div>
     </div>

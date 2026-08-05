@@ -4,6 +4,7 @@ import { INITIAL_GOALS, INITIAL_LOGS, INITIAL_INSIGHTS } from './data';
 import MealLogger from './components/MealLogger';
 import WorkoutLogger from './components/WorkoutLogger';
 import Analytics from './components/Analytics';
+import BmrCalculator from './components/BmrCalculator';
 import CalendarView from './components/CalendarView';
 import CoachInsights from './components/CoachInsights';
 import GoalsConfig from './components/GoalsConfig';
@@ -11,6 +12,7 @@ import WorkspaceHub from './components/WorkspaceHub';
 import { ConfirmModal } from './components/ConfirmModal';
 import { auth, initAuth, getAccessToken, isTokenExpired, googleSignIn } from './lib/googleAuth';
 import { backupDataToDrive, extractFolderId, fetchGoogleDocText, parseFoodsFromText, parseWorkoutsFromText, restoreDataFromDrive } from './lib/googleApi';
+import { sendWebNotification } from './lib/notifications';
 import {
   auth as firebaseAuth,
   signInWithGoogleFirebase,
@@ -20,7 +22,9 @@ import {
   saveDailyLogToFirestore,
   getDailyLogsFromFirestore,
   saveRoutineDaysToFirestore,
-  getRoutineDaysFromFirestore
+  getRoutineDaysFromFirestore,
+  saveUserInsightsToFirestore,
+  getUserInsightsFromFirestore
 } from './lib/firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 
@@ -33,6 +37,7 @@ import {
   CheckCircle2,
   Calendar,
   Sparkles,
+  Utensils,
   TrendingUp,
   RotateCcw,
   Weight,
@@ -75,8 +80,8 @@ export default function App() {
     'nutrition' | 'workouts' | 'analytics' | 'coach' | 'settings' | 'workspace'
   >('nutrition');
 
-  // Sub-tabs state inside Analytics section (Graphs & Calendar)
-  const [analyticsSubTab, setAnalyticsSubTab] = useState<'graphs' | 'calendar'>('graphs');
+  // Sub-tabs state inside Analytics section (Graphs, BMR Calculator, & Calendar)
+  const [analyticsSubTab, setAnalyticsSubTab] = useState<'graphs' | 'bmr' | 'calendar'>('graphs');
 
   // Hamburger drawer open/close state
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -84,6 +89,7 @@ export default function App() {
   // Track if we have already auto-synced upon opening the app
   const hasSyncedOnOpen = useRef(false);
   const isAutoSyncReady = useRef(false);
+  const isBackupInProgressRef = useRef(false);
   const lastSavedSignature = useRef<string>('');
   const [syncingActionMessage, setSyncingActionMessage] = useState('Restoring logged foods & workouts from Google Drive...');
 
@@ -227,6 +233,7 @@ export default function App() {
   const prevGoalsRef = useRef(goals);
   const prevLogsRef = useRef(logs);
   const prevWorkoutsRef = useRef(parsedWorkouts);
+  const prevInsightsRef = useRef(insights);
 
   // Listen to Firebase Auth state for persistent login across browser sessions
   useEffect(() => {
@@ -238,10 +245,11 @@ export default function App() {
         try {
           setIsFirebaseReading(true);
           setSyncStatusMessage('Loading data from Cloud Firestore...');
-          const [cloudGoals, cloudLogs, cloudRoutine] = await Promise.all([
+          const [cloudGoals, cloudLogs, cloudRoutine, cloudInsights] = await Promise.all([
             getUserGoalsFromFirestore(user.uid),
             getDailyLogsFromFirestore(user.uid),
-            getRoutineDaysFromFirestore(user.uid)
+            getRoutineDaysFromFirestore(user.uid),
+            getUserInsightsFromFirestore(user.uid)
           ]);
 
           if (cloudGoals) {
@@ -263,6 +271,13 @@ export default function App() {
             prevWorkoutsRef.current = cloudRoutine;
           } else {
             prevWorkoutsRef.current = parsedWorkouts;
+          }
+
+          if (cloudInsights && cloudInsights.length > 0) {
+            setInsights(cloudInsights);
+            prevInsightsRef.current = cloudInsights;
+          } else {
+            prevInsightsRef.current = insights;
           }
 
           setSyncStatusMessage('✓ Connected to Cloud Firestore');
@@ -291,8 +306,9 @@ export default function App() {
     const goalsChanged = JSON.stringify(goals) !== JSON.stringify(prevGoalsRef.current);
     const logsChanged = JSON.stringify(logs) !== JSON.stringify(prevLogsRef.current);
     const workoutsChanged = JSON.stringify(parsedWorkouts) !== JSON.stringify(prevWorkoutsRef.current);
+    const insightsChanged = JSON.stringify(insights) !== JSON.stringify(prevInsightsRef.current);
 
-    if (!goalsChanged && !logsChanged && !workoutsChanged) {
+    if (!goalsChanged && !logsChanged && !workoutsChanged && !insightsChanged) {
       return;
     }
 
@@ -308,6 +324,10 @@ export default function App() {
 
         if (workoutsChanged) {
           promises.push(saveRoutineDaysToFirestore(firebaseUser.uid, parsedWorkouts));
+        }
+
+        if (insightsChanged) {
+          promises.push(saveUserInsightsToFirestore(firebaseUser.uid, insights));
         }
 
         if (logsChanged) {
@@ -327,6 +347,7 @@ export default function App() {
         prevGoalsRef.current = goals;
         prevLogsRef.current = logs;
         prevWorkoutsRef.current = parsedWorkouts;
+        prevInsightsRef.current = insights;
 
         setSyncStatusMessage('✓ Saved to Cloud');
         setTimeout(() => setSyncStatusMessage(null), 2500);
@@ -338,7 +359,7 @@ export default function App() {
     }, 800);
 
     return () => clearTimeout(timer);
-  }, [goals, logs, parsedWorkouts, firebaseUser]);
+  }, [goals, logs, parsedWorkouts, insights, firebaseUser]);
 
   // State to manage entering today's bodyweight and height
   const [weightInput, setWeightInput] = useState('');
@@ -381,23 +402,23 @@ export default function App() {
 
       if (currentTimeStr === targetTime && lastNotifiedDate !== todayStr) {
         localStorage.setItem('hypertrophy_last_backup_notification', todayStr);
-        try {
-          const notif = new Notification('Fitness Tracker - Backup Reminder ☁️', {
+        sendWebNotification(
+          'Fitness Tracker - Backup Reminder ☁️',
+          {
             body: "Don't forget to export your daily workout & nutrition logs to Google Drive!",
             icon: '/favicon.ico',
             tag: 'daily-backup-reminder'
-          });
-
-          notif.onclick = () => {
+          },
+          () => {
             window.focus();
             setActiveTab('workspace');
             window.location.hash = 'google-sync-section';
             const el = document.getElementById('google-sync-section');
             if (el) el.scrollIntoView({ behavior: 'smooth' });
-          };
-        } catch (e) {
+          }
+        ).catch((e) => {
           console.error('Failed to trigger daily backup notification:', e);
-        }
+        });
       }
     };
 
@@ -511,6 +532,18 @@ export default function App() {
     localStorage.setItem('hypertrophy_parsed_workouts', JSON.stringify(parsedWorkouts));
   }, [parsedWorkouts]);
 
+  // Helper to generate a normalized state signature string excluding lastSyncTime
+  const getAppSignature = (goalsObj: UserGoals, logsArr: DailyLog[], insightsArr: CoachingInsight[], foodsArr: any[], workoutsArr: ParsedWorkoutDay[]) => {
+    const cleanGoals = { ...goalsObj, lastSyncTime: undefined };
+    return JSON.stringify({
+      goals: cleanGoals,
+      logs: logsArr,
+      insights: insightsArr,
+      parsedFoods: foodsArr,
+      parsedWorkouts: workoutsArr
+    });
+  };
+
   // Automatic Backup and Sync to Google Drive & connected Docs upon opening the app or logging in
   const triggerAutoSyncOnOpen = async (overrideToken?: string) => {
     if (hasSyncedOnOpen.current) return;
@@ -614,27 +647,21 @@ export default function App() {
           ? `https://drive.google.com/drive/folders/${restored._resolvedFolderId}`
           : (restored.goals?.driveFolderLink || goals.driveFolderLink);
 
-        setGoals((prev) => {
-          const updated = {
-            ...prev,
-            ...restored.goals,
-            lastSyncTime: nowStr,
-            driveFolderLink: restoredDriveFolderLink
-          };
-          try {
-            localStorage.setItem('hypertrophy_goals', JSON.stringify(updated));
-          } catch (e) {}
-          return updated;
-        });
+        const updatedGoals = {
+          ...goals,
+          ...restored.goals,
+          lastSyncTime: nowStr,
+          driveFolderLink: restoredDriveFolderLink
+        };
 
-        // Set initial signature so restored state doesn't re-trigger background save
-        lastSavedSignature.current = JSON.stringify({
-          goals: { ...finalGoals, lastSyncTime: undefined },
-          logs: finalLogs,
-          insights: finalInsights,
-          parsedFoods: finalFoods,
-          parsedWorkouts: finalWorkouts
-        });
+        setGoals(updatedGoals);
+
+        try {
+          localStorage.setItem('hypertrophy_goals', JSON.stringify(updatedGoals));
+        } catch (e) {}
+
+        // Set initial signature so restored state matches exactly and doesn't re-trigger background save
+        lastSavedSignature.current = getAppSignature(updatedGoals, finalLogs, finalInsights, finalFoods, finalWorkouts);
 
         console.log('Auto-sync / restore on app open successful:', nowStr);
         setSyncStatusMessage('Google Drive data restored & up to date!');
@@ -656,18 +683,16 @@ export default function App() {
           const { fileId, folderId: resolvedFolderId } = await backupDataToDrive(payload, accessToken, folderId);
           
           const nowStr = new Date().toLocaleString();
-          setGoals((prev) => ({
-            ...prev,
+          const newFolderLink = resolvedFolderId ? `https://drive.google.com/drive/folders/${resolvedFolderId}` : goals.driveFolderLink;
+          const newGoals = {
+            ...goals,
             lastSyncTime: nowStr,
-            driveFolderLink: resolvedFolderId ? `https://drive.google.com/drive/folders/${resolvedFolderId}` : prev.driveFolderLink
-          }));
-          lastSavedSignature.current = JSON.stringify({
-            goals: { ...goals, lastSyncTime: undefined },
-            logs,
-            insights,
-            parsedFoods,
-            parsedWorkouts
-          });
+            driveFolderLink: newFolderLink
+          };
+
+          lastSavedSignature.current = getAppSignature(newGoals, logs, insights, parsedFoods, parsedWorkouts);
+
+          setGoals(newGoals);
           console.log('Initial backup successful on open:', nowStr);
           setSyncStatusMessage('Google Drive sync active.');
           setTimeout(() => setSyncStatusMessage(null), 3000);
@@ -682,6 +707,59 @@ export default function App() {
     } finally {
       setIsSyncingDrive(false);
       isAutoSyncReady.current = true;
+    }
+  };
+
+  // Centralized single-execution backup handler for manual or programmatic triggers
+  const handlePerformDriveBackup = async (overrideToken?: string) => {
+    if (isBackupInProgressRef.current) {
+      console.log('Backup already in progress, skipping duplicate request.');
+      return { filename: undefined, folderId: undefined };
+    }
+
+    const accessToken = overrideToken || getAccessToken();
+    if (!accessToken || isTokenExpired()) {
+      throw new Error('Google Drive access token missing or expired.');
+    }
+
+    isBackupInProgressRef.current = true;
+    try {
+      setSyncingActionMessage('Backing up data to Google Drive...');
+      setIsSyncingDrive(true);
+
+      const folderId = goals.driveFolderLink ? extractFolderId(goals.driveFolderLink) : undefined;
+      const payload = {
+        goals,
+        logs,
+        insights,
+        parsedFoods,
+        parsedWorkouts,
+        backupVersion: '1.0',
+        exportedAt: new Date().toISOString()
+      };
+
+      const { filename, fileId, folderId: resolvedFolderId } = await backupDataToDrive(payload, accessToken, folderId);
+      const nowStr = new Date().toLocaleString();
+
+      const newFolderLink = resolvedFolderId ? `https://drive.google.com/drive/folders/${resolvedFolderId}` : goals.driveFolderLink;
+
+      const newGoals = {
+        ...goals,
+        lastSyncTime: nowStr,
+        driveFolderLink: newFolderLink
+      };
+
+      // Set signature using newGoals (excluding lastSyncTime) BEFORE calling setGoals
+      lastSavedSignature.current = getAppSignature(newGoals, logs, insights, parsedFoods, parsedWorkouts);
+
+      setGoals(newGoals);
+      setSyncStatusMessage('Backed up to Google Drive');
+      setTimeout(() => setSyncStatusMessage(null), 2500);
+
+      return { filename, folderId: resolvedFolderId };
+    } finally {
+      isBackupInProgressRef.current = false;
+      setIsSyncingDrive(false);
     }
   };
 
@@ -717,21 +795,27 @@ export default function App() {
     const accessToken = getAccessToken();
     if (!accessToken || isTokenExpired()) return;
 
-    // Check signature excluding lastSyncTime to prevent infinite loop
-    const currentGoals = { ...goals, lastSyncTime: undefined };
-    const currentSignature = JSON.stringify({
-      goals: currentGoals,
-      logs,
-      insights,
-      parsedFoods,
-      parsedWorkouts
-    });
+    const currentSignature = getAppSignature(goals, logs, insights, parsedFoods, parsedWorkouts);
+
+    // Initialize signature if unset
+    if (!lastSavedSignature.current) {
+      lastSavedSignature.current = currentSignature;
+      return;
+    }
 
     if (lastSavedSignature.current === currentSignature) {
       return;
     }
 
     const timer = setTimeout(async () => {
+      if (isBackupInProgressRef.current) return;
+
+      // Re-check signature in case a manual backup completed while timer was pending
+      const freshSignature = getAppSignature(goals, logs, insights, parsedFoods, parsedWorkouts);
+
+      if (lastSavedSignature.current === freshSignature) return;
+
+      isBackupInProgressRef.current = true;
       try {
         setSyncingActionMessage('Saving changes to Google Drive...');
         setIsSyncingDrive(true);
@@ -748,21 +832,26 @@ export default function App() {
         const { fileId, folderId: resolvedFolderId } = await backupDataToDrive(payload, accessToken, folderId);
         const nowStr = new Date().toLocaleString();
 
-        lastSavedSignature.current = currentSignature;
-
-        setGoals((prev) => ({
-          ...prev,
+        const newFolderLink = resolvedFolderId ? `https://drive.google.com/drive/folders/${resolvedFolderId}` : goals.driveFolderLink;
+        const newGoals = {
+          ...goals,
           lastSyncTime: nowStr,
-          driveFolderLink: resolvedFolderId ? `https://drive.google.com/drive/folders/${resolvedFolderId}` : prev.driveFolderLink
-        }));
+          driveFolderLink: newFolderLink
+        };
+
+        // Update signature with newGoals so the re-render matches signature exactly
+        lastSavedSignature.current = getAppSignature(newGoals, logs, insights, parsedFoods, parsedWorkouts);
+
+        setGoals(newGoals);
         setSyncStatusMessage('Auto-saved to Google Drive');
         setTimeout(() => setSyncStatusMessage(null), 2500);
       } catch (err) {
         console.error('Real-time Google Drive auto-save failed:', err);
       } finally {
+        isBackupInProgressRef.current = false;
         setIsSyncingDrive(false);
       }
-    }, 200);
+    }, 1500);
 
     return () => clearTimeout(timer);
   }, [logs, parsedWorkouts, parsedFoods, goals, insights]);
@@ -1095,11 +1184,18 @@ export default function App() {
   };
 
   // Compute stats for current selected date
-  const todayProtein = currentLog.meals.reduce((sum, m) => sum + m.protein, 0);
-  const todayCalories = currentLog.meals.reduce((sum, m) => sum + m.calories, 0);
+  const todayProtein = currentLog.meals.reduce((sum, m) => sum + (m.protein || 0), 0);
+  const todayCarbs = currentLog.meals.reduce((sum, m) => sum + (m.carbs || 0), 0);
+  const todayFiber = currentLog.meals.reduce((sum, m) => sum + (m.fiber || 0), 0);
+  const todayCalories = currentLog.meals.reduce((sum, m) => sum + (m.calories || 0), 0);
   const completedWorkouts = currentLog.workouts.filter((w) => w.completed).length;
 
+  const targetCarbs = goals.dailyCarbsTarget || 250;
+  const targetFiber = goals.dailyFiberTarget || 30;
+
   const proteinPercentage = Math.min(100, Math.round((todayProtein / goals.dailyProteinTarget) * 100));
+  const carbsPercentage = Math.min(100, Math.round((todayCarbs / targetCarbs) * 100));
+  const fiberPercentage = Math.min(100, Math.round((todayFiber / targetFiber) * 100));
   const caloriePercentage = Math.min(100, Math.round((todayCalories / goals.dailyCalorieTarget) * 100));
 
   // Determine date label
@@ -1891,59 +1987,95 @@ export default function App() {
             <div className="space-y-6" id="analytics-master-panel">
 
               {/* Global Budgets Overview Widgets */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4" id="budgets-overview-bar">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5" id="budgets-overview-bar">
                 
                 {/* Protein budget status card */}
-                <div className="bg-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between shadow-xs">
-                  <div className="flex items-center gap-3.5">
-                    <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl">
-                      <Flame className="w-5 h-5 text-emerald-500" />
+                <div className="bg-white border border-slate-200 rounded-2xl p-3.5 flex items-center justify-between shadow-xs">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl shrink-0">
+                      <Flame className="w-4 h-4 text-indigo-600" />
                     </div>
                     <div>
-                      <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block">Today's Protein</span>
-                      <span className="text-sm font-black text-slate-800 font-mono mt-0.5 block">{todayProtein}g / {goals.dailyProteinTarget}g</span>
+                      <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block">Protein</span>
+                      <span className="text-xs font-black text-slate-800 font-mono mt-0.5 block">{todayProtein}g / {goals.dailyProteinTarget}g</span>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <span className="text-xs font-black font-mono text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg">
+                  <div className="text-right shrink-0">
+                    <span className="text-[11px] font-black font-mono text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-lg">
                       {proteinPercentage}%
                     </span>
                   </div>
                 </div>
 
-                {/* Calories widget */}
-                <div className="bg-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between shadow-xs">
-                  <div className="flex items-center gap-3.5">
-                    <div className="p-2.5 bg-sky-50 text-sky-600 rounded-xl">
-                      <Flame className="w-5 h-5 text-sky-600" />
+                {/* Carbohydrates budget status card */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-3.5 flex items-center justify-between shadow-xs">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 bg-sky-50 text-sky-600 rounded-xl shrink-0">
+                      <Utensils className="w-4 h-4 text-sky-600" />
                     </div>
                     <div>
-                      <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block">Calorie Surplus</span>
-                      <span className="text-sm font-black text-slate-800 font-mono mt-0.5 block">{todayCalories} / {goals.dailyCalorieTarget} kcal</span>
+                      <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block">Carbs</span>
+                      <span className="text-xs font-black text-slate-800 font-mono mt-0.5 block">{todayCarbs}g / {targetCarbs}g</span>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <span className="text-xs font-black font-mono text-sky-600 bg-sky-50 px-2 py-1 rounded-lg">
+                  <div className="text-right shrink-0">
+                    <span className="text-[11px] font-black font-mono text-sky-600 bg-sky-50 px-2 py-0.5 rounded-lg">
+                      {carbsPercentage}%
+                    </span>
+                  </div>
+                </div>
+
+                {/* Dietary Fiber budget status card */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-3.5 flex items-center justify-between shadow-xs">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl shrink-0">
+                      <Sparkles className="w-4 h-4 text-emerald-600" />
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block">Fiber</span>
+                      <span className="text-xs font-black text-slate-800 font-mono mt-0.5 block">{todayFiber}g / {targetFiber}g</span>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className="text-[11px] font-black font-mono text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg">
+                      {fiberPercentage}%
+                    </span>
+                  </div>
+                </div>
+
+                {/* Calories widget */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-3.5 flex items-center justify-between shadow-xs">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 bg-amber-50 text-amber-600 rounded-xl shrink-0">
+                      <Flame className="w-4 h-4 text-amber-600" />
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block">Calories</span>
+                      <span className="text-xs font-black text-slate-800 font-mono mt-0.5 block">{todayCalories} / {goals.dailyCalorieTarget}</span>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className="text-[11px] font-black font-mono text-amber-600 bg-amber-50 px-2 py-0.5 rounded-lg">
                       {caloriePercentage}%
                     </span>
                   </div>
                 </div>
 
                 {/* Workout completed exercises widget */}
-                <div className="bg-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between shadow-xs">
-                  <div className="flex items-center gap-3.5">
-                    <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl">
-                      <Dumbbell className="w-5 h-5 text-indigo-600" />
+                <div className="bg-white border border-slate-200 rounded-2xl p-3.5 flex items-center justify-between shadow-xs col-span-2 sm:col-span-1 lg:col-span-1">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 bg-violet-50 text-violet-600 rounded-xl shrink-0">
+                      <Dumbbell className="w-4 h-4 text-violet-600" />
                     </div>
                     <div>
-                      <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block">Completed Exercises</span>
-                      <span className="text-sm font-black text-slate-800 mt-0.5 block">
-                        {completedWorkouts} / {currentLog.workouts.length} Lifts Today
+                      <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block">Exercises</span>
+                      <span className="text-xs font-black text-slate-800 mt-0.5 block truncate">
+                        {completedWorkouts} / {currentLog.workouts.length} Lifts
                       </span>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <span className="text-xs font-black font-mono text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">
+                  <div className="text-right shrink-0">
+                    <span className="text-[11px] font-black font-mono text-violet-600 bg-violet-50 px-2 py-0.5 rounded-lg">
                       {currentLog.workouts.length > 0 ? Math.round((completedWorkouts / currentLog.workouts.length) * 100) : 0}%
                     </span>
                   </div>
@@ -1951,18 +2083,19 @@ export default function App() {
 
               </div>
 
-              {/* Inner Tabs Selector - 2 Tabs splitting full width */}
-              <div className="grid grid-cols-2 border-b border-slate-200 gap-2 pb-0.5 w-full">
+              {/* Inner Tabs Selector - 3 Tabs splitting full width */}
+              <div className="grid grid-cols-3 border-b border-slate-200 gap-1 pb-0.5 w-full">
                 {[
                   { id: 'graphs', label: 'Progress Graphs' },
-                  { id: 'calendar', label: 'Consistency Calendar' }
+                  { id: 'bmr', label: 'BMR & TDEE' },
+                  { id: 'calendar', label: 'Calendar Records' }
                 ].map((subTab) => (
                   <button
                     key={subTab.id}
                     onClick={() => setAnalyticsSubTab(subTab.id as any)}
-                    className={`w-full text-center px-4 py-2.5 rounded-t-xl text-xs sm:text-sm font-black whitespace-nowrap transition-all cursor-pointer border-b-2 ${
+                    className={`w-full text-center px-2 sm:px-4 py-2.5 rounded-t-xl text-xs sm:text-sm font-black whitespace-nowrap transition-all cursor-pointer border-b-2 ${
                       analyticsSubTab === subTab.id
-                        ? 'border-indigo-600 text-indigo-600 font-black'
+                        ? 'border-indigo-600 text-indigo-600 font-black bg-indigo-50/50'
                         : 'border-transparent text-slate-400 hover:text-slate-700'
                     }`}
                   >
@@ -1980,7 +2113,24 @@ export default function App() {
                       <h3 className="text-base font-black text-slate-900">Performance Over Time</h3>
                       <p className="text-slate-400 text-xs mt-1">Review protein, calories, lean muscle metrics, and weight gains</p>
                     </div>
-                    <Analytics logs={logs} goals={goals} />
+                    <Analytics
+                      logs={logs}
+                      goals={goals}
+                      onUpdateGoals={(updated) => setGoals(updated)}
+                    />
+                  </div>
+                )}
+
+                {analyticsSubTab === 'bmr' && (
+                  <div className="space-y-6">
+                    <div className="mb-4">
+                      <h3 className="text-base font-black text-slate-900">Metabolic Rate & Energy Calculator</h3>
+                      <p className="text-slate-400 text-xs mt-1">Calculate your baseline metabolism (BMR) and daily expenditure (TDEE) to calibrate bulking or cutting targets</p>
+                    </div>
+                    <BmrCalculator
+                      goals={goals}
+                      onNavigateToSettings={() => setActiveTab('settings')}
+                    />
                   </div>
                 )}
 
@@ -2068,6 +2218,7 @@ export default function App() {
                 parsedWorkouts={parsedWorkouts}
                 onUpdateParsedFoods={setParsedFoods}
                 onUpdateParsedWorkouts={setParsedWorkouts}
+                onPerformDriveBackup={handlePerformDriveBackup}
               />
             </div>
           )}

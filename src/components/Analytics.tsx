@@ -16,13 +16,14 @@ import {
   Cell,
   ReferenceLine
 } from 'recharts';
-import { Dumbbell, Flame, Award, Scale, Plus, Trash2, Calendar, TrendingUp, History, Check } from 'lucide-react';
+import { Dumbbell, Flame, Award, Scale, Plus, Trash2, Calendar, TrendingUp, History, Check, Utensils, Sparkles } from 'lucide-react';
 
 interface AnalyticsProps {
   logs: DailyLog[];
   goals: UserGoals;
   onLogWeight?: (date: string, weight: number) => void;
   onDeleteWeight?: (date: string) => void;
+  onUpdateGoals?: (goals: UserGoals) => void;
 }
 
 type RangePreset = '7d' | '30d' | '90d';
@@ -47,7 +48,7 @@ function getPresetDates(days: number) {
   };
 }
 
-export default function Analytics({ logs, goals }: AnalyticsProps) {
+export default function Analytics({ logs, goals, onLogWeight, onDeleteWeight, onUpdateGoals }: AnalyticsProps) {
   // Compute all recorded weight entries sorted chronologically
   const allWeightEntries = useMemo(() => {
     return logs
@@ -142,6 +143,8 @@ export default function Analytics({ logs, goals }: AnalyticsProps) {
         Carbs: totalCarbs,
         Fiber: totalFiber,
         ProteinGoal: goals.dailyProteinTarget,
+        CarbsGoal: goals.dailyCarbsTarget || 250,
+        FiberGoal: goals.dailyFiberTarget || 30,
         Calories: totalCalories,
         CalorieGoal: goals.dailyCalorieTarget,
         Weight: log.weight || null
@@ -321,59 +324,85 @@ export default function Analytics({ logs, goals }: AnalyticsProps) {
   return (
     <div className="space-y-6" id="analytics-panel">
       {/* Overview Metric Badges */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4" id="analytics-badges-grid">
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shadow-sm">
-            <Award className="w-5 h-5" />
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5" id="analytics-badges-grid">
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shadow-sm shrink-0">
+            <Award className="w-4 h-4" />
           </div>
           <div>
-            <span className="text-indigo-600 text-xs uppercase tracking-wider font-extrabold">Protein Success</span>
-            <h3 className="text-xl font-black text-slate-900 mt-0.5">
-              {default7dChartData.filter((d) => d.Protein >= d.ProteinGoal).length}/7 <span className="text-slate-500 text-sm font-bold">Days</span>
+            <span className="text-indigo-600 text-[10px] uppercase tracking-wider font-extrabold block">Protein Success</span>
+            <h3 className="text-base font-black text-slate-900 mt-0.5">
+              {default7dChartData.filter((d) => d.Protein >= d.ProteinGoal).length}/7 <span className="text-slate-500 text-xs font-bold">Days</span>
             </h3>
-            <p className="text-xs font-semibold text-slate-600 mt-0.5">Achieved protein hypertrophy target</p>
+            <p className="text-[10px] font-semibold text-slate-500 mt-0.5 truncate">Protein target</p>
           </div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shadow-sm">
-            <Dumbbell className="w-5 h-5" />
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-sky-50 border border-sky-100 flex items-center justify-center text-sky-600 shadow-sm shrink-0">
+            <Utensils className="w-4 h-4" />
           </div>
           <div>
-            <span className="text-indigo-600 text-xs uppercase tracking-wider font-extrabold">Hypertrophy Sets</span>
-            <h3 className="text-xl font-black text-slate-900 mt-0.5">
-              {totalWeeklySets} <span className="text-slate-500 text-sm font-bold">Working Sets</span>
+            <span className="text-sky-600 text-[10px] uppercase tracking-wider font-extrabold block">Carbs Target</span>
+            <h3 className="text-base font-black text-slate-900 mt-0.5">
+              {default7dChartData.filter((d) => d.Carbs >= d.CarbsGoal).length}/7 <span className="text-slate-500 text-xs font-bold">Days</span>
             </h3>
-            <p className="text-xs font-semibold text-slate-600 mt-0.5">Completed sets across muscle groups</p>
+            <p className="text-[10px] font-semibold text-slate-500 mt-0.5 truncate">Glycogen target</p>
           </div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shadow-sm">
-            <Flame className="w-5 h-5" />
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600 shadow-sm shrink-0">
+            <Sparkles className="w-4 h-4" />
           </div>
           <div>
-            <span className="text-indigo-600 text-xs uppercase tracking-wider font-extrabold">Caloric Surplus</span>
-            <h3 className="text-xl font-black text-slate-900 mt-0.5">
-              {default7dChartData.filter((d) => d.Calories >= d.CalorieGoal).length}/7 <span className="text-slate-500 text-sm font-bold">Days</span>
+            <span className="text-emerald-600 text-[10px] uppercase tracking-wider font-extrabold block">Fiber Target</span>
+            <h3 className="text-base font-black text-slate-900 mt-0.5">
+              {default7dChartData.filter((d) => d.Fiber >= d.FiberGoal).length}/7 <span className="text-slate-500 text-xs font-bold">Days</span>
             </h3>
-            <p className="text-xs font-semibold text-slate-600 mt-0.5">Fueled bulking caloric target</p>
+            <p className="text-[10px] font-semibold text-slate-500 mt-0.5 truncate">Gut health target</p>
           </div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shadow-sm">
-            <Scale className="w-5 h-5" />
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600 shadow-sm shrink-0">
+            <Flame className="w-4 h-4" />
           </div>
           <div>
-            <span className="text-indigo-600 text-xs uppercase tracking-wider font-extrabold">Scale Weight</span>
-            <h3 className="text-xl font-black text-slate-900 mt-0.5">
+            <span className="text-amber-600 text-[10px] uppercase tracking-wider font-extrabold block">Caloric Surplus</span>
+            <h3 className="text-base font-black text-slate-900 mt-0.5">
+              {default7dChartData.filter((d) => d.Calories >= d.CalorieGoal).length}/7 <span className="text-slate-500 text-xs font-bold">Days</span>
+            </h3>
+            <p className="text-[10px] font-semibold text-slate-500 mt-0.5 truncate">Bulking surplus</p>
+          </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-violet-50 border border-violet-100 flex items-center justify-center text-violet-600 shadow-sm shrink-0">
+            <Dumbbell className="w-4 h-4" />
+          </div>
+          <div>
+            <span className="text-violet-600 text-[10px] uppercase tracking-wider font-extrabold block">Hypertrophy Sets</span>
+            <h3 className="text-base font-black text-slate-900 mt-0.5">
+              {totalWeeklySets} <span className="text-slate-500 text-xs font-bold">Sets</span>
+            </h3>
+            <p className="text-[10px] font-semibold text-slate-500 mt-0.5 truncate">Completed volume</p>
+          </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-purple-50 border border-purple-100 flex items-center justify-center text-purple-600 shadow-sm shrink-0">
+            <Scale className="w-4 h-4" />
+          </div>
+          <div>
+            <span className="text-purple-600 text-[10px] uppercase tracking-wider font-extrabold block">Scale Weight</span>
+            <h3 className="text-base font-black text-slate-900 mt-0.5 truncate">
               {default7dChartData[default7dChartData.length - 1]?.Weight ? (
                 `${default7dChartData[default7dChartData.length - 1].Weight} ${goals.weightUnit}`
               ) : 'No log'}
             </h3>
-            <p className="text-xs text-indigo-600 font-extrabold mt-0.5">
-              Target: {goals.targetWeight} {goals.weightUnit} for hypertrophy
+            <p className="text-[10px] text-purple-600 font-extrabold mt-0.5 truncate">
+              Goal: {goals.targetWeight} {goals.weightUnit}
             </p>
           </div>
         </div>
@@ -448,6 +477,7 @@ export default function Analytics({ logs, goals }: AnalyticsProps) {
                 <YAxis stroke="#64748b" fontSize={11} tickLine={false} />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: 11, paddingTop: 10 }} />
+                <ReferenceLine y={goals.dailyCarbsTarget || 250} stroke="#0284c7" strokeDasharray="5 5" label={{ value: `Carbs Target (${goals.dailyCarbsTarget || 250}g)`, position: 'top', fill: '#0284c7', fontSize: 9 }} />
                 <Bar dataKey="Carbs" name="Carbohydrates (g)" fill="#0284c7" radius={[6, 6, 0, 0]} maxBarSize={32} />
               </BarChart>
             </ResponsiveContainer>
@@ -472,6 +502,7 @@ export default function Analytics({ logs, goals }: AnalyticsProps) {
                 <YAxis stroke="#64748b" fontSize={11} tickLine={false} />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: 11, paddingTop: 10 }} />
+                <ReferenceLine y={goals.dailyFiberTarget || 30} stroke="#059669" strokeDasharray="5 5" label={{ value: `Fiber Target (${goals.dailyFiberTarget || 30}g)`, position: 'top', fill: '#059669', fontSize: 9 }} />
                 <Bar dataKey="Fiber" name="Dietary Fiber (g)" fill="#059669" radius={[6, 6, 0, 0]} maxBarSize={32} />
               </BarChart>
             </ResponsiveContainer>

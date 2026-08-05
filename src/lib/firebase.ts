@@ -21,7 +21,7 @@ import {
   deleteDoc
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { DailyLog, UserGoals, ParsedWorkoutDay } from '../types';
+import { DailyLog, UserGoals, ParsedWorkoutDay, CoachingInsight } from '../types';
 
 // Initialize Firebase App
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
@@ -159,6 +159,32 @@ export async function getRoutineDaysFromFirestore(userId: string): Promise<Parse
   if (snap.exists()) {
     const data = snap.data();
     return data.days || null;
+  }
+  return null;
+}
+
+export async function saveUserInsightsToFirestore(userId: string, insights: CoachingInsight[]) {
+  if (!userId) return;
+  const ref = doc(db, 'userInsights', userId);
+  const cleanInsights = JSON.parse(JSON.stringify(insights));
+  await setDoc(
+    ref,
+    {
+      userId,
+      insights: cleanInsights,
+      updatedAt: new Date().toISOString()
+    },
+    { merge: true }
+  );
+}
+
+export async function getUserInsightsFromFirestore(userId: string): Promise<CoachingInsight[] | null> {
+  if (!userId) return null;
+  const ref = doc(db, 'userInsights', userId);
+  const snap = await getDoc(ref);
+  if (snap.exists()) {
+    const data = snap.data();
+    return data.insights || null;
   }
   return null;
 }

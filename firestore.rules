@@ -32,5 +32,9 @@ service cloud.firestore {
     match /routineDays/{routineId} {
       allow read, write: if isDataOwner();
     }
+
+    match /userInsights/{insightId} {
+      allow read, write: if isUser(insightId) || isDataOwner();
+    }
   }
 }

@@ -32,7 +32,9 @@ import {
   HeartPulse,
   Calendar,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  Copy,
+  MoreVertical
 } from 'lucide-react';
 
 interface WorkoutLoggerProps {
@@ -269,6 +271,70 @@ export default function WorkoutLogger({
   const [editingDayHeaderIdx, setEditingDayHeaderIdx] = useState<number | null>(null);
   const [editDayTitle, setEditDayTitle] = useState('');
   const [editDayFocus, setEditDayFocus] = useState('');
+
+  // 3-dots exercise context menu state
+  const [activeMenuKey, setActiveMenuKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (activeMenuKey) {
+        const target = e.target as HTMLElement;
+        if (!target.closest(`.ex-menu-container-${activeMenuKey.replace(/[^a-zA-Z0-9-]/g, '_')}`)) {
+          setActiveMenuKey(null);
+        }
+      }
+    };
+    window.addEventListener('click', handleClickOutside);
+    return () => window.removeEventListener('click', handleClickOutside);
+  }, [activeMenuKey]);
+
+  // Duplicate exercise modal state & long-press handling
+  const [duplicateModalEx, setDuplicateModalEx] = useState<{ exercise: ParsedWorkoutExercise; sourceDayIdx: number } | null>(null);
+  const [duplicateToastMsg, setDuplicateToastMsg] = useState<string | null>(null);
+  const longPressTimerRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  const handleLongPressStart = (exercise: ParsedWorkoutExercise, sourceDayIdx: number) => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+    }
+    longPressTimerRef.current = setTimeout(() => {
+      if (typeof window !== 'undefined' && window.navigator && window.navigator.vibrate) {
+        window.navigator.vibrate(50);
+      }
+      setDuplicateModalEx({ exercise, sourceDayIdx });
+    }, 500);
+  };
+
+  const handleLongPressEnd = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const handleDuplicateToDay = (targetDayIdx: number) => {
+    if (!duplicateModalEx) return;
+    const { exercise } = duplicateModalEx;
+    const targetDay = displayDays[targetDayIdx];
+    if (!targetDay || targetDay.isRestDay) return;
+
+    const updatedDays = JSON.parse(JSON.stringify(displayDays));
+    if (!updatedDays[targetDayIdx].exercises) {
+      updatedDays[targetDayIdx].exercises = [];
+    }
+    updatedDays[targetDayIdx].exercises.push({ ...exercise });
+
+    saveDisplayDays(updatedDays);
+
+    const targetName = targetDay.dayOfWeek && targetDay.dayOfWeek !== 'Unassigned'
+      ? `${targetDay.day || `Day ${targetDayIdx + 1}`} (${targetDay.dayOfWeek})`
+      : (targetDay.day || `Day ${targetDayIdx + 1}`);
+
+    setDuplicateToastMsg(`Copied "${exercise.name}" to ${targetName}!`);
+    setTimeout(() => setDuplicateToastMsg(null), 3000);
+
+    setDuplicateModalEx(null);
+  };
 
   // Calculate consistency streak
   const streak = calculateStreak(logs, selectedDate || new Date().toISOString().split('T')[0]);
@@ -1569,7 +1635,13 @@ export default function WorkoutLogger({
                             return (
                               <div
                                 key={`ex-item-${exKey}`}
-                                className="bg-white p-3.5 rounded-xl border border-slate-200/90 space-y-2"
+                                className="bg-white p-3.5 rounded-xl border border-slate-200/90 space-y-2 select-none hover:border-indigo-300 transition-all relative group cursor-grab active:cursor-grabbing"
+                                onTouchStart={() => handleLongPressStart(ex, dayIdx)}
+                                onTouchEnd={handleLongPressEnd}
+                                onTouchMove={handleLongPressEnd}
+                                onMouseDown={() => handleLongPressStart(ex, dayIdx)}
+                                onMouseUp={handleLongPressEnd}
+                                onMouseLeave={handleLongPressEnd}
                               >
                                 {isEditing ? (
                                   <div className="space-y-3 bg-slate-50/80 p-3 rounded-xl border border-indigo-200">
@@ -1678,17 +1750,9 @@ export default function WorkoutLogger({
                                     </div>
                                   </div>
                                 ) : (
-                                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-                                    <div className="space-y-1 min-w-0">
+                                  <div className="flex justify-between items-center gap-2">
+                                    <div className="space-y-1 min-w-0 pr-2">
                                       <div className="flex items-center gap-2 flex-wrap">
-                                        <button
-                                          type="button"
-                                          onClick={() => handleRemoveExercise(dayIdx, exIdx)}
-                                          className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors cursor-pointer mr-0.5"
-                                          title="Remove Exercise"
-                                        >
-                                          <Trash2 className="w-3.5 h-3.5" />
-                                        </button>
                                         <h5 className="text-xs font-extrabold text-slate-900">{ex.name}</h5>
                                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
                                           isBodyweight ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-indigo-100 text-indigo-800 border border-indigo-200'
@@ -1712,33 +1776,80 @@ export default function WorkoutLogger({
                                       </div>
                                     </div>
 
-                                    <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
-                                      {ex.youtubeUrl && (
-                                        <a
-                                          href={ex.youtubeUrl}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
-                                          title="Test YouTube Link"
-                                        >
-                                          <ExternalLink className="w-3.5 h-3.5" />
-                                        </a>
-                                      )}
+                                    {/* 3-Dots Context Menu */}
+                                    <div className={`relative shrink-0 ex-menu-container-${exKey.replace(/[^a-zA-Z0-9-]/g, '_')}`}>
                                       <button
                                         type="button"
-                                        onClick={() => {
-                                          setEditingExKey(exKey);
-                                          setEditExNameInput(ex.name);
-                                          setEditExUrlInput(ex.youtubeUrl || '');
-                                          setEditExIsBodyweightInput(isBodyweight);
-                                          setEditExSetsInput(ex.sets || 3);
-                                          setEditExRepsInput(ex.reps || 10);
-                                          setEditExWeightInput(ex.weight !== undefined ? ex.weight : 30);
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleLongPressEnd();
+                                          setActiveMenuKey(activeMenuKey === exKey ? null : exKey);
                                         }}
-                                        className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[11px] font-bold transition-colors cursor-pointer"
+                                        className="p-1.5 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                                        title="Exercise Options"
                                       >
-                                        Edit
+                                        <MoreVertical className="w-4 h-4" />
                                       </button>
+
+                                      {activeMenuKey === exKey && (
+                                        <div className="absolute right-0 top-8 z-30 bg-white border border-slate-200 shadow-xl rounded-2xl p-1.5 w-48 text-xs font-bold space-y-0.5 animate-fadeIn">
+                                          {ex.youtubeUrl && (
+                                            <a
+                                              href={ex.youtubeUrl}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              onClick={() => setActiveMenuKey(null)}
+                                              className="w-full flex items-center gap-2.5 px-3 py-2 text-indigo-700 hover:bg-indigo-50 rounded-xl transition-colors"
+                                            >
+                                              <ExternalLink className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                                              <span>Open YouTube Demo</span>
+                                            </a>
+                                          )}
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setActiveMenuKey(null);
+                                              setDuplicateModalEx({ exercise: ex, sourceDayIdx: dayIdx });
+                                            }}
+                                            className="w-full flex items-center gap-2.5 px-3 py-2 text-slate-700 hover:bg-slate-100 rounded-xl transition-colors text-left cursor-pointer"
+                                          >
+                                            <Copy className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                            <span>Duplicate to Day</span>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setActiveMenuKey(null);
+                                              setEditingExKey(exKey);
+                                              setEditExNameInput(ex.name);
+                                              setEditExUrlInput(ex.youtubeUrl || '');
+                                              setEditExIsBodyweightInput(isBodyweight);
+                                              setEditExSetsInput(ex.sets || 3);
+                                              setEditExRepsInput(ex.reps || 10);
+                                              setEditExWeightInput(ex.weight !== undefined ? ex.weight : 30);
+                                            }}
+                                            className="w-full flex items-center gap-2.5 px-3 py-2 text-slate-700 hover:bg-slate-100 rounded-xl transition-colors text-left cursor-pointer"
+                                          >
+                                            <Edit3 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                            <span>Edit Exercise</span>
+                                          </button>
+                                          <div className="border-t border-slate-100 my-1" />
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setActiveMenuKey(null);
+                                              handleRemoveExercise(dayIdx, exIdx);
+                                            }}
+                                            className="w-full flex items-center gap-2.5 px-3 py-2 text-rose-600 hover:bg-rose-50 rounded-xl transition-colors text-left cursor-pointer"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                                            <span>Delete Exercise</span>
+                                          </button>
+                                        </div>
+                                      )}
                                     </div>
                                   </div>
                                 )}
@@ -1747,13 +1858,21 @@ export default function WorkoutLogger({
                           })
                         ) : (
                           <div className="p-3 bg-white border border-dashed border-slate-200 rounded-xl text-xs text-slate-400 text-center font-medium">
-                            No exercises added to this day yet. Add one below!
+                            {dayObj.isRestDay ? 'Scheduled Rest Day' : 'No exercises added to this day yet. Add one below!'}
                           </div>
                         )}
                       </div>
 
-                      {/* Add Exercise Form to this day */}
-                      {isAddingEx ? (
+                      {/* Add Exercise Form to this day OR Rest Day Notice */}
+                      {dayObj.isRestDay ? (
+                        <div className="p-3 bg-amber-50/80 border border-amber-200/80 rounded-xl text-xs text-amber-900 font-medium flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <span className="flex items-center gap-2 font-bold">
+                            <Coffee className="w-4 h-4 text-amber-600 shrink-0" />
+                            Scheduled Rest Day — Active recovery & muscle synthesis
+                          </span>
+                          <span className="text-[11px] text-amber-700/90 font-semibold">Uncheck "Rest" above to add exercises</span>
+                        </div>
+                      ) : isAddingEx ? (
                         <div className="p-3.5 bg-indigo-50/80 border border-indigo-200 rounded-xl space-y-3">
                           <h6 className="text-xs font-black text-indigo-900">Add Exercise to {dayObj.day || `Day ${dayIdx + 1}`}</h6>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -2145,6 +2264,109 @@ export default function WorkoutLogger({
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Duplicate Exercise to Another Day Modal */}
+      {duplicateModalEx && (
+        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-indigo-100 text-indigo-600 rounded-xl">
+                  <Copy className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900">Duplicate Workout Exercise</h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    Copy <span className="font-bold text-slate-800">"{duplicateModalEx.exercise.name}"</span> to another routine day
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDuplicateModalEx(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Select Target Day:</p>
+              {displayDays.map((dayObj, dIdx) => {
+                const isSource = dIdx === duplicateModalEx.sourceDayIdx;
+                const isRest = Boolean(dayObj.isRestDay);
+
+                return (
+                  <button
+                    key={`dup-target-day-${dIdx}`}
+                    type="button"
+                    disabled={isRest}
+                    onClick={() => handleDuplicateToDay(dIdx)}
+                    className={`w-full p-3.5 rounded-2xl border text-left transition-all flex items-center justify-between gap-3 ${
+                      isRest
+                        ? 'bg-slate-100/70 border-slate-200 text-slate-400 cursor-not-allowed opacity-60'
+                        : 'bg-slate-50 hover:bg-indigo-50/70 border-slate-200 hover:border-indigo-300 text-slate-900 cursor-pointer active:scale-[0.98]'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className={`w-8 h-8 rounded-xl font-black text-xs flex items-center justify-center shrink-0 ${
+                        isRest ? 'bg-amber-100 text-amber-700' : 'bg-indigo-600 text-white'
+                      }`}>
+                        {dIdx + 1}
+                      </span>
+                      <div>
+                        <div className="text-xs font-extrabold flex items-center gap-2">
+                          <span>{dayObj.day || `Day ${dIdx + 1}`}</span>
+                          {dayObj.dayOfWeek && dayObj.dayOfWeek !== 'Unassigned' && (
+                            <span className="text-[10px] text-slate-500 font-bold">({dayObj.dayOfWeek})</span>
+                          )}
+                        </div>
+                        <div className="text-[11px] font-semibold text-slate-500">
+                          {dayObj.focusArea || 'Full Body'} • {dayObj.exercises?.length || 0} exercises
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      {isRest ? (
+                        <span className="px-2.5 py-1 bg-amber-100 text-amber-800 text-[10px] font-black rounded-lg border border-amber-200">
+                          REST DAY (Disabled)
+                        </span>
+                      ) : isSource ? (
+                        <span className="px-2.5 py-1 bg-indigo-100 text-indigo-800 text-[10px] font-black rounded-lg border border-indigo-200">
+                          Same Day +
+                        </span>
+                      ) : (
+                        <span className="px-3 py-1 bg-indigo-600 text-white text-[11px] font-bold rounded-lg shadow-2xs">
+                          Copy Here
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setDuplicateModalEx(null)}
+                className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-extrabold rounded-xl transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {duplicateToastMsg && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-5 py-3 rounded-2xl shadow-2xl border border-slate-700 flex items-center gap-3 animate-fadeIn">
+          <Check className="w-5 h-5 text-emerald-400 stroke-[3]" />
+          <span className="text-xs font-black">{duplicateToastMsg}</span>
         </div>
       )}
 

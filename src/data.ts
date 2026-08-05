@@ -5,7 +5,12 @@ export const INITIAL_GOALS: UserGoals = {
   targetWeight: 80,
   weightUnit: 'kg',
   currentHeight: 178,
+  gender: 'male',
+  age: 25,
+  activityLevel: 'moderate',
   dailyProteinTarget: 165, // grams
+  dailyCarbsTarget: 250, // grams
+  dailyFiberTarget: 30, // grams
   dailyCalorieTarget: 2800, // Surplus for lean bulk
   weeklyWorkoutDaysTarget: 5,
   backupReminderEnabled: true,

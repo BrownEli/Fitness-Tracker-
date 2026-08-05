@@ -39,7 +39,13 @@ export interface UserGoals {
   initialWeight?: number;
   initialWeightDate?: string;
   currentHeight?: number; // in cm
+  gender?: 'male' | 'female';
+  age?: number;
+  activityLevel?: 'sedentary' | 'light' | 'moderate' | 'active' | 'extreme';
+  bodyFat?: number; // percentage
   dailyProteinTarget: number; // grams
+  dailyCarbsTarget?: number; // grams
+  dailyFiberTarget?: number; // grams
   dailyCalorieTarget: number; // kcal
   weeklyWorkoutDaysTarget: number;
   foodsDocId?: string;
