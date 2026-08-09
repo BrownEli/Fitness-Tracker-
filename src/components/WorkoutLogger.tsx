@@ -238,18 +238,20 @@ export default function WorkoutLogger({
   const [editExNameInput, setEditExNameInput] = useState('');
   const [editExUrlInput, setEditExUrlInput] = useState('');
   const [editExIsBodyweightInput, setEditExIsBodyweightInput] = useState(false);
-  const [editExRepsInput, setEditExRepsInput] = useState(10);
-  const [editExSetsInput, setEditExSetsInput] = useState(3);
-  const [editExWeightInput, setEditExWeightInput] = useState(30);
+  const [editExCategoriesInput, setEditExCategoriesInput] = useState<string[]>(['Chest']);
+  const [editExRepsInput, setEditExRepsInput] = useState<number | string>(10);
+  const [editExSetsInput, setEditExSetsInput] = useState<number | string>(3);
+  const [editExWeightInput, setEditExWeightInput] = useState<number | string>(30);
 
   // State for adding a new exercise to a day
   const [addingExToDayIdx, setAddingExToDayIdx] = useState<number | null>(null);
   const [newExName, setNewExName] = useState('');
   const [newExUrl, setNewExUrl] = useState('');
   const [newExIsBodyweight, setNewExIsBodyweight] = useState(false);
-  const [newExReps, setNewExReps] = useState(10);
-  const [newExSets, setNewExSets] = useState(3);
-  const [newExWeight, setNewExWeight] = useState(30);
+  const [newExCategories, setNewExCategories] = useState<string[]>(['Chest']);
+  const [newExReps, setNewExReps] = useState<number | string>(10);
+  const [newExSets, setNewExSets] = useState<number | string>(3);
+  const [newExWeight, setNewExWeight] = useState<number | string>(30);
 
   // Selected Day state for manual day selection / schedule view
   const [selectedDayIdx, setSelectedDayIdx] = useState<number | null>(null);
@@ -693,6 +695,73 @@ export default function WorkoutLogger({
     }
   };
 
+  const MUSCLE_GROUP_OPTIONS = ['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio'];
+
+  const inferMuscleGroups = (name?: string, dayFocus?: string, categoryStr?: string): string[] => {
+    const results = new Set<string>();
+    const cat = categoryStr?.trim().toLowerCase() || '';
+
+    if (cat) {
+      cat.split(/[,/&]+/).forEach((p) => {
+        const match = MUSCLE_GROUP_OPTIONS.find((m) => m.toLowerCase() === p.trim());
+        if (match) results.add(match);
+      });
+      if (results.size > 0) return Array.from(results);
+    }
+
+    const nm = name?.trim().toLowerCase() || '';
+    const focus = dayFocus?.trim().toLowerCase() || '';
+
+    if (nm.includes('pushup') || nm.includes('push-up')) {
+      results.add('Chest');
+      results.add('Arms');
+    } else if (nm.includes('bench') || nm.includes('chest') || nm.includes('fly') || nm.includes('pec')) {
+      results.add('Chest');
+      if (nm.includes('press') || nm.includes('bench')) results.add('Arms');
+    }
+
+    if (nm.includes('pullup') || nm.includes('pull-up') || nm.includes('row') || nm.includes('pulldown') || nm.includes('deadlift') || nm.includes('lat')) {
+      results.add('Back');
+      if (nm.includes('pull') || nm.includes('row')) results.add('Arms');
+    }
+
+    if (nm.includes('squat') || nm.includes('lunge') || nm.includes('leg') || nm.includes('quad') || nm.includes('hamstring') || nm.includes('calf')) {
+      results.add('Legs');
+      if (nm.includes('squat')) results.add('Core');
+    }
+
+    if (nm.includes('shoulder') || nm.includes('delt') || nm.includes('overhead') || nm.includes('lateral raise') || nm.includes('front raise')) {
+      results.add('Shoulders');
+      if (nm.includes('overhead')) results.add('Arms');
+    }
+
+    if (nm.includes('curl') || nm.includes('bicep') || nm.includes('tricep') || nm.includes('dip') || nm.includes('arm')) {
+      results.add('Arms');
+      if (nm.includes('dip')) results.add('Chest');
+    }
+
+    if (nm.includes('plank') || nm.includes('crunch') || nm.includes('abs') || nm.includes('core') || nm.includes('leg raise')) {
+      results.add('Core');
+    }
+
+    if (nm.includes('cardio') || nm.includes('run') || nm.includes('treadmill') || nm.includes('cycle')) {
+      results.add('Cardio');
+    }
+
+    if (results.size === 0) {
+      if (focus.includes('chest')) results.add('Chest');
+      if (focus.includes('back')) results.add('Back');
+      if (focus.includes('leg')) results.add('Legs');
+      if (focus.includes('shoulder')) results.add('Shoulders');
+      if (focus.includes('arm') || focus.includes('bicep') || focus.includes('tricep')) results.add('Arms');
+      if (focus.includes('core') || focus.includes('ab')) results.add('Core');
+      if (focus.includes('cardio')) results.add('Cardio');
+    }
+
+    if (results.size === 0) results.add('Chest');
+    return Array.from(results);
+  };
+
   const handleFinishAndSaveWorkout = () => {
     if (!currentPlan) return;
     const workoutsToSave: Omit<Workout, 'id'>[] = [];
@@ -718,9 +787,11 @@ export default function WorkoutLogger({
         });
       }
 
+      const exCategory = rawEx?.category || inferMuscleGroups(rawEx?.name || exName, currentPlan.focus).join(', ');
+
       workoutsToSave.push({
         name: exName,
-        category: currentPlan.category as any,
+        category: exCategory as any,
         completed: true,
         sets: setsForExercise.map((s, idx) => ({
           ...s,
@@ -796,13 +867,16 @@ export default function WorkoutLogger({
     const dayObj = { ...updated[dayIdx] };
     const exercises = [...(dayObj.exercises || [])];
 
+    const targetCategories = newExCategories.length > 0 ? newExCategories : inferMuscleGroups(newExName.trim(), dayObj.focusArea);
+
     exercises.push({
       name: newExName.trim(),
+      category: targetCategories.join(', '),
       youtubeUrl: newExUrl.trim() || undefined,
       isBodyweight: newExIsBodyweight,
-      reps: newExReps > 0 ? newExReps : 10,
-      sets: newExSets > 0 ? newExSets : 3,
-      weight: !newExIsBodyweight ? (newExWeight >= 0 ? newExWeight : 30) : 0
+      reps: Number(newExReps) > 0 ? Number(newExReps) : 10,
+      sets: Number(newExSets) > 0 ? Number(newExSets) : 3,
+      weight: !newExIsBodyweight ? (Number(newExWeight) >= 0 ? Number(newExWeight) : 30) : 0
     });
 
     dayObj.exercises = exercises;
@@ -812,6 +886,7 @@ export default function WorkoutLogger({
     setNewExName('');
     setNewExUrl('');
     setNewExIsBodyweight(false);
+    setNewExCategories(['Chest']);
     setNewExReps(10);
     setNewExSets(3);
     setNewExWeight(30);
@@ -825,14 +900,17 @@ export default function WorkoutLogger({
     const dayObj = { ...updated[dayIdx] };
     const exercises = [...(dayObj.exercises || [])];
 
+    const targetCategories = editExCategoriesInput.length > 0 ? editExCategoriesInput : inferMuscleGroups(editExNameInput.trim(), dayObj.focusArea);
+
     exercises[exIdx] = {
       ...exercises[exIdx],
       name: editExNameInput.trim(),
+      category: targetCategories.join(', '),
       youtubeUrl: editExUrlInput.trim() || undefined,
       isBodyweight: editExIsBodyweightInput,
-      reps: editExRepsInput > 0 ? editExRepsInput : 10,
-      sets: editExSetsInput > 0 ? editExSetsInput : 3,
-      weight: !editExIsBodyweightInput ? (editExWeightInput >= 0 ? editExWeightInput : 30) : 0
+      reps: Number(editExRepsInput) > 0 ? Number(editExRepsInput) : 10,
+      sets: Number(editExSetsInput) > 0 ? Number(editExSetsInput) : 3,
+      weight: !editExIsBodyweightInput ? (Number(editExWeightInput) >= 0 ? Number(editExWeightInput) : 30) : 0
     };
 
     dayObj.exercises = exercises;
@@ -1635,13 +1713,7 @@ export default function WorkoutLogger({
                             return (
                               <div
                                 key={`ex-item-${exKey}`}
-                                className="bg-white p-3.5 rounded-xl border border-slate-200/90 space-y-2 select-none hover:border-indigo-300 transition-all relative group cursor-grab active:cursor-grabbing"
-                                onTouchStart={() => handleLongPressStart(ex, dayIdx)}
-                                onTouchEnd={handleLongPressEnd}
-                                onTouchMove={handleLongPressEnd}
-                                onMouseDown={() => handleLongPressStart(ex, dayIdx)}
-                                onMouseUp={handleLongPressEnd}
-                                onMouseLeave={handleLongPressEnd}
+                                className="bg-white p-3.5 rounded-xl border border-slate-200/90 space-y-2 hover:border-indigo-300 transition-all relative group"
                               >
                                 {isEditing ? (
                                   <div className="space-y-3 bg-slate-50/80 p-3 rounded-xl border border-indigo-200">
@@ -1652,6 +1724,7 @@ export default function WorkoutLogger({
                                           type="text"
                                           value={editExNameInput}
                                           onChange={e => setEditExNameInput(e.target.value)}
+                                          onFocus={e => e.target.select()}
                                           placeholder="Exercise Name"
                                           className="w-full px-3 py-1.5 bg-white border border-indigo-300 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                         />
@@ -1662,6 +1735,7 @@ export default function WorkoutLogger({
                                           type="text"
                                           value={editExUrlInput}
                                           onChange={e => setEditExUrlInput(e.target.value)}
+                                          onFocus={e => e.target.select()}
                                           placeholder="YouTube Demonstration URL"
                                           className="w-full px-3 py-1.5 bg-white border border-indigo-300 rounded-lg text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                         />
@@ -1693,6 +1767,37 @@ export default function WorkoutLogger({
                                         </div>
                                       </div>
 
+                                      <div className="sm:col-span-2">
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Target Muscle Group(s) — Select all that apply</label>
+                                        <div className="flex flex-wrap gap-1">
+                                          {MUSCLE_GROUP_OPTIONS.map(m => {
+                                            const isSelected = editExCategoriesInput.includes(m);
+                                            return (
+                                              <button
+                                                key={`edit-m-${m}`}
+                                                type="button"
+                                                onClick={() => {
+                                                  if (isSelected) {
+                                                    if (editExCategoriesInput.length > 1) {
+                                                      setEditExCategoriesInput(editExCategoriesInput.filter(x => x !== m));
+                                                    }
+                                                  } else {
+                                                    setEditExCategoriesInput([...editExCategoriesInput, m]);
+                                                  }
+                                                }}
+                                                className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-all cursor-pointer ${
+                                                  isSelected
+                                                    ? 'bg-indigo-600 text-white shadow-sm'
+                                                    : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
+                                                }`}
+                                              >
+                                                {m}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+
                                       <div>
                                         <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Target Sets</label>
                                         <input
@@ -1700,7 +1805,14 @@ export default function WorkoutLogger({
                                           min={1}
                                           max={20}
                                           value={editExSetsInput}
-                                          onChange={e => setEditExSetsInput(Math.max(1, parseInt(e.target.value) || 1))}
+                                          onChange={e => {
+                                            const v = e.target.value;
+                                            setEditExSetsInput(v === '' ? '' : Math.max(1, parseInt(v, 10) || 1));
+                                          }}
+                                          onBlur={() => {
+                                            if (editExSetsInput === '' || Number(editExSetsInput) < 1) setEditExSetsInput(1);
+                                          }}
+                                          onFocus={e => e.target.select()}
                                           className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                         />
                                       </div>
@@ -1712,7 +1824,14 @@ export default function WorkoutLogger({
                                           min={1}
                                           max={200}
                                           value={editExRepsInput}
-                                          onChange={e => setEditExRepsInput(Math.max(1, parseInt(e.target.value) || 1))}
+                                          onChange={e => {
+                                            const v = e.target.value;
+                                            setEditExRepsInput(v === '' ? '' : Math.max(1, parseInt(v, 10) || 1));
+                                          }}
+                                          onBlur={() => {
+                                            if (editExRepsInput === '' || Number(editExRepsInput) < 1) setEditExRepsInput(1);
+                                          }}
+                                          onFocus={e => e.target.select()}
                                           className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                         />
                                       </div>
@@ -1725,7 +1844,14 @@ export default function WorkoutLogger({
                                             min={0}
                                             max={1000}
                                             value={editExWeightInput}
-                                            onChange={e => setEditExWeightInput(Math.max(0, parseInt(e.target.value) || 0))}
+                                            onChange={e => {
+                                              const v = e.target.value;
+                                              setEditExWeightInput(v === '' ? '' : Math.max(0, parseFloat(v) || 0));
+                                            }}
+                                            onBlur={() => {
+                                              if (editExWeightInput === '' || Number(editExWeightInput) < 0) setEditExWeightInput(0);
+                                            }}
+                                            onFocus={e => e.target.select()}
                                             className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                           />
                                         </div>
@@ -1754,8 +1880,13 @@ export default function WorkoutLogger({
                                     <div className="space-y-1 min-w-0 pr-2">
                                       <div className="flex items-center gap-2 flex-wrap">
                                         <h5 className="text-xs font-extrabold text-slate-900">{ex.name}</h5>
+                                        {inferMuscleGroups(ex.name, dayObj.focusArea, ex.category).map((catTag) => (
+                                          <span key={`ex-tag-${exKey}-${catTag}`} className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full text-[10px] font-extrabold uppercase border border-indigo-200">
+                                            {catTag}
+                                          </span>
+                                        ))}
                                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
-                                          isBodyweight ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-indigo-100 text-indigo-800 border border-indigo-200'
+                                          isBodyweight ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-slate-100 text-slate-700 border border-slate-200'
                                         }`}>
                                           {isBodyweight ? 'Bodyweight' : 'Weight Workout'}
                                         </span>
@@ -1782,8 +1913,7 @@ export default function WorkoutLogger({
                                         type="button"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          handleLongPressEnd();
-                                          setActiveMenuKey(activeMenuKey === exKey ? null : exKey);
+                                                                                    setActiveMenuKey(activeMenuKey === exKey ? null : exKey);
                                         }}
                                         className="p-1.5 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
                                         title="Exercise Options"
@@ -1824,6 +1954,7 @@ export default function WorkoutLogger({
                                               setActiveMenuKey(null);
                                               setEditingExKey(exKey);
                                               setEditExNameInput(ex.name);
+                                              setEditExCategoriesInput(inferMuscleGroups(ex.name, dayObj.focusArea, ex.category));
                                               setEditExUrlInput(ex.youtubeUrl || '');
                                               setEditExIsBodyweightInput(isBodyweight);
                                               setEditExSetsInput(ex.sets || 3);
@@ -1919,13 +2050,47 @@ export default function WorkoutLogger({
                             </div>
 
                             <div>
+                              <label className="block text-[10px] font-bold text-indigo-800 uppercase mb-1">Target Muscle Group(s) — Select all that apply</label>
+                              <div className="flex flex-wrap gap-1">
+                                {MUSCLE_GROUP_OPTIONS.map(m => {
+                                  const isSelected = newExCategories.includes(m);
+                                  return (
+                                    <button
+                                      key={`new-m-${m}`}
+                                      type="button"
+                                      onClick={() => {
+                                        if (isSelected) {
+                                          if (newExCategories.length > 1) {
+                                            setNewExCategories(newExCategories.filter(x => x !== m));
+                                          }
+                                        } else {
+                                          setNewExCategories([...newExCategories, m]);
+                                        }
+                                      }}
+                                      className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-all cursor-pointer ${isSelected ? "bg-indigo-600 text-white shadow-sm" : "bg-white hover:bg-slate-100 text-slate-700 border border-slate-200"}`}
+                                    >
+                                      {m}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            <div>
                               <label className="block text-[10px] font-bold text-indigo-800 uppercase mb-1">Target Sets</label>
                               <input
                                 type="number"
                                 min={1}
                                 max={20}
                                 value={newExSets}
-                                onChange={e => setNewExSets(Math.max(1, parseInt(e.target.value) || 1))}
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  setNewExSets(v === '' ? '' : Math.max(1, parseInt(v, 10) || 1));
+                                }}
+                                onBlur={() => {
+                                  if (newExSets === '' || Number(newExSets) < 1) setNewExSets(1);
+                                }}
+                                onFocus={e => e.target.select()}
                                 className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                               />
                             </div>
@@ -1937,7 +2102,14 @@ export default function WorkoutLogger({
                                 min={1}
                                 max={200}
                                 value={newExReps}
-                                onChange={e => setNewExReps(Math.max(1, parseInt(e.target.value) || 1))}
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  setNewExReps(v === '' ? '' : Math.max(1, parseInt(v, 10) || 1));
+                                }}
+                                onBlur={() => {
+                                  if (newExReps === '' || Number(newExReps) < 1) setNewExReps(1);
+                                }}
+                                onFocus={e => e.target.select()}
                                 className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                               />
                             </div>
@@ -1950,7 +2122,14 @@ export default function WorkoutLogger({
                                   min={0}
                                   max={1000}
                                   value={newExWeight}
-                                  onChange={e => setNewExWeight(Math.max(0, parseInt(e.target.value) || 0))}
+                                  onChange={e => {
+                                    const v = e.target.value;
+                                    setNewExWeight(v === '' ? '' : Math.max(0, parseFloat(v) || 0));
+                                  }}
+                                  onBlur={() => {
+                                    if (newExWeight === '' || Number(newExWeight) < 0) setNewExWeight(0);
+                                  }}
+                                  onFocus={e => e.target.select()}
                                   className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                 />
                               </div>
@@ -1981,6 +2160,7 @@ export default function WorkoutLogger({
                           onClick={() => {
                             setAddingExToDayIdx(dayIdx);
                             setNewExName('');
+                            setNewExCategories(inferMuscleGroups('', dayObj.focusArea));
                             setNewExUrl('');
                             setNewExIsBodyweight(false);
                             setNewExSets(3);
@@ -2184,10 +2364,12 @@ export default function WorkoutLogger({
                               <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
                                 <input
                                   type="number"
-                                  value={setProgress.weight}
+                                  value={setProgress.weight === 0 ? '' : setProgress.weight}
+                                  placeholder="0"
                                   onChange={e =>
-                                    handleUpdateSetField(exName, setIdx, 'weight', parseFloat(e.target.value) || 0)
+                                    handleUpdateSetField(exName, setIdx, 'weight', e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)
                                   }
+                                  onFocus={e => e.target.select()}
                                   className="w-12 text-xs font-bold text-slate-800 text-center focus:outline-none"
                                   step="2.5"
                                 />
@@ -2203,10 +2385,12 @@ export default function WorkoutLogger({
                             <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
                               <input
                                 type="number"
-                                value={setProgress.reps}
+                                value={setProgress.reps === 0 ? '' : setProgress.reps}
+                                placeholder="0"
                                 onChange={e =>
-                                  handleUpdateSetField(exName, setIdx, 'reps', parseInt(e.target.value) || 0)
+                                  handleUpdateSetField(exName, setIdx, 'reps', e.target.value === '' ? 0 : parseInt(e.target.value, 10) || 0)
                                 }
+                                onFocus={e => e.target.select()}
                                 className="w-10 text-xs font-bold text-slate-800 text-center focus:outline-none"
                               />
                               <span className="text-[10px] font-extrabold text-slate-400 uppercase">reps</span>

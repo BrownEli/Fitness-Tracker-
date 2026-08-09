@@ -1,14 +1,20 @@
-import React, { useState, useRef } from 'react';
-import { Meal } from '../types';
-import { Plus, Clock, Check, Utensils, Camera, Sparkles, Loader2, X, RefreshCw, CheckCircle2, Image as ImageIcon, Trash2, FolderPlus } from 'lucide-react';
+import React, { useState, useRef, useMemo } from 'react';
+import { Meal, DailyLog } from '../types';
+import { Plus, Clock, Check, Utensils, Camera, Sparkles, Loader2, X, RefreshCw, CheckCircle2, Image as ImageIcon, Trash2, FolderPlus, History, Search } from 'lucide-react';
 
 interface MealLoggerProps {
   onAddMeal: (meal: Omit<Meal, 'id' | 'timestamp'> & { timestamp?: string }) => void;
   timestamp: string;
   setTimestamp: (time: string) => void;
+  logs?: DailyLog[];
 }
 
-export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealLoggerProps) {
+const getNowTimeString = () => {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+export default function MealLogger({ onAddMeal, timestamp, setTimestamp, logs = [] }: MealLoggerProps) {
   const [name, setName] = useState('');
   const [protein, setProtein] = useState('');
   const [carbs, setCarbs] = useState('');
@@ -16,6 +22,11 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
   const [calories, setCalories] = useState('');
   
   const [logSuccess, setLogSuccess] = useState(false);
+
+  // Recent Meals Picker State
+  const [isRecentMealsModalOpen, setIsRecentMealsModalOpen] = useState(false);
+  const [recentMealSearch, setRecentMealSearch] = useState('');
+  const [autofillNotice, setAutofillNotice] = useState<string | null>(null);
 
   // AI Modal & Analysis State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -25,6 +36,87 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
   const [aiError, setAiError] = useState<string | null>(null);
   const [detectedData, setDetectedData] = useState<{ name: string; protein: number; carbs: number; fiber: number; calories: number } | null>(null);
   const [isFieldsHighlighted, setIsFieldsHighlighted] = useState(false);
+
+  // Extract past 3 days of logged meals from logs
+  const recentMeals = useMemo(() => {
+    if (!logs || logs.length === 0) return [];
+
+    // Sort logs by date descending (most recent date first)
+    const sortedLogs = [...logs].sort((a, b) => b.date.localeCompare(a.date));
+
+    // Get logs that actually have recorded meals
+    const logsWithMeals = sortedLogs.filter(log => log.meals && log.meals.length > 0);
+
+    // Keep up to 3 most recent logged days with foods
+    const recentDays = logsWithMeals.slice(0, 3);
+
+    const items: Array<{
+      id: string;
+      meal: Meal;
+      date: string;
+      formattedDate: string;
+    }> = [];
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+    recentDays.forEach(log => {
+      let formattedDate = log.date;
+      if (log.date === todayStr) {
+        formattedDate = 'Today';
+      } else if (log.date === yesterdayStr) {
+        formattedDate = 'Yesterday';
+      } else {
+        try {
+          const [year, month, day] = log.date.split('-').map(Number);
+          const d = new Date(year, month - 1, day);
+          formattedDate = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+        } catch (e) {
+          formattedDate = log.date;
+        }
+      }
+
+      // Add meals in reverse chronological order
+      [...log.meals].reverse().forEach(meal => {
+        items.push({
+          id: `${log.date}-${meal.id}`,
+          meal,
+          date: log.date,
+          formattedDate
+        });
+      });
+    });
+
+    return items;
+  }, [logs]);
+
+  // Filter recent meals search
+  const filteredRecentMeals = useMemo(() => {
+    if (!recentMealSearch.trim()) return recentMeals;
+    const q = recentMealSearch.toLowerCase().trim();
+    return recentMeals.filter(item =>
+      item.meal.name.toLowerCase().includes(q) ||
+      item.formattedDate.toLowerCase().includes(q)
+    );
+  }, [recentMeals, recentMealSearch]);
+
+  const handleSelectRecentMeal = (meal: Meal) => {
+    setName(meal.name);
+    setProtein(meal.protein !== undefined ? String(meal.protein) : '0');
+    setCarbs(meal.carbs !== undefined ? String(meal.carbs) : '0');
+    setFiber(meal.fiber !== undefined ? String(meal.fiber) : '0');
+    setCalories(meal.calories !== undefined ? String(meal.calories) : '0');
+    setTimestamp(getNowTimeString());
+
+    setIsRecentMealsModalOpen(false);
+    setIsFieldsHighlighted(true);
+    setTimeout(() => setIsFieldsHighlighted(false), 2000);
+
+    setAutofillNotice(`Loaded "${meal.name}" into fields! You can adjust any values below before logging.`);
+    setTimeout(() => setAutofillNotice(null), 5000);
+  };
 
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
@@ -142,6 +234,7 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
     setCarbs(String(detectedData.carbs));
     setFiber(String(detectedData.fiber));
     setCalories(String(detectedData.calories));
+    setTimestamp(getNowTimeString());
 
     setIsModalOpen(false);
     setIsFieldsHighlighted(true);
@@ -185,12 +278,13 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
     setLogSuccess(true);
     setTimeout(() => setLogSuccess(false), 2000);
 
-    // Reset simple form fields
+    // Reset simple form fields and update timestamp to live current time
     setName('');
     setProtein('');
     setCarbs('');
     setFiber('');
     setCalories('');
+    setTimestamp(getNowTimeString());
     setImagePreviews([]);
     setFoodHint('');
     setDetectedData(null);
@@ -212,23 +306,53 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
             <div>
               <h2 className="text-2xl font-black text-slate-900 tracking-tight leading-none">Log Food & Fuel</h2>
               <p className="text-slate-500 text-sm mt-2 font-semibold">
-                Snap or upload plate photos with Gemini AI or enter details manually below
+                Snap photos with AI, pick from recent meals, or enter details manually below
               </p>
             </div>
           </div>
 
-          {/* Single AI Photo Scan Button */}
-          <button
-            type="button"
-            onClick={handleOpenModal}
-            className="px-5 py-3 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 active:scale-95 text-white rounded-2xl text-xs font-black shadow-md hover:shadow-indigo-500/20 transition-all flex items-center justify-center gap-2.5 cursor-pointer shrink-0"
-            id="ai-plate-scan-btn"
-          >
-            <Camera className="w-4 h-4" />
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Scan Plate(s) with AI</span>
-          </button>
+          <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap shrink-0">
+            {/* Choose from Recent Meals Button */}
+            <button
+              type="button"
+              onClick={() => setIsRecentMealsModalOpen(true)}
+              className="px-4 py-3 bg-indigo-50/80 hover:bg-indigo-100 active:scale-95 text-indigo-700 border border-indigo-200/80 rounded-2xl text-xs font-black shadow-2xs transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0"
+              id="choose-recent-meals-btn"
+            >
+              <History className="w-4 h-4 text-indigo-600" />
+              <span>Recent Meals</span>
+              {recentMeals.length > 0 && (
+                <span className="ml-0.5 px-2 py-0.5 text-[10px] bg-indigo-200/70 text-indigo-900 rounded-full font-mono font-black">
+                  {recentMeals.length}
+                </span>
+              )}
+            </button>
+
+            {/* Single AI Photo Scan Button */}
+            <button
+              type="button"
+              onClick={handleOpenModal}
+              className="px-4 py-3 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 active:scale-95 text-white rounded-2xl text-xs font-black shadow-md hover:shadow-indigo-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0"
+              id="ai-plate-scan-btn"
+            >
+              <Camera className="w-4 h-4" />
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Scan Plate(s) with AI</span>
+            </button>
+          </div>
         </div>
+
+        {autofillNotice && (
+          <div className="mb-6 p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between text-xs font-bold text-emerald-800 animate-fadeIn shadow-2xs">
+            <div className="flex items-center gap-2.5">
+              <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{autofillNotice}</span>
+            </div>
+            <button type="button" onClick={() => setAutofillNotice(null)} className="text-emerald-500 hover:text-emerald-700 p-0.5">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-6" id="custom-meal-form">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-5">
@@ -349,8 +473,18 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
 
           <div className="grid grid-cols-1 md:grid-cols-12 gap-5 pt-2">
             {/* Time of Meal Input */}
-            <div className="md:col-span-4">
-              <label className="block text-sm font-black text-slate-500 uppercase tracking-wider mb-2">What time?</label>
+            <div className="md:col-span-5">
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-black text-slate-500 uppercase tracking-wider">What time?</label>
+                <button
+                  type="button"
+                  onClick={() => setTimestamp(getNowTimeString())}
+                  className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg border border-indigo-200/80 transition-all cursor-pointer active:scale-95"
+                  title="Refresh clock to exact current time"
+                >
+                  <Clock className="w-3.5 h-3.5 text-indigo-600" /> Set to Now
+                </button>
+              </div>
               <div className="relative">
                 <input
                   type="time"
@@ -666,6 +800,136 @@ export default function MealLogger({ onAddMeal, timestamp, setTimestamp }: MealL
               >
                 <Check className="w-5 h-5 stroke-[3]" />
                 <span>OK</span>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* Recent Meals Picker Modal */}
+      {isRecentMealsModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto animate-fadeIn">
+          <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden my-auto">
+            
+            {/* Modal Header */}
+            <div className="p-5 sm:p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-2xl shrink-0">
+                  <History className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 leading-snug">Recent Meals (Last 3 Days)</h3>
+                  <p className="text-xs font-semibold text-slate-500 mt-0.5">
+                    Select a meal to autofill the form fields and modify as needed
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsRecentMealsModalOpen(false)}
+                className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Search Bar */}
+            <div className="p-4 sm:p-5 border-b border-slate-100 bg-white">
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={recentMealSearch}
+                  onChange={(e) => setRecentMealSearch(e.target.value)}
+                  placeholder="Filter recent meals by name..."
+                  className="w-full pl-10 pr-9 py-2.5 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl text-xs font-bold text-slate-800 placeholder-slate-400 focus:outline-none transition-all"
+                />
+                {recentMealSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setRecentMealSearch('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Recent Meals List */}
+            <div className="max-h-[380px] overflow-y-auto p-4 sm:p-5 space-y-3" id="recent-meals-modal-list">
+              {recentMeals.length === 0 ? (
+                <div className="p-8 text-center bg-slate-50 border border-dashed border-slate-200 rounded-2xl space-y-2">
+                  <Utensils className="w-8 h-8 text-slate-300 mx-auto" />
+                  <p className="text-sm font-black text-slate-700">No Recent Meals Logged Yet</p>
+                  <p className="text-xs text-slate-500 font-medium max-w-sm mx-auto">
+                    As you log foods over the next few days, your past 3 days of meals will automatically show up here for quick 1-click autofilling!
+                  </p>
+                </div>
+              ) : filteredRecentMeals.length === 0 ? (
+                <div className="p-6 text-center text-slate-500 text-xs font-bold">
+                  No recent meals found matching "{recentMealSearch}".
+                </div>
+              ) : (
+                filteredRecentMeals.map((item) => (
+                  <div
+                    key={item.id}
+                    onClick={() => handleSelectRecentMeal(item.meal)}
+                    className="group p-4 bg-white hover:bg-indigo-50/40 border border-slate-200 hover:border-indigo-300 rounded-2xl transition-all cursor-pointer shadow-2xs hover:shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                  >
+                    <div className="space-y-1.5 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[11px] font-black font-mono text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
+                          {item.formattedDate}
+                        </span>
+                        {item.meal.timestamp && (
+                          <span className="text-[11px] font-mono text-slate-400 font-semibold flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-slate-400" /> {item.meal.timestamp}
+                          </span>
+                        )}
+                      </div>
+                      <h4 className="text-sm font-black text-slate-900 group-hover:text-indigo-900 truncate">
+                        {item.meal.name}
+                      </h4>
+                      <div className="flex items-center gap-2 text-xs font-mono font-bold flex-wrap">
+                        <span className="text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-100/50">
+                          {item.meal.protein || 0}g protein
+                        </span>
+                        <span className="text-sky-600 bg-sky-50 px-2 py-0.5 rounded-lg border border-sky-100/50">
+                          {item.meal.carbs || 0}g carbs
+                        </span>
+                        <span className="text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100/50">
+                          {item.meal.fiber || 0}g fiber
+                        </span>
+                        <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-100/50">
+                          {item.meal.calories || 0} kcal
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="shrink-0 self-end sm:self-center">
+                      <button
+                        type="button"
+                        className="px-3.5 py-2 bg-indigo-600 group-hover:bg-indigo-700 text-white rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                      >
+                        <FolderPlus className="w-3.5 h-3.5" />
+                        <span>Autofill</span>
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsRecentMealsModalOpen(false)}
+                className="px-5 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-extrabold text-xs rounded-xl transition-colors cursor-pointer"
+              >
+                Close
               </button>
             </div>
 

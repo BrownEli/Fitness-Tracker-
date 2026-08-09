@@ -176,38 +176,72 @@ export default function Analytics({ logs, goals, onLogWeight, onDeleteWeight, on
   // Muscle Volume Tracker calculation
   const muscleGroups = ['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio'];
 
-  // Category normalizer for robust exercise matching
-  const mapExerciseCategory = (category?: string, name?: string): string => {
+  // Category normalizer for robust multi-muscle exercise matching
+  const mapExerciseCategories = (category?: string, name?: string): string[] => {
     const cat = category?.trim().toLowerCase() || '';
     const nm = name?.trim().toLowerCase() || '';
+    const results = new Set<string>();
 
-    if (cat.includes('chest') || cat.includes('pec') || nm.includes('bench') || nm.includes('chest') || nm.includes('fly') || nm.includes('pushup') || nm.includes('push-up')) {
-      return 'Chest';
-    }
-    if (cat.includes('back') || cat.includes('lat') || nm.includes('row') || nm.includes('pullup') || nm.includes('pull-up') || nm.includes('pulldown') || nm.includes('deadlift')) {
-      return 'Back';
-    }
-    if (cat.includes('leg') || cat.includes('quad') || cat.includes('hamstring') || cat.includes('glute') || cat.includes('calf') || nm.includes('squat') || nm.includes('lunge') || nm.includes('leg press')) {
-      return 'Legs';
-    }
-    if (cat.includes('shoulder') || cat.includes('delt') || nm.includes('overhead') || nm.includes('press') || nm.includes('lateral raise') || nm.includes('front raise')) {
-      return 'Shoulders';
-    }
-    if (cat.includes('arm') || cat.includes('bicep') || cat.includes('tricep') || nm.includes('curl') || nm.includes('tricep') || nm.includes('dip')) {
-      return 'Arms';
-    }
-    if (cat.includes('core') || cat.includes('ab') || nm.includes('plank') || nm.includes('crunch') || nm.includes('leg raise')) {
-      return 'Core';
-    }
-    if (cat.includes('cardio') || nm.includes('treadmill') || nm.includes('run') || nm.includes('cycle') || nm.includes('stair')) {
-      return 'Cardio';
+    // Split category by commas, slashes, or ampersands
+    const parts = cat.split(/[,/&]+/).map((s) => s.trim().toLowerCase());
+    parts.forEach((p) => {
+      const match = muscleGroups.find((g) => g.toLowerCase() === p);
+      if (match) results.add(match);
+    });
+
+    if (results.size > 0) return Array.from(results);
+
+    // Keyword checks on category string
+    if (cat.includes('chest') || cat.includes('pec')) results.add('Chest');
+    if (cat.includes('back') || cat.includes('lat')) results.add('Back');
+    if (cat.includes('leg') || cat.includes('quad') || cat.includes('hamstring') || cat.includes('glute') || cat.includes('calf')) results.add('Legs');
+    if (cat.includes('shoulder') || cat.includes('delt')) results.add('Shoulders');
+    if (cat.includes('arm') || cat.includes('bicep') || cat.includes('tricep')) results.add('Arms');
+    if (cat.includes('core') || cat.includes('ab')) results.add('Core');
+    if (cat.includes('cardio')) results.add('Cardio');
+
+    if (results.size > 0) return Array.from(results);
+
+    // Fall back to exercise name keywords for multi-muscle compound movements
+    if (nm.includes('pushup') || nm.includes('push-up')) {
+      results.add('Chest');
+      results.add('Arms');
+    } else if (nm.includes('bench') || nm.includes('chest') || nm.includes('fly')) {
+      results.add('Chest');
+      if (nm.includes('press') || nm.includes('bench')) results.add('Arms');
     }
 
-    // Capitalize first letter if matches standard group
-    const capitalized = cat.charAt(0).toUpperCase() + cat.slice(1);
-    if (muscleGroups.includes(capitalized)) return capitalized;
+    if (nm.includes('pullup') || nm.includes('pull-up') || nm.includes('row') || nm.includes('pulldown') || nm.includes('deadlift')) {
+      results.add('Back');
+      if (nm.includes('pull') || nm.includes('row')) results.add('Arms');
+    }
 
-    return 'Chest'; // Fallback
+    if (nm.includes('squat') || nm.includes('lunge') || nm.includes('leg press') || nm.includes('calf')) {
+      results.add('Legs');
+      if (nm.includes('squat')) results.add('Core');
+    }
+
+    if (nm.includes('overhead') || nm.includes('lateral raise') || nm.includes('front raise')) {
+      results.add('Shoulders');
+      if (nm.includes('overhead')) results.add('Arms');
+    }
+
+    if (nm.includes('curl') || nm.includes('tricep') || nm.includes('dip')) {
+      results.add('Arms');
+      if (nm.includes('dip')) results.add('Chest');
+    }
+
+    if (nm.includes('plank') || nm.includes('crunch') || nm.includes('leg raise')) {
+      results.add('Core');
+    }
+
+    if (nm.includes('treadmill') || nm.includes('run') || nm.includes('cycle') || nm.includes('stair')) {
+      results.add('Cardio');
+    }
+
+    if (results.size === 0) results.add('Chest'); // Fallback
+
+    return Array.from(results);
   };
 
   const volumeData = useMemo(() => {
@@ -223,13 +257,18 @@ export default function Analytics({ logs, goals, onLogWeight, onDeleteWeight, on
 
     volumeLogs.forEach((log) => {
       log.workouts?.forEach((workout) => {
-        const resolvedCategory = mapExerciseCategory(workout.category, workout.name);
+        const categories = mapExerciseCategories(workout.category, workout.name);
         if (workout.sets && workout.sets.length > 0) {
           // Count completed sets, or all logged sets if completed isn't explicitly false
           const completedCount = workout.sets.filter((s) => s.completed !== false).length;
-          counts[resolvedCategory] = (counts[resolvedCategory] || 0) + (completedCount || workout.sets.length);
+          const setCount = completedCount || workout.sets.length;
+          categories.forEach((cat) => {
+            counts[cat] = (counts[cat] || 0) + setCount;
+          });
         } else if (workout.completed) {
-          counts[resolvedCategory] = (counts[resolvedCategory] || 0) + 1;
+          categories.forEach((cat) => {
+            counts[cat] = (counts[cat] || 0) + 1;
+          });
         }
       });
     });

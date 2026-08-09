@@ -187,11 +187,20 @@ export default function App() {
   });
   const [rawPlanText, setRawPlanText] = useState('');
 
-  // Food/Meal selected logging time
-  const [mealTimeInput, setMealTimeInput] = useState(() => {
+  const getNowTimeString = () => {
     const d = new Date();
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  });
+  };
+
+  // Food/Meal selected logging time
+  const [mealTimeInput, setMealTimeInput] = useState(() => getNowTimeString());
+
+  // Automatically refresh meal time input to current time when switching to nutrition tab
+  useEffect(() => {
+    if (activeTab === 'nutrition') {
+      setMealTimeInput(getNowTimeString());
+    }
+  }, [activeTab]);
 
   // State for editing an existing logged meal
   const [editingMealId, setEditingMealId] = useState<string | null>(null);
@@ -929,7 +938,7 @@ export default function App() {
 
   // Add meal to selected date
   const handleAddMeal = (newMeal: Omit<Meal, 'id' | 'timestamp'> & { timestamp?: string }) => {
-    const rawTimestamp = newMeal.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const rawTimestamp = newMeal.timestamp || getNowTimeString();
     const timestamp = formatTime12Hour(rawTimestamp);
     const mealWithMeta: Meal = {
       ...newMeal,
@@ -941,6 +950,9 @@ export default function App() {
       ...log,
       meals: [...log.meals, mealWithMeta]
     }));
+
+    // Reset clock input to current live time for the next meal
+    setMealTimeInput(getNowTimeString());
   };
 
   // Remove meal from selected date
@@ -1580,6 +1592,7 @@ export default function App() {
                     onAddMeal={handleAddMeal}
                     timestamp={mealTimeInput}
                     setTimestamp={setMealTimeInput}
+                    logs={logs}
                   />
                 </div>
 
