@@ -1300,7 +1300,7 @@ export default function App() {
                 }
               }}
               type="button"
-              className="w-full py-3.5 px-5 bg-amber-500 hover:bg-amber-600 active:scale-98 text-white font-black text-sm rounded-2xl shadow-md flex items-center justify-center gap-3 transition-all cursor-pointer"
+              className="w-full py-3.5 px-5 bg-amber-500 hover:bg-amber-600 active:scale-98 text-white font-black text-sm rounded-2xl shadow-md flex items-center justify-center text-center gap-3 transition-all cursor-pointer"
             >
               <svg className="w-5 h-5" viewBox="0 0 24 24">
                 <path fill="#ffffff" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -1464,7 +1464,7 @@ export default function App() {
                         <button
                           type="button"
                           onClick={() => signOutFirebase()}
-                          className="w-full py-1.5 px-3 bg-white hover:bg-slate-100 border border-slate-200/80 text-slate-700 rounded-xl text-[11px] font-bold transition-colors cursor-pointer"
+                          className="w-full py-1.5 px-3 bg-white hover:bg-slate-100 border border-slate-200/80 text-slate-700 rounded-xl text-[11px] font-bold transition-colors cursor-pointer flex items-center justify-center text-center"
                         >
                           Sign Out of Firebase
                         </button>
@@ -1481,7 +1481,7 @@ export default function App() {
                               console.error('Firebase Google login error:', e);
                             }
                           }}
-                          className="w-full py-2 px-3 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white rounded-xl text-xs font-black shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                          className="w-full py-2 px-3 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white rounded-xl text-xs font-black shadow-xs transition-all flex items-center justify-center text-center gap-1.5 cursor-pointer"
                         >
                           <span>Sign In with Firebase</span>
                         </button>
@@ -1680,11 +1680,11 @@ export default function App() {
                                   </div>
                                 </div>
                               </div>
-                              <div className="flex justify-end gap-2 pt-1 border-t border-indigo-100">
+                              <div className="flex flex-col sm:flex-row justify-end gap-2 pt-1 border-t border-indigo-100">
                                 <button
                                   type="button"
                                   onClick={() => handleRemoveMeal(meal.id)}
-                                  className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 font-black text-[10px] rounded-lg border border-rose-200 transition-colors flex items-center gap-1 cursor-pointer"
+                                  className="w-full sm:w-auto px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 font-black text-[10px] rounded-lg border border-rose-200 transition-colors flex items-center justify-center text-center gap-1 cursor-pointer"
                                 >
                                   <Trash2 className="w-3 h-3" />
                                   Delete
@@ -1692,7 +1692,7 @@ export default function App() {
                                 <button
                                   type="button"
                                   onClick={() => saveEditingMeal(meal.id)}
-                                  className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] rounded-lg transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
+                                  className="w-full sm:w-auto px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] rounded-lg transition-colors flex items-center justify-center text-center gap-1 cursor-pointer shadow-xs"
                                 >
                                   <Check className="w-3 h-3" />
                                   Save
@@ -1774,6 +1774,8 @@ export default function App() {
                     logs={logs}
                     parsedWorkouts={parsedWorkouts}
                     onUpdateParsedWorkouts={setParsedWorkouts}
+                    onUpdateDailyLog={updateDailyLog}
+                    goals={goals}
                   />
                 </div>
 
@@ -1906,14 +1908,14 @@ export default function App() {
                         </div>
                       </div>
 
-                      <div className="flex justify-end gap-2 pt-1">
+                      <div className="flex flex-col sm:flex-row justify-end gap-2 pt-1">
                         <button
                           type="button"
                           onClick={() => {
                             setIsAddingWorkoutModal(false);
                             setEditingWorkoutId(null);
                           }}
-                          className="px-3 py-1.5 bg-white border border-slate-200 text-slate-600 font-bold text-xs rounded-xl cursor-pointer"
+                          className="w-full sm:w-auto px-3 py-1.5 bg-white border border-slate-200 text-slate-600 font-bold text-xs rounded-xl cursor-pointer flex items-center justify-center text-center"
                         >
                           Cancel
                         </button>
@@ -1921,7 +1923,7 @@ export default function App() {
                           type="button"
                           onClick={handleSaveWorkoutForm}
                           disabled={!workoutFormName.trim()}
-                          className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+                          className="w-full sm:w-auto px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center text-center"
                         >
                           {editingWorkoutId ? 'Save Changes' : 'Add Exercise'}
                         </button>
@@ -2106,7 +2108,7 @@ export default function App() {
                   <button
                     key={subTab.id}
                     onClick={() => setAnalyticsSubTab(subTab.id as any)}
-                    className={`w-full text-center px-2 sm:px-4 py-2.5 rounded-t-xl text-xs sm:text-sm font-black whitespace-nowrap transition-all cursor-pointer border-b-2 ${
+                    className={`w-full flex items-center justify-center text-center px-2 sm:px-4 py-2.5 rounded-t-xl text-xs sm:text-sm font-black whitespace-nowrap transition-all cursor-pointer border-b-2 ${
                       analyticsSubTab === subTab.id
                         ? 'border-indigo-600 text-indigo-600 font-black bg-indigo-50/50'
                         : 'border-transparent text-slate-400 hover:text-slate-700'
@@ -2157,6 +2159,7 @@ export default function App() {
                       logs={logs}
                       goals={goals}
                       selectedDate={selectedDate}
+                      parsedWorkouts={parsedWorkouts}
                       onSelectDate={(date) => {
                         setSelectedDate(date);
                         setActiveTab('workouts'); // Bring to workout & exercise logging view for selected date!

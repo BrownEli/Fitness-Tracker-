@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Workout, SetLog, ParsedWorkoutDay, ParsedWorkoutExercise } from '../types';
+import { Workout, SetLog, ParsedWorkoutDay, ParsedWorkoutExercise, JogSession, UserGoals } from '../types';
 import FormVisualizer, { EXERCISES_DATABASE, matchExerciseKey } from './FormVisualizer';
 import { ConfirmModal } from './ConfirmModal';
+import JogTracker, { formatDuration } from './JogTracker';
 import {
   PlayCircle,
   CheckCircle2,
@@ -34,7 +35,9 @@ import {
   ChevronUp,
   ChevronDown,
   Copy,
-  MoreVertical
+  MoreVertical,
+  Footprints,
+  Navigation
 } from 'lucide-react';
 
 interface WorkoutLoggerProps {
@@ -45,23 +48,42 @@ interface WorkoutLoggerProps {
   logs?: any[];
   parsedWorkouts?: any[];
   onUpdateParsedWorkouts?: (updated: any[]) => void;
+  onUpdateDailyLog?: (date: string, updateFn: (log: any) => any) => void;
+  goals?: UserGoals;
 }
 
-const calculateStreak = (logs: any[] = [], activeDate: string): number => {
-  if (!logs || logs.length === 0) return 1;
+const calculateStreak = (logs: any[] = [], activeDate: string, parsedWorkouts: any[] = []): number => {
+  const activeDateStr = activeDate || new Date().toISOString().split('T')[0];
+  const DAYS_ORDER = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-  const activeDates = new Set<string>();
-  logs.forEach(l => {
-    const hasWorkoutCompleted = l.workouts && l.workouts.some((w: any) => w.completed);
-    const hasFoodLogged = l.meals && l.meals.length > 0;
-    if (hasWorkoutCompleted || hasFoodLogged) {
-      activeDates.add(l.date);
+  // Helper to check if a date (YYYY-MM-DD) is a scheduled Rest Day
+  const isDateRestDay = (dateStr: string): boolean => {
+    const log = logs ? logs.find((l: any) => l.date === dateStr) : null;
+    if (log?.isRestDay || log?.oneTimeScheduleOverride?.isRestDay) {
+      return true;
     }
-  });
+    if (parsedWorkouts && parsedWorkouts.length > 0) {
+      const d = new Date(dateStr + 'T12:00:00');
+      const dow = DAYS_ORDER[d.getDay()];
+      const match = parsedWorkouts.find((pw: any) => 
+        (pw.dayOfWeek && pw.dayOfWeek.toLowerCase() === dow.toLowerCase()) ||
+        (pw.day && pw.day.toLowerCase().includes(dow.toLowerCase()))
+      );
+      if (match) {
+        return Boolean(match.isRestDay || (match.focusArea && match.focusArea.toLowerCase().includes('rest')));
+      }
+    }
+    return false;
+  };
 
-  const activeDateStr = activeDate;
-  let streak = 0;
-  let checkDate = new Date(activeDate + 'T00:00:00');
+  // Helper to check if a date (YYYY-MM-DD) had a completed or logged workout or activity
+  const isDateWorkoutCompleted = (dateStr: string): boolean => {
+    const log = logs ? logs.find((l: any) => l.date === dateStr) : null;
+    if (!log) return false;
+    const hasWorkout = log.workouts && log.workouts.some((w: any) => w.completed || (w.exercises && w.exercises.length > 0));
+    const hasFood = log.meals && log.meals.length > 0;
+    return Boolean(hasWorkout || hasFood);
+  };
 
   const formatDate = (d: Date) => {
     const yyyy = d.getFullYear();
@@ -70,25 +92,53 @@ const calculateStreak = (logs: any[] = [], activeDate: string): number => {
     return `${yyyy}-${mm}-${dd}`;
   };
 
-  const hasActivityToday = activeDates.has(activeDateStr);
-  
-  if (hasActivityToday) {
-    streak = 1;
+  // Check if today/activeDate is a Rest Day or has completed activity
+  const todayIsRest = isDateRestDay(activeDateStr);
+  const todayIsWorkoutDone = isDateWorkoutCompleted(activeDateStr);
+  const todaySatisfied = todayIsRest || todayIsWorkoutDone;
+
+  let streak = 1;
+  let checkDate = new Date(activeDateStr + 'T12:00:00');
+
+  if (todaySatisfied) {
     checkDate.setDate(checkDate.getDate() - 1);
-    while (activeDates.has(formatDate(checkDate))) {
-      streak++;
-      checkDate.setDate(checkDate.getDate() - 1);
+    while (true) {
+      const checkStr = formatDate(checkDate);
+      const isRest = isDateRestDay(checkStr);
+      const isDone = isDateWorkoutCompleted(checkStr);
+      if (isRest || isDone) {
+        streak++;
+        checkDate.setDate(checkDate.getDate() - 1);
+      } else {
+        // Missed a workout day! Streak breaks here.
+        break;
+      }
     }
   } else {
-    let yesterday = new Date(checkDate);
-    yesterday.setDate(yesterday.getDate() - 1);
-    
-    let yesterdayStreak = 0;
-    while (activeDates.has(formatDate(yesterday))) {
-      yesterdayStreak++;
-      yesterday.setDate(yesterday.getDate() - 1);
+    // Today not yet completed. Check yesterday:
+    checkDate.setDate(checkDate.getDate() - 1);
+    const yesterdayStr = formatDate(checkDate);
+    const yesterdayIsRest = isDateRestDay(yesterdayStr);
+    const yesterdayIsDone = isDateWorkoutCompleted(yesterdayStr);
+
+    if (yesterdayIsRest || yesterdayIsDone) {
+      let yesterdayStreak = 0;
+      while (true) {
+        const checkStr = formatDate(checkDate);
+        const isRest = isDateRestDay(checkStr);
+        const isDone = isDateWorkoutCompleted(checkStr);
+        if (isRest || isDone) {
+          yesterdayStreak++;
+          checkDate.setDate(checkDate.getDate() - 1);
+        } else {
+          break;
+        }
+      }
+      streak = yesterdayStreak + 1; // Today is day (yesterdayStreak + 1)
+    } else {
+      // Missed yesterday's workout! Reset streak and start again at 1!
+      streak = 1;
     }
-    streak = yesterdayStreak + 1;
   }
 
   return streak > 0 ? streak : 1;
@@ -106,6 +156,21 @@ const extractYoutubeVideoId = (url: string | undefined): string | null => {
   return null;
 };
 
+
+const addDaysToDateString = (dateStr: string, days: number): string => {
+  const d = new Date(dateStr + 'T12:00:00');
+  d.setDate(d.getDate() + days);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+};
+
+const getDayNameFromDateString = (dateStr: string): string => {
+  const d = new Date(dateStr + 'T12:00:00');
+  return d.toLocaleDateString('en-US', { weekday: 'long' });
+};
+
 export default function WorkoutLogger({
   onAddWorkout,
   onAddWorkouts,
@@ -113,7 +178,9 @@ export default function WorkoutLogger({
   selectedDate,
   logs = [],
   parsedWorkouts = [],
-  onUpdateParsedWorkouts
+  onUpdateParsedWorkouts,
+  onUpdateDailyLog,
+  goals
 }: WorkoutLoggerProps) {
   const STORAGE_KEY_ACTIVE_WORKOUT = 'active_workout_session_state_v1';
 
@@ -195,8 +262,12 @@ export default function WorkoutLogger({
     setHasRestoredSession(false);
   };
 
-  // Active view tab when workout is not active: 'session' | 'manage'
-  const [activeTabMode, setActiveTabMode] = useState<'session' | 'manage'>('session');
+  // Active view tab when workout is not active: 'session' | 'jog' | 'manage'
+  const [activeTabMode, setActiveTabMode] = useState<'session' | 'jog' | 'manage'>('session');
+
+  const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
+  const [shiftSuccessMsg, setShiftSuccessMsg] = useState<string | null>(null);
+
 
   // Confirmation modal state
   const [confirmConfig, setConfirmConfig] = useState<{
@@ -338,8 +409,25 @@ export default function WorkoutLogger({
     setDuplicateModalEx(null);
   };
 
+  const selectedDateStr = selectedDate || new Date().toISOString().split('T')[0];
+  const todayStr = new Date().toISOString().split('T')[0];
+  const isPreviousDay = selectedDateStr < todayStr;
+
+  const getWeekDateForDisplayIndex = (index: number): string => {
+    const baseDate = new Date(selectedDateStr + 'T12:00:00');
+    const dayOfWeekIdx = baseDate.getDay();
+    const sundayDate = new Date(baseDate);
+    sundayDate.setDate(baseDate.getDate() - dayOfWeekIdx);
+    const targetDate = new Date(sundayDate);
+    targetDate.setDate(sundayDate.getDate() + index);
+    const yyyy = targetDate.getFullYear();
+    const mm = String(targetDate.getMonth() + 1).padStart(2, '0');
+    const dd = String(targetDate.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
   // Calculate consistency streak
-  const streak = calculateStreak(logs, selectedDate || new Date().toISOString().split('T')[0]);
+  const streak = calculateStreak(logs, selectedDateStr, parsedWorkouts);
 
   const [completedSuccessMsg, setCompletedSuccessMsg] = useState(false);
 
@@ -447,7 +535,7 @@ export default function WorkoutLogger({
     }
   };
 
-  // Determine active day index: selected tab > today's day of week match > streak rotation
+  // Determine active day index: selected tab > selected date's day of week match > streak rotation
   const getActiveDayIndex = (): number => {
     if (displayDays.length === 0) return 0;
 
@@ -455,10 +543,12 @@ export default function WorkoutLogger({
       return selectedDayIdx;
     }
 
-    // Try to match today's Day of Week (e.g. 'Monday' or 'Monday' in day title)
+    const selectedDateDow = new Date(selectedDateStr + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long' });
+
+    // Try to match selected date's Day of Week (e.g. 'Monday' or 'Monday' in day title)
     const matchDowIdx = displayDays.findIndex(d => 
-      (d.dayOfWeek && d.dayOfWeek.toLowerCase() === todayDayOfWeek.toLowerCase()) ||
-      (d.day && d.day.toLowerCase().includes(todayDayOfWeek.toLowerCase()))
+      (d.dayOfWeek && d.dayOfWeek.toLowerCase() === selectedDateDow.toLowerCase()) ||
+      (d.day && d.day.toLowerCase().includes(selectedDateDow.toLowerCase()))
     );
     if (matchDowIdx !== -1) {
       return matchDowIdx;
@@ -467,21 +557,74 @@ export default function WorkoutLogger({
     return (streak - 1) % displayDays.length;
   };
 
+  const selectedDateLog = logs ? logs.find((l: any) => l.date === selectedDateStr) : null;
+  const dateOverride = selectedDateLog?.oneTimeScheduleOverride;
+
   const currentDayIndex = getActiveDayIndex();
-  const currentDayObj = displayDays.length > 0 ? (displayDays[currentDayIndex] || displayDays[0]) : null;
+  const defaultDayObj = displayDays.length > 0 ? (displayDays[currentDayIndex] || displayDays[0]) : null;
 
-  const isCurrentDayRest = Boolean(currentDayObj && (currentDayObj.isRestDay || currentDayObj.focusArea?.toLowerCase().includes('rest')));
+  let isCurrentDayRest = false;
+  let currentPlan: any = null;
 
-  const currentPlan = currentDayObj ? {
-    day: currentDayIndex + 1,
-    title: currentDayObj.day || `Day ${currentDayIndex + 1}`,
-    focus: isCurrentDayRest ? 'Rest & Recovery' : (currentDayObj.focusArea || 'Full Body'),
-    category: isCurrentDayRest ? 'Rest' : (currentDayObj.focusArea ? currentDayObj.focusArea.split('&')[0].trim() : 'Full Body'),
-    rawExercises: currentDayObj.exercises || [],
-    exercises: (currentDayObj.exercises || []).map(e => e.name),
-    isRestDay: isCurrentDayRest,
-    dayOfWeek: currentDayObj.dayOfWeek
-  } : null;
+  if (dateOverride) {
+    if (dateOverride.isRestDay) {
+      isCurrentDayRest = true;
+      currentPlan = {
+        day: currentDayIndex + 1,
+        title: 'Rest & Recovery',
+        focus: 'Rest & Recovery',
+        category: 'Rest',
+        rawExercises: [],
+        exercises: [],
+        isRestDay: true,
+        dayOfWeek: defaultDayObj?.dayOfWeek,
+        isOneTimeShift: true,
+        shiftedToDate: dateOverride.shiftedToDate,
+        shiftedFromDate: dateOverride.shiftedFromDate,
+        overrideLabel: dateOverride.shiftedToDate
+          ? `One-Time Shift: Rest Day today (Session moved to ${getDayNameFromDateString(dateOverride.shiftedToDate)}, ${dateOverride.shiftedToDate})`
+          : 'One-Time Shift: Rest Day today'
+      };
+    } else {
+      isCurrentDayRest = false;
+      const targetRoutineDay = dateOverride.assignedRoutineDayIndex !== undefined && displayDays[dateOverride.assignedRoutineDayIndex]
+        ? displayDays[dateOverride.assignedRoutineDayIndex]
+        : null;
+
+      const rawExs = dateOverride.customExercises || targetRoutineDay?.exercises || defaultDayObj?.exercises || [];
+      const focusArea = dateOverride.customFocus || targetRoutineDay?.focusArea || defaultDayObj?.focusArea || 'Full Body';
+      const titleStr = dateOverride.customTitle || targetRoutineDay?.day || defaultDayObj?.day || `Day ${currentDayIndex + 1}`;
+
+      currentPlan = {
+        day: (dateOverride.assignedRoutineDayIndex !== undefined ? dateOverride.assignedRoutineDayIndex : currentDayIndex) + 1,
+        title: titleStr,
+        focus: focusArea,
+        category: focusArea.split('&')[0].trim(),
+        rawExercises: rawExs,
+        exercises: rawExs.map((e: any) => e.name),
+        isRestDay: false,
+        dayOfWeek: defaultDayObj?.dayOfWeek,
+        isOneTimeShift: true,
+        shiftedFromDate: dateOverride.shiftedFromDate,
+        overrideLabel: dateOverride.shiftedFromDate
+          ? `One-Time Shifted Session (from ${getDayNameFromDateString(dateOverride.shiftedFromDate)}, ${dateOverride.shiftedFromDate})`
+          : 'One-Time Custom Session'
+      };
+    }
+  } else {
+    isCurrentDayRest = Boolean(defaultDayObj && (defaultDayObj.isRestDay || defaultDayObj.focusArea?.toLowerCase().includes('rest')));
+    currentPlan = defaultDayObj ? {
+      day: currentDayIndex + 1,
+      title: defaultDayObj.day || `Day ${currentDayIndex + 1}`,
+      focus: isCurrentDayRest ? 'Rest & Recovery' : (defaultDayObj.focusArea || 'Full Body'),
+      category: isCurrentDayRest ? 'Rest' : (defaultDayObj.focusArea ? defaultDayObj.focusArea.split('&')[0].trim() : 'Full Body'),
+      rawExercises: defaultDayObj.exercises || [],
+      exercises: (defaultDayObj.exercises || []).map(e => e.name),
+      isRestDay: isCurrentDayRest,
+      dayOfWeek: defaultDayObj.dayOfWeek,
+      isOneTimeShift: false
+    } : null;
+  }
 
   // Find next non-rest workout day in sequence for preview / smooth progression
   const getNextNonRestDay = () => {
@@ -509,6 +652,163 @@ export default function WorkoutLogger({
     onAddWorkout(restWorkout);
     setCompletedSuccessMsg(true);
     setTimeout(() => setCompletedSuccessMsg(false), 4000);
+  };
+
+
+  // Move today's session to tomorrow and make today a Rest Day (one-time only)
+  const handleMoveSessionToTomorrow = () => {
+    if (!onUpdateDailyLog || !currentPlan) return;
+    const tomorrowStr = addDaysToDateString(selectedDateStr, 1);
+
+    // Today becomes a Rest Day
+    onUpdateDailyLog(selectedDateStr, (log: any) => ({
+      ...log,
+      oneTimeScheduleOverride: {
+        isRestDay: true,
+        shiftedToDate: tomorrowStr
+      }
+    }));
+
+    // Tomorrow receives today's workout session
+    onUpdateDailyLog(tomorrowStr, (log: any) => ({
+      ...log,
+      oneTimeScheduleOverride: {
+        assignedRoutineDayIndex: currentDayIndex,
+        customTitle: currentPlan.title,
+        customFocus: currentPlan.focus,
+        customExercises: currentPlan.rawExercises,
+        shiftedFromDate: selectedDateStr
+      }
+    }));
+
+    setIsShiftModalOpen(false);
+    setShiftSuccessMsg(`Session moved to tomorrow (${getDayNameFromDateString(tomorrowStr)})! Today is set as a Rest Day.`);
+    setTimeout(() => setShiftSuccessMsg(null), 5000);
+  };
+
+  // Swap today's session with a Rest Day in the current week
+  const handleSwapWithRestDay = (targetDateStr: string, targetDayName: string) => {
+    if (!onUpdateDailyLog || !currentPlan) return;
+
+    // Today becomes a Rest Day
+    onUpdateDailyLog(selectedDateStr, (log: any) => ({
+      ...log,
+      oneTimeScheduleOverride: {
+        isRestDay: true,
+        shiftedToDate: targetDateStr
+      }
+    }));
+
+    // Target date receives today's workout session
+    onUpdateDailyLog(targetDateStr, (log: any) => ({
+      ...log,
+      oneTimeScheduleOverride: {
+        assignedRoutineDayIndex: currentDayIndex,
+        customTitle: currentPlan.title,
+        customFocus: currentPlan.focus,
+        customExercises: currentPlan.rawExercises,
+        shiftedFromDate: selectedDateStr
+      }
+    }));
+
+    setIsShiftModalOpen(false);
+    setShiftSuccessMsg(`Swapped today's session with ${targetDayName} (${targetDateStr})! Today is set as a Rest Day.`);
+    setTimeout(() => setShiftSuccessMsg(null), 5000);
+  };
+
+  // Set today as Rest Day only
+  const handleMakeTodayRestDayOnly = () => {
+    if (!onUpdateDailyLog) return;
+
+    onUpdateDailyLog(selectedDateStr, (log: any) => ({
+      ...log,
+      oneTimeScheduleOverride: {
+        isRestDay: true
+      }
+    }));
+
+    setIsShiftModalOpen(false);
+    setShiftSuccessMsg(`Set today (${selectedDateStr}) as a one-time Rest Day.`);
+    setTimeout(() => setShiftSuccessMsg(null), 5000);
+  };
+
+  // Undo shift and revert schedule to master weekly program
+  const handleUndoShift = () => {
+    if (!onUpdateDailyLog || !selectedDateLog) return;
+    const override = selectedDateLog.oneTimeScheduleOverride;
+
+    // Remove override from current date
+    onUpdateDailyLog(selectedDateStr, (log: any) => {
+      const copy = { ...log };
+      delete copy.oneTimeScheduleOverride;
+      return copy;
+    });
+
+    // Remove override from linked date if present
+    const linkedDate = override?.shiftedToDate || override?.shiftedFromDate;
+    if (linkedDate) {
+      onUpdateDailyLog(linkedDate, (log: any) => {
+        const copy = { ...log };
+        delete copy.oneTimeScheduleOverride;
+        return copy;
+      });
+    }
+
+    setShiftSuccessMsg(`Schedule reset to standard weekly routine.`);
+    setTimeout(() => setShiftSuccessMsg(null), 4000);
+  };
+
+  const isRestDayToday = Boolean(
+    isCurrentDayRest ||
+    selectedDateLog?.isRestDay ||
+    selectedDateLog?.oneTimeScheduleOverride?.isRestDay
+  );
+
+  const currentDateJogs: JogSession[] = selectedDateLog?.jogs || [];
+
+  const handleSaveJogSession = (session: JogSession) => {
+    if (onUpdateDailyLog) {
+      onUpdateDailyLog(selectedDateStr, (log: any) => {
+        const existingJogs = log?.jogs || [];
+        const cardioWorkout: Workout = {
+          id: `jog-${session.id}`,
+          name: `Outdoor Jog (${session.distanceKm.toFixed(2)} km)`,
+          category: 'Cardio',
+          sets: [
+            {
+              id: `set-jog-${Date.now()}`,
+              reps: Math.max(1, Math.round(session.durationSeconds / 60)),
+              weight: session.caloriesBurned,
+              completed: true,
+            }
+          ],
+          completed: true,
+        };
+
+        return {
+          ...log,
+          jogs: [...existingJogs, session],
+          workouts: [...(log?.workouts || []), cardioWorkout]
+        };
+      });
+    }
+    setActiveTabMode('session');
+    setCompletedSuccessMsg(true);
+    setTimeout(() => setCompletedSuccessMsg(false), 4000);
+  };
+
+  const handleDeleteJogSession = (jogId: string) => {
+    if (onUpdateDailyLog) {
+      onUpdateDailyLog(selectedDateStr, (log: any) => {
+        const updatedJogs = (log?.jogs || []).filter((j: any) => j.id !== jogId);
+        const updatedWorkouts = (log?.workouts || []).filter((w: any) => w.id !== `jog-${jogId}`);
+        return {
+          ...log,
+          jogs: updatedJogs,
+          workouts: updatedWorkouts
+        };
+      });
+    }
   };
 
   // Toggle Rest Day for a day in routine editor
@@ -591,21 +891,36 @@ export default function WorkoutLogger({
 
   const activeYoutubeId = getActiveYoutubeId();
 
-  const selectedDateStr = selectedDate || new Date().toISOString().split('T')[0];
-  const todayStr = new Date().toISOString().split('T')[0];
-  const isPreviousDay = selectedDateStr < todayStr;
+  // Helper filters to strictly distinguish resistance lifting from jogs/cardio/rest
+  const isJogWorkout = (w: any) => {
+    if (!w) return false;
+    const cat = (w.category || '').toLowerCase();
+    const name = (w.name || '').toLowerCase();
+    const id = (w.id || '').toLowerCase();
+    return cat === 'cardio' || id.startsWith('jog-') || name.includes('jog') || name.includes('walk') || name.includes('running');
+  };
 
-  const selectedDateLog = logs ? logs.find((l: any) => l.date === selectedDateStr) : null;
+  const isRestWorkout = (w: any) => {
+    if (!w) return false;
+    const cat = (w.category || '').toLowerCase();
+    const name = (w.name || '').toLowerCase();
+    return cat === 'rest' || name.includes('rest');
+  };
+
+  const isLiftingWorkout = (w: any) => {
+    return !isRestWorkout(w) && !isJogWorkout(w);
+  };
+
   const loggedWorkouts = selectedDateLog?.workouts || [];
+  const loggedLiftingWorkouts = loggedWorkouts.filter(isLiftingWorkout);
+  const loggedJogWorkouts = loggedWorkouts.filter(isJogWorkout);
   
-  const hasLiftingWorkoutsLogged = loggedWorkouts.some(
-    (w: any) => w.category !== 'Rest' && !w.name?.toLowerCase().includes('rest')
-  );
-  const hasRestDayLogged = loggedWorkouts.some(
-    (w: any) => w.category === 'Rest' || w.name?.toLowerCase().includes('rest')
-  );
-  const hasWorkoutsLogged = loggedWorkouts.length > 0;
-  const isWorkoutCompletedToday = hasWorkoutsLogged;
+  const hasLiftingWorkoutsLogged = loggedLiftingWorkouts.length > 0;
+  const hasRestDayLogged = loggedWorkouts.some(isRestWorkout);
+  const hasJogsLogged = (selectedDateLog?.jogs && selectedDateLog.jogs.length > 0) || loggedJogWorkouts.length > 0;
+  
+  // Daily lift is considered completed ONLY if actual lifting / resistance workouts are logged
+  const isLiftingCompletedToday = hasLiftingWorkoutsLogged;
 
   // Should we render the Rest Day UI? If it's a rest day and no lifting workouts were logged, render Rest Day UI
   const showRestDayView = Boolean(currentPlan?.isRestDay) && !hasLiftingWorkoutsLogged;
@@ -1087,22 +1402,25 @@ export default function WorkoutLogger({
             </div>
 
             {/* Sub-Tabs Selector splitting full width */}
-            <div className="grid grid-cols-2 border-b border-slate-200 gap-2 pb-0.5 pt-2 w-full">
+            <div className="grid grid-cols-3 border-b border-slate-200 gap-2 pb-0.5 pt-2 w-full">
               {[
-                { id: 'session', label: "Today's Session" },
-                { id: 'manage', label: 'Add & Edit' }
+                { id: 'session', label: "Today's Session", icon: Dumbbell },
+                { id: 'jog', label: 'Outdoor Jog', icon: Footprints },
+                { id: 'manage', label: 'Add & Edit', icon: Settings2 }
               ].map((tab) => (
                 <button
                   key={tab.id}
                   type="button"
                   onClick={() => setActiveTabMode(tab.id as any)}
-                  className={`w-full text-center px-4 py-2.5 rounded-t-xl text-xs sm:text-sm font-black whitespace-nowrap transition-all cursor-pointer border-b-2 ${
+                  className={`w-full flex items-center justify-center gap-1.5 px-2 sm:px-4 py-2.5 rounded-t-xl text-xs sm:text-sm font-black whitespace-nowrap transition-all cursor-pointer border-b-2 ${
                     activeTabMode === tab.id
                       ? 'border-indigo-600 text-indigo-600 font-black'
                       : 'border-transparent text-slate-400 hover:text-slate-700'
                   }`}
                 >
-                  {tab.label}
+                  <tab.icon className="w-4 h-4 shrink-0" />
+                  <span className="hidden sm:inline">{tab.label}</span>
+                  <span className="sm:hidden">{tab.id === 'session' ? 'Session' : tab.id === 'jog' ? 'Jog' : 'Edit'}</span>
                 </button>
               ))}
             </div>
@@ -1129,11 +1447,11 @@ export default function WorkoutLogger({
                       You don't have any routine days in your program yet. You can paste a workout plan in the input box at the top, create custom routine days in the <span className="text-indigo-600 font-bold">'Add & Edit'</span> tab, or log individual lifts directly on the right using <span className="text-indigo-600 font-bold">'+ Add Lift'</span>.
                     </p>
                   </div>
-                  <div className="pt-2 flex flex-wrap justify-center gap-3">
+                  <div className="pt-2 flex flex-wrap justify-center gap-3 w-full">
                     <button
                       type="button"
                       onClick={() => setActiveTabMode('manage')}
-                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer"
+                      className="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center justify-center text-center gap-2 cursor-pointer"
                     >
                       <Plus className="w-4 h-4" /> Create Routine Days
                     </button>
@@ -1220,6 +1538,12 @@ export default function WorkoutLogger({
                                   {d.exercises?.length || 0} exercises
                                 </span>
                               )}
+
+                              {Boolean(logs?.find((l: any) => l.date === getWeekDateForDisplayIndex(idx))?.oneTimeScheduleOverride) && (
+                                <span className="text-[8px] font-black uppercase px-1 py-0.5 rounded bg-violet-500 text-white shadow-2xs">
+                                  Shifted
+                                </span>
+                              )}
                             </div>
                           </button>
                         );
@@ -1260,7 +1584,7 @@ export default function WorkoutLogger({
                         <div className="space-y-2">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-[10px] font-black uppercase tracking-widest bg-amber-500 text-white px-3 py-1 rounded-full shadow-xs flex items-center gap-1">
-                              <Coffee className="w-3.5 h-3.5" /> Scheduled Rest & Recovery Day
+                              <Coffee className="w-3.5 h-3.5" /> Rest Day
                             </span>
                             {currentPlan.dayOfWeek && (
                               <span className="text-xs font-extrabold text-amber-800 bg-amber-100 border border-amber-200 px-2.5 py-0.5 rounded-lg">
@@ -1276,21 +1600,24 @@ export default function WorkoutLogger({
                           </p>
                         </div>
 
-                        {isWorkoutCompletedToday ? (
-                          <div className="flex items-center gap-2.5 px-6 py-4 bg-emerald-500 text-white rounded-2xl font-black text-sm shadow-md shrink-0 self-start md:self-center">
-                            <CheckCircle2 className="w-5 h-5 animate-bounce" />
-                            <span>Rest Day Completed & Preserved 🔥</span>
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full sm:w-auto max-w-full">
+                          <div
+                            className="flex items-center justify-center gap-2 px-5 py-3.5 bg-amber-600 text-white rounded-2xl font-black text-sm shadow-md text-center max-w-full"
+                            id="rest-day-logged-badge"
+                          >
+                            <Coffee className="w-4 h-4 animate-pulse shrink-0" />
+                            <span className="whitespace-nowrap">Rest Day</span>
                           </div>
-                        ) : (
                           <button
                             type="button"
-                            onClick={handleLogRestDay}
-                            className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-4 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-black text-sm sm:text-base rounded-2xl transition-all shadow-md hover:shadow-lg shadow-amber-200 cursor-pointer shrink-0"
+                            onClick={() => setActiveTabMode('jog')}
+                            className="flex items-center justify-center gap-2 px-5 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm rounded-2xl transition-all shadow-md shadow-emerald-200 cursor-pointer active:scale-95 max-w-full"
+                            title="Start an outdoor jog or fast walk with live GPS mapping"
                           >
-                            <HeartPulse className="w-5 h-5 animate-pulse" />
-                            Log Rest Day (Keep Streak Alive)
+                            <Footprints className="w-4 h-4 shrink-0" />
+                            <span className="whitespace-nowrap">Start Jog / Walk</span>
                           </button>
-                        )}
+                        </div>
                       </div>
 
                       {/* Rest Day Recovery Targets */}
@@ -1334,30 +1661,49 @@ export default function WorkoutLogger({
                               {nextNonRestDayObj.day} ({nextNonRestDayObj.focusArea}) — {nextNonRestDayObj.exercises?.length || 0} exercises
                             </p>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => setSelectedDayIdx(nextNonRestDayIdx)}
-                            className="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-xl text-xs font-extrabold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
-                          >
-                            <span>Preview Next Lifting Session</span>
-                            <ChevronRight className="w-4 h-4 text-slate-500" />
-                          </button>
+                          <div className="w-full sm:w-auto">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedDayIdx(nextNonRestDayIdx)}
+                              className="w-full px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-xl text-xs font-extrabold transition-all flex items-center justify-center text-center gap-1.5 cursor-pointer shadow-xs"
+                            >
+                              <span>Preview Next Workout</span>
+                              <ChevronRight className="w-4 h-4 text-slate-500" />
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
                   ) : (
                     /* --- WORKOUT DAY VIEW (Standard Lifting Card) --- */
                     <div className="bg-slate-50/70 border border-slate-200/80 rounded-2xl p-6 sm:p-8 space-y-6">
-                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                      {currentPlan?.isOneTimeShift && (
+                        <div className="bg-indigo-50/90 border border-indigo-200 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-indigo-900 font-bold text-xs shadow-2xs">
+                          <div className="flex items-center gap-2.5">
+                            <Sparkles className="w-4 h-4 text-indigo-600 shrink-0 animate-pulse" />
+                            <span>{currentPlan.overrideLabel}</span>
+                          </div>
+                          <div className="w-full sm:w-auto">
+                            <button
+                              type="button"
+                              onClick={handleUndoShift}
+                              className="w-full px-3.5 py-2 bg-white hover:bg-indigo-100 border border-indigo-300 text-indigo-700 rounded-xl font-black text-xs cursor-pointer shadow-2xs transition-all active:scale-95 flex items-center justify-center text-center"
+                            >
+                              Revert Schedule
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      <div className="flex flex-col gap-4 w-full">
                         <div>
                           <span className="text-xs uppercase font-black px-3 py-1 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-150">
-                            {hasWorkoutsLogged && isPreviousDay
-                              ? `LOGGED EXERCISES (${selectedDateStr})`
+                            {hasLiftingWorkoutsLogged && isPreviousDay
+                              ? `LOGGED LIFTS (${selectedDateStr})`
                               : `${currentPlan.category} TARGETS`}
                           </span>
                           <h3 className="text-lg font-black text-slate-800 mt-2">
                             {isPreviousDay
-                              ? hasWorkoutsLogged
+                              ? hasLiftingWorkoutsLogged
                                 ? `Completed Workout for ${selectedDateStr}`
                                 : `Scheduled Routine (${currentPlan.title}) — ${selectedDateStr}`
                               : `Start Today's Lift (${currentPlan.title})`}
@@ -1365,63 +1711,190 @@ export default function WorkoutLogger({
                         </div>
 
                         {isPreviousDay ? (
-                          hasWorkoutsLogged ? (
-                            <div className="flex items-center gap-2 px-5 py-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl font-black text-xs shrink-0 self-center">
+                          hasLiftingWorkoutsLogged ? (
+                            <div className="w-full flex items-center justify-center text-center gap-2 px-5 py-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl font-black text-xs">
                               <CheckCircle2 className="w-5 h-5 text-emerald-600 animate-pulse" />
-                              <span>{loggedWorkouts.length} Lifts Logged for {selectedDateStr}</span>
+                              <span>{loggedLiftingWorkouts.length} Lifts Logged</span>
                             </div>
                           ) : (
-                            <div className="px-4 py-2.5 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl text-xs font-bold shrink-0 self-center flex items-center gap-2">
+                            <div className="w-full px-4 py-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl text-xs font-bold flex items-center justify-center text-center gap-2">
                               <Info className="w-4 h-4 text-amber-600 shrink-0" />
-                              <span>Past Date — Live mode is for Today only. Use '+ Add Lift' on the right to log past exercises.</span>
+                              <span>Past Date — Use '+ Add Lift' to log past exercises.</span>
                             </div>
                           )
-                        ) : isWorkoutCompletedToday ? (
-                          <div
-                            className="flex items-center gap-2 px-5 py-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl font-black text-xs shrink-0 self-center"
-                            id="workout-already-completed-badge"
-                          >
-                            <CheckCircle2 className="w-5 h-5 text-emerald-600 animate-pulse" />
-                            <span>Daily Lift Completed & Saved</span>
+                        ) : isLiftingCompletedToday ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 w-full">
+                            <div
+                              className="w-full flex items-center justify-center text-center gap-2 px-4 py-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl font-black text-xs"
+                              id="workout-already-completed-badge"
+                            >
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                              <span>Daily Lift Completed</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleStartWorkout}
+                              className="w-full flex items-center justify-center text-center gap-2 px-4 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs sm:text-sm rounded-2xl transition-all shadow-md shadow-indigo-150 cursor-pointer active:scale-95"
+                              id="redo-lift-btn"
+                              title="Start guided lift session or log more sets"
+                            >
+                              <PlayCircle className="w-4 h-4 shrink-0" />
+                              <span>Start / Log Lift</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTabMode('jog')}
+                              className="w-full flex items-center justify-center text-center gap-2 px-4 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs sm:text-sm rounded-2xl transition-all shadow-md shadow-emerald-200 cursor-pointer active:scale-95"
+                              id="start-jog-completed-day-btn"
+                              title="Start an outdoor jog with live GPS mapping and calorie calculation"
+                            >
+                              <Footprints className="w-4 h-4 shrink-0" />
+                              <span>Start Jog</span>
+                            </button>
                           </div>
                         ) : currentPlan.exercises.length > 0 ? (
-                          <button
-                            type="button"
-                            onClick={handleStartWorkout}
-                            className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-sm rounded-2xl transition-all shadow-md hover:shadow-lg shadow-indigo-150 cursor-pointer active:scale-95"
-                            id="start-workout-btn"
-                          >
-                            <PlayCircle className="w-5 h-5" />
-                            Start Day {streak} Workout
-                          </button>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full">
+                            <button
+                              type="button"
+                              onClick={handleStartWorkout}
+                              className="w-full flex items-center justify-center text-center gap-2 px-7 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-sm rounded-2xl transition-all shadow-md hover:shadow-lg shadow-indigo-150 cursor-pointer active:scale-95"
+                              id="start-workout-btn"
+                            >
+                              <PlayCircle className="w-5 h-5 shrink-0" />
+                              Start Day {streak} Workout
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTabMode('jog')}
+                              className="w-full flex items-center justify-center text-center gap-2 px-6 py-3.5 font-black text-sm rounded-2xl transition-all shadow-md bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200 hover:shadow-lg cursor-pointer active:scale-95"
+                              id="start-jog-btn"
+                              title="Start an outdoor jog with live GPS mapping and calorie calculation"
+                            >
+                              <Footprints className="w-5 h-5 shrink-0" />
+                              Start Jog
+                            </button>
+                          </div>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => setActiveTabMode('manage')}
-                            className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-2xl transition-all cursor-pointer"
-                          >
-                            <Plus className="w-4 h-4" /> Add Exercises to {currentPlan.title}
-                          </button>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full">
+                            <button
+                              type="button"
+                              onClick={() => setActiveTabMode('manage')}
+                              className="w-full flex items-center justify-center text-center gap-2 px-6 py-3 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-2xl transition-all cursor-pointer"
+                            >
+                              <Plus className="w-4 h-4" /> Add Exercises
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTabMode('jog')}
+                              className="w-full flex items-center justify-center text-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-2xl transition-all shadow-md shadow-emerald-200 cursor-pointer active:scale-95"
+                              id="start-jog-empty-day-btn"
+                            >
+                              <Footprints className="w-4 h-4" /> Start Jog
+                            </button>
+                          </div>
                         )}
                       </div>
+
+                      {/* Jogs / Walks logged for the day */}
+                      {hasJogsLogged && (
+                        <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-4 sm:p-5 space-y-3 shadow-xs">
+                          <div className="flex flex-wrap justify-between items-center gap-2">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+                                <Footprints className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <h4 className="text-xs sm:text-sm font-black text-emerald-950">
+                                  Jogs & Cardio Sessions ({currentDateJogs.length || loggedJogWorkouts.length})
+                                </h4>
+                                <p className="text-[10px] font-semibold text-emerald-700">
+                                  Tracked separately from your lifting routine — you can log multiple jogs anytime.
+                                </p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTabMode('jog')}
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              Log Another Jog
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                            {currentDateJogs.length > 0 ? (
+                              currentDateJogs.map((jog, jIdx) => (
+                                <div key={jog.id || jIdx} className="bg-white border border-emerald-200/80 rounded-xl p-3 flex items-center justify-between shadow-xs">
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs font-black text-slate-800 font-mono">
+                                        {jog.distanceKm.toFixed(2)} km
+                                      </span>
+                                      <span className="text-[10px] text-slate-400 font-medium">
+                                        ({(jog.distanceKm * 0.621371).toFixed(2)} mi)
+                                      </span>
+                                      {jog.startTime && (
+                                        <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-150">
+                                          {jog.startTime}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-2 text-[10px] text-slate-500 font-semibold mt-1">
+                                      <span>⏱ {formatDuration(jog.durationSeconds)}</span>
+                                      <span>•</span>
+                                      <span className="text-amber-700 font-bold">🔥 {jog.caloriesBurned} kcal</span>
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteJogSession(jog.id)}
+                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                    title="Delete this jog entry"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ))
+                            ) : (
+                              loggedJogWorkouts.map((w: any, jIdx: number) => (
+                                <div key={w.id || jIdx} className="bg-white border border-emerald-200/80 rounded-xl p-3 flex items-center justify-between shadow-xs">
+                                  <div>
+                                    <h5 className="text-xs font-bold text-slate-800">{w.name}</h5>
+                                    <span className="text-[10px] text-emerald-700 font-semibold">Cardio session logged</span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteJogSession(w.id.replace('jog-', ''))}
+                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                    title="Delete this jog entry"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      )}
 
                       <div className="border-t border-slate-200/60 pt-6 space-y-4">
                         <div className="flex justify-between items-center">
                           <span className="text-xs font-black text-slate-400 uppercase tracking-wider block">
-                            {hasWorkoutsLogged ? `Logged Exercises for ${selectedDateStr}:` : 'Exercises for this routine:'}
+                            {hasLiftingWorkoutsLogged ? `Logged Lifts for ${selectedDateStr}:` : 'Exercises for this routine:'}
                           </span>
                           <button
                             type="button"
                             onClick={() => setActiveTabMode('manage')}
                             className="text-xs text-indigo-600 font-extrabold hover:underline flex items-center gap-1 cursor-pointer"
                           >
-                            <Edit3 className="w-3.5 h-3.5" /> Edit Exercises / Add Days
+                            <Edit3 className="w-3.5 h-3.5" /> Edit Routine
                           </button>
                         </div>
 
-                        {hasWorkoutsLogged ? (
+                        {hasLiftingWorkoutsLogged ? (
                           <div className="space-y-3">
-                            {loggedWorkouts.map((w: any, idx: number) => {
+                            {loggedLiftingWorkouts.map((w: any, idx: number) => {
                               const matchUrl = findMatchingYoutubeUrl(w.name);
                               return (
                                 <div key={w.id || idx} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3 shadow-xs">
@@ -1534,8 +2007,21 @@ export default function WorkoutLogger({
                 </>
               ) : null}
             </div>
+          ) : activeTabMode === 'jog' ? (
+            // --- SUB-TAB B: OUTDOOR JOG (GPS MAP & CALORIE TRACKER) ---
+            <div id="outdoor-jog-panel" className="space-y-6">
+              <JogTracker
+                selectedDate={selectedDateStr}
+                goals={goals || { currentWeight: 75, weightUnit: weightUnit === 'lbs' ? 'lbs' : 'kg', targetWeight: 75, dailyCalorieTarget: 2500, dailyProteinTarget: 160, weeklyWorkoutDaysTarget: 5 }}
+                isRestDay={isRestDayToday}
+                onBack={() => setActiveTabMode('session')}
+                onSaveJog={handleSaveJogSession}
+                existingJogs={currentDateJogs}
+                onDeleteJog={handleDeleteJogSession}
+              />
+            </div>
           ) : (
-            // --- SUB-TAB B: MANAGE ROUTINES & DAYS ---
+            // --- SUB-TAB C: MANAGE ROUTINES & DAYS ---
             <div className="space-y-6" id="routine-manager-panel">
               <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-indigo-50/70 border border-indigo-100 p-5 rounded-2xl shadow-xs">
                 <div>
@@ -1589,14 +2075,14 @@ export default function WorkoutLogger({
                             <button
                               type="button"
                               onClick={() => handleSaveDayHeader(dayIdx)}
-                              className="px-2.5 py-1 bg-indigo-600 text-white rounded-lg text-xs font-bold cursor-pointer"
+                              className="px-2.5 py-1 bg-indigo-600 text-white rounded-lg text-xs font-bold cursor-pointer flex items-center justify-center text-center"
                             >
                               Save
                             </button>
                             <button
                               type="button"
                               onClick={() => setEditingDayHeaderIdx(null)}
-                              className="px-2.5 py-1 bg-slate-200 text-slate-700 rounded-lg text-xs font-bold cursor-pointer"
+                              className="px-2.5 py-1 bg-slate-200 text-slate-700 rounded-lg text-xs font-bold cursor-pointer flex items-center justify-center text-center"
                             >
                               Cancel
                             </button>
@@ -1653,7 +2139,7 @@ export default function WorkoutLogger({
                             <button
                               type="button"
                               onClick={() => handleToggleRestDay(dayIdx)}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1 cursor-pointer border ${
+                              className={`px-2.5 py-1 rounded-lg text-xs font-extrabold transition-all flex items-center justify-center text-center gap-1 cursor-pointer border ${
                                 dayObj.isRestDay
                                   ? 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200'
                                   : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
@@ -1686,7 +2172,7 @@ export default function WorkoutLogger({
                                 setEditDayTitle(dayObj.day || `Day ${dayIdx + 1}`);
                                 setEditDayFocus(dayObj.focusArea || 'Full Body');
                               }}
-                              className="px-2.5 py-1 bg-white border border-slate-200 hover:border-slate-300 text-slate-700 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                              className="px-2.5 py-1 bg-white border border-slate-200 hover:border-slate-300 text-slate-700 rounded-lg text-[11px] font-bold transition-colors flex items-center justify-center text-center gap-1 cursor-pointer"
                             >
                               <Edit3 className="w-3 h-3 text-slate-500" />
                               Rename
@@ -1858,18 +2344,18 @@ export default function WorkoutLogger({
                                       )}
                                     </div>
 
-                                    <div className="flex justify-end gap-2 pt-1">
+                                    <div className="flex flex-col sm:flex-row justify-end gap-2 pt-1 w-full">
                                       <button
                                         type="button"
                                         onClick={() => handleSaveExerciseEdit(dayIdx, exIdx)}
-                                        className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg shadow-sm transition-colors cursor-pointer"
+                                        className="w-full sm:w-auto px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg shadow-sm transition-colors cursor-pointer flex items-center justify-center text-center"
                                       >
                                         Save Changes
                                       </button>
                                       <button
                                         type="button"
                                         onClick={() => setEditingExKey(null)}
-                                        className="px-3 py-1.5 bg-white border border-slate-200 text-slate-600 font-bold text-xs rounded-lg cursor-pointer"
+                                        className="w-full sm:w-auto px-3 py-1.5 bg-white border border-slate-200 text-slate-600 font-bold text-xs rounded-lg cursor-pointer flex items-center justify-center text-center"
                                       >
                                         Cancel
                                       </button>
@@ -2136,19 +2622,19 @@ export default function WorkoutLogger({
                             )}
                           </div>
 
-                          <div className="flex justify-end gap-2">
+                          <div className="flex flex-col sm:flex-row justify-end gap-2 w-full">
                             <button
                               type="button"
                               onClick={() => handleAddExerciseToDay(dayIdx)}
                               disabled={!newExName.trim()}
-                              className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer"
+                              className="w-full sm:w-auto px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer flex items-center justify-center text-center"
                             >
                               Add Exercise
                             </button>
                             <button
                               type="button"
                               onClick={() => setAddingExToDayIdx(null)}
-                              className="px-3 py-1.5 bg-white border border-slate-200 text-slate-600 font-bold text-xs rounded-lg cursor-pointer"
+                              className="w-full sm:w-auto px-3 py-1.5 bg-white border border-slate-200 text-slate-600 font-bold text-xs rounded-lg cursor-pointer flex items-center justify-center text-center"
                             >
                               Cancel
                             </button>
@@ -2203,7 +2689,7 @@ export default function WorkoutLogger({
                   'warning'
                 );
               }}
-              className="text-xs font-bold text-slate-400 hover:text-slate-600 py-1.5 px-3 rounded-lg hover:bg-slate-100 transition-all cursor-pointer"
+              className="text-xs font-bold text-slate-400 hover:text-slate-600 py-1.5 px-3 rounded-lg hover:bg-slate-100 transition-all cursor-pointer flex items-center justify-center text-center"
               id="exit-workout-btn"
             >
               Exit Workout
@@ -2226,7 +2712,7 @@ export default function WorkoutLogger({
               <button
                 type="button"
                 onClick={() => setHasRestoredSession(false)}
-                className="px-3 py-1 bg-white hover:bg-indigo-100 text-indigo-700 font-bold text-[11px] rounded-lg border border-indigo-200 transition-colors shrink-0 cursor-pointer"
+                className="px-3 py-1 bg-white hover:bg-indigo-100 text-indigo-700 font-bold text-[11px] rounded-lg border border-indigo-200 transition-colors shrink-0 cursor-pointer flex items-center justify-center text-center"
               >
                 Got It
               </button>
@@ -2401,11 +2887,11 @@ export default function WorkoutLogger({
                     })}
                   </div>
 
-                  <div className="pt-2 flex justify-end">
+                  <div className="pt-2 flex justify-end w-full">
                     <button
                       type="button"
                       onClick={() => handleAddExtraSetToExercise(activeExName, activeRawEx)}
-                      className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-xs rounded-xl border border-indigo-200/80 transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                      className="w-full sm:w-auto px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-xs rounded-xl border border-indigo-200/80 transition-colors flex items-center justify-center text-center gap-1.5 cursor-pointer shadow-2xs"
                     >
                       <Plus className="w-3.5 h-3.5 text-indigo-600" />
                       <span>Add Extra Set</span>
@@ -2416,12 +2902,12 @@ export default function WorkoutLogger({
             })()}
 
             {/* Next / Finish Navigation Buttons */}
-            <div className="pt-4 border-t border-slate-100 flex items-center justify-between gap-3">
+            <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 w-full">
               <button
                 type="button"
                 onClick={() => setActiveExerciseIndex(prev => Math.max(0, prev - 1))}
                 disabled={activeExerciseIndex === 0}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 font-bold text-xs rounded-xl transition-colors flex items-center gap-1 cursor-pointer"
+                className="w-full sm:w-auto px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 font-bold text-xs rounded-xl transition-colors flex items-center justify-center text-center gap-1 cursor-pointer"
               >
                 <ChevronLeft className="w-4 h-4" />
                 Prev Exercise
@@ -2431,19 +2917,19 @@ export default function WorkoutLogger({
                 <button
                   type="button"
                   onClick={() => setActiveExerciseIndex(prev => Math.min(currentPlan.exercises.length - 1, prev + 1))}
-                  className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-colors flex items-center gap-1 cursor-pointer"
+                  className="w-full sm:w-auto px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-colors flex items-center justify-center text-center gap-1 cursor-pointer"
                 >
-                  Next Exercise
+                  <span>Next Exercise</span>
                   <ChevronRight className="w-4 h-4" />
                 </button>
               ) : (
                 <button
                   type="button"
                   onClick={handleFinishAndSaveWorkout}
-                  className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-colors flex items-center gap-1.5 cursor-pointer animate-pulse"
+                  className="w-full sm:w-auto px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-colors flex items-center justify-center text-center gap-1.5 cursor-pointer animate-pulse"
                 >
                   <Award className="w-4 h-4" />
-                  Finish & Save Lifts
+                  <span>Finish Workout</span>
                 </button>
               )}
             </div>
@@ -2516,7 +3002,7 @@ export default function WorkoutLogger({
                     <div>
                       {isRest ? (
                         <span className="px-2.5 py-1 bg-amber-100 text-amber-800 text-[10px] font-black rounded-lg border border-amber-200">
-                          REST DAY (Disabled)
+                          Rest Day
                         </span>
                       ) : isSource ? (
                         <span className="px-2.5 py-1 bg-indigo-100 text-indigo-800 text-[10px] font-black rounded-lg border border-indigo-200">
@@ -2533,11 +3019,11 @@ export default function WorkoutLogger({
               })}
             </div>
 
-            <div className="pt-2 border-t border-slate-100 flex justify-end">
+            <div className="pt-2 border-t border-slate-100 w-full">
               <button
                 type="button"
                 onClick={() => setDuplicateModalEx(null)}
-                className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-extrabold rounded-xl transition-colors cursor-pointer"
+                className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-extrabold rounded-xl transition-colors cursor-pointer flex items-center justify-center text-center"
               >
                 Cancel
               </button>
@@ -2551,6 +3037,139 @@ export default function WorkoutLogger({
         <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-5 py-3 rounded-2xl shadow-2xl border border-slate-700 flex items-center gap-3 animate-fadeIn">
           <Check className="w-5 h-5 text-emerald-400 stroke-[3]" />
           <span className="text-xs font-black">{duplicateToastMsg}</span>
+        </div>
+      )}
+
+
+      {/* Toast Notification for Shift Success */}
+      {shiftSuccessMsg && (
+        <div className="fixed bottom-6 right-6 z-50 bg-indigo-950 text-white px-5 py-3.5 rounded-2xl shadow-2xl border border-indigo-700 flex items-center gap-3 animate-fadeIn">
+          <Sparkles className="w-5 h-5 text-indigo-400 stroke-[2.5]" />
+          <span className="text-xs font-black">{shiftSuccessMsg}</span>
+        </div>
+      )}
+
+      {/* One-Time Schedule Shift Modal */}
+      {isShiftModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white border border-slate-200 rounded-3xl max-w-lg w-full max-h-[85vh] flex flex-col shadow-2xl relative overflow-hidden">
+            {/* Header */}
+            <div className="p-5 sm:p-6 pb-4 border-b border-slate-100 flex justify-between items-start shrink-0">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-indigo-600 font-black text-xs uppercase tracking-wider">
+                  <Calendar className="w-4 h-4" /> One-Time Schedule Adjustment
+                </div>
+                <h3 className="text-lg sm:text-xl font-black text-slate-900">Move Session or Swap Days</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsShiftModalOpen(false)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Scrollable Body */}
+            <div className="p-5 sm:p-6 space-y-4 overflow-y-auto flex-1 custom-scrollbar">
+              <p className="text-xs font-semibold text-slate-600 leading-relaxed bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80">
+                Need to take today off or shift your workout? This will adjust your schedule for <strong>this week only</strong> without changing your master weekly routines (e.g. next week's schedule stays untouched!).
+              </p>
+
+              <div className="space-y-3">
+                {/* Option 1: Move to Tomorrow */}
+                <button
+                  type="button"
+                  onClick={handleMoveSessionToTomorrow}
+                  className="w-full text-left p-3.5 sm:p-4 rounded-2xl border border-indigo-200 bg-indigo-50/60 hover:bg-indigo-100/80 transition-all cursor-pointer group flex items-start gap-3"
+                >
+                  <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+                    <ChevronRight className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-black text-indigo-950 flex flex-wrap items-center gap-1.5">
+                      Move Today's Session to Tomorrow
+                      <span className="text-[10px] font-extrabold bg-indigo-200/80 text-indigo-900 px-2 py-0.5 rounded-md">
+                        {getDayNameFromDateString(addDaysToDateString(selectedDateStr, 1))} ({addDaysToDateString(selectedDateStr, 1)})
+                      </span>
+                    </div>
+                    <p className="text-[11px] font-medium text-slate-600 mt-1">
+                      Makes today ({getDayNameFromDateString(selectedDateStr)}) a Rest Day and schedules today's <strong>{currentPlan?.title || 'Workout'}</strong> for tomorrow.
+                    </p>
+                  </div>
+                </button>
+
+                {/* Option 2: Swap with a Rest Day in this week */}
+                <div className="space-y-2 pt-1">
+                  <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">
+                    Or Swap with a Rest Day in Current Week:
+                  </span>
+                  <div className="grid grid-cols-1 gap-2">
+                    {displayDays.map((d, idx) => {
+                      const dateForIdx = getWeekDateForDisplayIndex(idx);
+                      const isRest = Boolean(d.isRestDay || d.focusArea?.toLowerCase().includes('rest'));
+                      const isToday = dateForIdx === selectedDateStr;
+
+                      if (!isRest || isToday) return null;
+
+                      return (
+                        <button
+                          key={`swap-rest-${idx}`}
+                          type="button"
+                          disabled
+                          className="w-full text-left p-3 rounded-xl border border-slate-200 bg-slate-50 opacity-60 cursor-not-allowed flex items-center justify-between"
+                          title="Swapping days is temporarily disabled"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <Coffee className="w-4 h-4 text-amber-600 shrink-0" />
+                            <div>
+                              <span className="text-xs font-black text-slate-700">
+                                Swap with {d.dayOfWeek || d.day} ({dateForIdx})
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-bold block">
+                                Currently scheduled Rest Day
+                              </span>
+                            </div>
+                          </div>
+                          <span className="text-[10px] font-black bg-slate-200 text-slate-500 px-2.5 py-1 rounded-lg">
+                            Disabled
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Option 3: Make Today Rest Day Only */}
+                <button
+                  type="button"
+                  onClick={handleMakeTodayRestDayOnly}
+                  className="w-full text-left p-3.5 rounded-2xl border border-slate-200 hover:border-slate-300 bg-slate-50 hover:bg-slate-100 transition-all cursor-pointer flex items-center gap-3"
+                >
+                  <Coffee className="w-5 h-5 text-amber-700 shrink-0" />
+                  <div>
+                    <div className="text-xs font-black text-slate-800">
+                      Rest Today Only (Skip Today's Session)
+                    </div>
+                    <p className="text-[11px] font-medium text-slate-500 mt-0.5">
+                      Marks today as a Rest Day to keep your streak alive without re-scheduling.
+                    </p>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* Sticky Footer */}
+            <div className="p-4 sm:px-6 bg-slate-50 border-t border-slate-100 w-full shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsShiftModalOpen(false)}
+                className="w-full py-3 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-extrabold rounded-xl transition-colors cursor-pointer flex items-center justify-center text-center"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

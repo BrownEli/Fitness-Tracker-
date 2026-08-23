@@ -465,7 +465,7 @@ export default function WorkspaceHub({
                   <button
                     onClick={handleExportToDrive}
                     disabled={isSyncing}
-                    className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-base font-extrabold cursor-pointer transition-all shadow-md shadow-indigo-100 hover:shadow-lg"
+                    className="w-full flex items-center justify-center text-center gap-3 px-6 py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-base font-extrabold cursor-pointer transition-all shadow-md shadow-indigo-100 hover:shadow-lg"
                   >
                     {isSyncing ? <RefreshCw className="w-5 h-5 animate-spin text-white" /> : <Upload className="w-5 h-5 text-white" />}
                     <span>Export JSON to Google Drive</span>
@@ -501,7 +501,7 @@ export default function WorkspaceHub({
                 <button
                   onClick={handleGoogleSignIn}
                   disabled={isLoggingIn}
-                  className="mx-auto flex items-center justify-center gap-3 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-bold px-6 py-3 rounded-xl cursor-pointer transition-all shadow-sm max-w-sm w-full"
+                  className="mx-auto flex items-center justify-center text-center gap-3 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-bold px-6 py-3 rounded-xl cursor-pointer transition-all shadow-sm max-w-sm w-full"
                 >
                   <svg className="w-5 h-5" viewBox="0 0 48 48">
                     <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
@@ -529,7 +529,7 @@ export default function WorkspaceHub({
             <div className="mt-6 border-t border-slate-100 pt-4 flex justify-end">
               <button
                 onClick={handleSignOut}
-                className="text-xs font-bold text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                className="w-full sm:w-auto text-xs font-bold text-slate-400 hover:text-rose-600 transition-colors cursor-pointer flex items-center justify-center text-center"
               >
                 Disconnect Google Account
               </button>
@@ -556,7 +556,7 @@ export default function WorkspaceHub({
               <div>
                 <button
                   onClick={handleLocalExport}
-                  className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl text-base font-extrabold cursor-pointer transition-all shadow-md"
+                  className="w-full flex items-center justify-center text-center gap-3 px-6 py-4 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl text-base font-extrabold cursor-pointer transition-all shadow-md"
                 >
                   <Download className="w-5 h-5 text-slate-300" />
                   <span>Export Local JSON File</span>
@@ -613,7 +613,7 @@ export default function WorkspaceHub({
             <button
               type="submit"
               disabled={isSavingFolder}
-              className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl text-sm font-bold cursor-pointer transition-all shadow-sm"
+              className="w-full sm:w-auto px-6 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl text-sm font-bold cursor-pointer transition-all shadow-sm flex items-center justify-center text-center"
             >
               Save Storage Location
             </button>
@@ -645,10 +645,10 @@ export default function WorkspaceHub({
               <button
                 type="button"
                 onClick={() => onUpdateParsedFoods([])}
-                className="px-2 py-0.5 text-[10px] font-bold text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md border border-slate-200 hover:border-rose-200 transition-colors flex items-center gap-1 cursor-pointer"
+                className="px-2 py-0.5 text-[10px] font-bold text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md border border-slate-200 hover:border-rose-200 transition-colors flex items-center justify-center text-center gap-1 cursor-pointer"
                 title="Clear custom foods list"
               >
-                <Trash2 className="w-3 h-3" />
+                <Trash2 className="w-3.5 h-3.5" />
                 Clear
               </button>
             </div>
@@ -747,17 +747,17 @@ export default function WorkspaceHub({
 
               <button
                 type="submit"
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+                className="w-full sm:w-auto px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center text-center"
               >
                 Save Time
               </button>
             </form>
 
-            <div className="flex flex-col sm:flex-row items-center gap-2 pt-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 w-full">
               <button
                 type="button"
                 onClick={handleRequestPermission}
-                className="w-full sm:w-auto px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl transition-all cursor-pointer"
+                className="w-full px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center text-center"
               >
                 Grant Device Permission
               </button>
@@ -765,7 +765,7 @@ export default function WorkspaceHub({
               <button
                 type="button"
                 onClick={handleSendTestNotification}
-                className="w-full sm:w-auto px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                className="w-full px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center text-center gap-1.5"
               >
                 <Bell className="w-3.5 h-3.5 text-white" />
                 Send Test Notification Now

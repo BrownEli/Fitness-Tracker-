@@ -346,7 +346,7 @@ export default function Analytics({ logs, goals, onLogWeight, onDeleteWeight, on
               type="button"
               id={`${idPrefix}-preset-${p}`}
               onClick={() => handlePresetChange(p)}
-              className={`w-full py-1.5 rounded-lg font-bold text-xs transition-all text-center ${
+              className={`w-full py-1.5 rounded-lg font-bold text-xs transition-all flex items-center justify-center text-center ${
                 isActive
                   ? 'bg-indigo-600 text-white shadow-2xs'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'

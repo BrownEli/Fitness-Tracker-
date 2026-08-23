@@ -101,7 +101,7 @@ export default function CoachInsights({ insights, logs, goals, onAddInsight }: C
         <button
           onClick={handleTriggerAnalysis}
           disabled={loading}
-          className="w-full mb-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-100 disabled:text-slate-400 text-white font-bold text-xs sm:text-sm py-3 rounded-xl shadow-md shadow-indigo-100 hover:shadow-indigo-200 transition-all cursor-pointer flex items-center justify-center gap-2"
+          className="w-full mb-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-100 disabled:text-slate-400 text-white font-bold text-xs sm:text-sm py-3 rounded-xl shadow-md shadow-indigo-100 hover:shadow-indigo-200 transition-all cursor-pointer flex items-center justify-center text-center gap-2"
           id="trigger-ai-analysis-btn"
         >
           <Sparkles className="w-4 h-4" />
@@ -191,7 +191,7 @@ export default function CoachInsights({ insights, logs, goals, onAddInsight }: C
             <button
               type="submit"
               disabled={loading || !userQuery.trim()}
-              className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-100 disabled:text-slate-400 text-white px-5 py-3.5 rounded-xl cursor-pointer transition-all shadow-md hover:shadow-indigo-100 flex items-center justify-center gap-2 font-bold text-sm shrink-0"
+              className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-100 disabled:text-slate-400 text-white px-5 py-3.5 rounded-xl cursor-pointer transition-all shadow-md hover:shadow-indigo-100 flex items-center justify-center text-center gap-2 font-bold text-sm shrink-0"
               id="send-question-btn"
             >
               <Send className="w-4 h-4 sm:w-5 sm:h-5" />

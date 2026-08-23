@@ -24,12 +24,44 @@ export interface Meal {
   timestamp: string; // e.g. "08:30"
 }
 
+export interface OneTimeScheduleOverride {
+  isRestDay?: boolean;
+  assignedRoutineDayIndex?: number;
+  customTitle?: string;
+  customFocus?: string;
+  customExercises?: ParsedWorkoutExercise[];
+  shiftedFromDate?: string;
+  shiftedToDate?: string;
+}
+
+export interface JogPoint {
+  lat: number;
+  lng: number;
+  timestamp: number;
+}
+
+export interface JogSession {
+  id: string;
+  date: string; // YYYY-MM-DD
+  startTime: string; // ISO string
+  endTime?: string;
+  durationSeconds: number;
+  distanceKm: number; // in kilometers
+  caloriesBurned: number; // in kcal
+  avgPaceMinPerKm?: number; // minutes per km
+  route?: JogPoint[];
+  completed: boolean;
+}
+
 export interface DailyLog {
   date: string; // YYYY-MM-DD
   meals: Meal[];
   workouts: Workout[];
+  jogs?: JogSession[];
   weight?: number; // in kg or lbs
   notes?: string;
+  isRestDay?: boolean;
+  oneTimeScheduleOverride?: OneTimeScheduleOverride;
 }
 
 export interface UserGoals {

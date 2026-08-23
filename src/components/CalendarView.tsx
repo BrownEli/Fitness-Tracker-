@@ -1,14 +1,15 @@
-import { DailyLog, UserGoals } from '../types';
-import { Calendar as CalendarIcon, Check, Dumbbell, Sparkles } from 'lucide-react';
+import { DailyLog, UserGoals, ParsedWorkoutDay } from '../types';
+import { Calendar as CalendarIcon, Check, Dumbbell, Sparkles, Coffee, Footprints } from 'lucide-react';
 
 interface CalendarViewProps {
   logs: DailyLog[];
   goals: UserGoals;
   selectedDate: string;
   onSelectDate: (date: string) => void;
+  parsedWorkouts?: ParsedWorkoutDay[];
 }
 
-export default function CalendarView({ logs, goals, selectedDate, onSelectDate }: CalendarViewProps) {
+export default function CalendarView({ logs, goals, selectedDate, onSelectDate, parsedWorkouts = [] }: CalendarViewProps) {
   const today = new Date();
   const currentYear = today.getFullYear();
   const currentMonth = today.getMonth();
@@ -84,8 +85,22 @@ export default function CalendarView({ logs, goals, selectedDate, onSelectDate }
           const targetCarbs = goals.dailyCarbsTarget || 250;
           const targetFiber = goals.dailyFiberTarget || 30;
 
-          const hasWorkout = log?.workouts && log.workouts.length > 0;
-          const workoutCompleted = log?.workouts && log.workouts.some(w => w.completed);
+          const hasWorkout = Boolean(log?.workouts && log.workouts.some(w => w.category !== 'Rest' && !w.name?.toLowerCase().includes('rest') && w.category !== 'Cardio' && !w.id?.startsWith('jog-') && !w.name?.toLowerCase().includes('jog') && !w.name?.toLowerCase().includes('walk')));
+          const workoutCompleted = Boolean(log?.workouts && log.workouts.some(w => w.completed && w.category !== 'Rest' && !w.name?.toLowerCase().includes('rest') && w.category !== 'Cardio' && !w.id?.startsWith('jog-') && !w.name?.toLowerCase().includes('jog') && !w.name?.toLowerCase().includes('walk')));
+          const hasJog = Boolean((log?.jogs && log.jogs.length > 0) || (log?.workouts && log.workouts.some(w => w.category === 'Cardio' || w.id?.startsWith('jog-') || w.name?.toLowerCase().includes('jog') || w.name?.toLowerCase().includes('walk'))));
+
+          const DAYS_ORDER = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+          const dateObj = new Date(dateString + 'T12:00:00');
+          const dayOfWeekName = DAYS_ORDER[dateObj.getDay()];
+
+          const matchingPlanDay = parsedWorkouts.find((pw) => 
+            (pw.dayOfWeek && pw.dayOfWeek.toLowerCase() === dayOfWeekName.toLowerCase()) ||
+            (pw.day && pw.day.toLowerCase().includes(dayOfWeekName.toLowerCase()))
+          );
+
+          const isRestDay = log?.isRestDay || 
+            log?.oneTimeScheduleOverride?.isRestDay || 
+            Boolean(matchingPlanDay?.isRestDay || (matchingPlanDay?.focusArea && matchingPlanDay.focusArea.toLowerCase().includes('rest')));
 
           const proteinGoalMet = totalProtein >= goals.dailyProteinTarget;
           const carbsGoalMet = totalCarbs >= targetCarbs;
@@ -96,11 +111,13 @@ export default function CalendarView({ logs, goals, selectedDate, onSelectDate }
             <button
               key={day}
               onClick={() => onSelectDate(dateString)}
-              className={`aspect-square relative rounded-xl border flex flex-col items-center justify-between p-1.5 transition-all duration-200 cursor-pointer ${
+              className={`w-full aspect-square relative rounded-xl border flex flex-col items-center justify-between p-1.5 transition-all duration-200 cursor-pointer text-center ${
                 isSelected
                   ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm scale-105 z-10 font-bold'
                   : isToday
                   ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100/70 font-semibold'
+                  : isRestDay
+                  ? 'bg-amber-50/50 text-slate-700 border-amber-200/70 hover:bg-amber-100/60'
                   : 'bg-slate-50 text-slate-700 border-slate-200/80 hover:bg-slate-100 hover:border-slate-300'
               }`}
             >
@@ -165,8 +182,8 @@ export default function CalendarView({ logs, goals, selectedDate, onSelectDate }
                   ></span>
                 )}
 
-                {/* Workout Indicator */}
-                {hasWorkout && (
+                {/* Workout / Rest / Jog Indicator */}
+                {workoutCompleted || (hasWorkout && !isRestDay) ? (
                   <Dumbbell
                     className={`w-3 h-3 ${
                       isSelected
@@ -175,6 +192,24 @@ export default function CalendarView({ logs, goals, selectedDate, onSelectDate }
                         ? 'text-violet-600'
                         : 'text-slate-400'
                     }`}
+                    title="Hypertrophy Lifting Logged"
+                  />
+                ) : isRestDay ? (
+                  <Coffee
+                    className={`w-3 h-3 ${
+                      isSelected ? 'text-white' : 'text-amber-600'
+                    }`}
+                    title="Rest & Recovery Day (Automatically Logged)"
+                  />
+                ) : null}
+
+                {/* Jog / Cardio Indicator */}
+                {hasJog && (
+                  <Footprints
+                    className={`w-3 h-3 ${
+                      isSelected ? 'text-emerald-200' : 'text-emerald-600'
+                    }`}
+                    title="Jog / Cardio Session Logged"
                   />
                 )}
               </div>
@@ -184,26 +219,34 @@ export default function CalendarView({ logs, goals, selectedDate, onSelectDate }
       </div>
 
       {/* Calendar Legend */}
-      <div className="mt-6 pt-5 border-t border-slate-150 grid grid-cols-2 sm:grid-cols-5 gap-2.5 text-[11px]" id="calendar-legend">
+      <div className="mt-6 pt-5 border-t border-slate-150 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 text-[11px]" id="calendar-legend">
         <div className="flex items-center gap-1.5 text-slate-600 font-medium">
           <span className="w-2.5 h-2.5 rounded-full bg-indigo-500"></span>
-          <span>Protein Met (≥{goals.dailyProteinTarget}g)</span>
+          <span>Protein Met</span>
         </div>
         <div className="flex items-center gap-1.5 text-slate-600 font-medium">
           <span className="w-2.5 h-2.5 rounded-full bg-sky-500"></span>
-          <span>Carbs Met (≥{goals.dailyCarbsTarget || 250}g)</span>
+          <span>Carbs Met</span>
         </div>
         <div className="flex items-center gap-1.5 text-slate-600 font-medium">
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-          <span>Fiber Met (≥{goals.dailyFiberTarget || 30}g)</span>
+          <span>Fiber Met</span>
         </div>
         <div className="flex items-center gap-1.5 text-slate-600 font-medium">
           <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
-          <span>Calories Surplus</span>
+          <span>Calorie Target</span>
         </div>
-        <div className="flex items-center gap-1.5 text-slate-600 font-medium col-span-2 sm:col-span-1">
+        <div className="flex items-center gap-1.5 text-slate-600 font-medium">
           <Dumbbell className="w-3.5 h-3.5 text-violet-600" />
           <span>Hypertrophy Lift</span>
+        </div>
+        <div className="flex items-center gap-1.5 text-slate-600 font-medium">
+          <Footprints className="w-3.5 h-3.5 text-emerald-600" />
+          <span>Jog / Run</span>
+        </div>
+        <div className="flex items-center gap-1.5 text-slate-600 font-medium">
+          <Coffee className="w-3.5 h-3.5 text-amber-600" />
+          <span>Rest & Recovery</span>
         </div>
       </div>
     </div>

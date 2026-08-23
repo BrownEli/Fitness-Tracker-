@@ -98,18 +98,18 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
             </p>
 
             {/* Action Buttons */}
-            <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-slate-100 w-full">
               <button
                 type="button"
                 onClick={onCancel}
-                className="w-full sm:w-auto px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-extrabold rounded-xl transition-all cursor-pointer text-center"
+                className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-extrabold rounded-xl transition-all cursor-pointer flex items-center justify-center text-center"
               >
                 {cancelText}
               </button>
               <button
                 type="button"
                 onClick={onConfirm}
-                className={`w-full sm:w-auto px-5 py-2.5 text-xs font-black text-white rounded-xl transition-all shadow-md active:scale-95 cursor-pointer text-center ${
+                className={`w-full py-3 text-xs font-black text-white rounded-xl transition-all shadow-md active:scale-95 cursor-pointer flex items-center justify-center text-center ${
                   variant === 'danger'
                     ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-200'
                     : variant === 'warning'

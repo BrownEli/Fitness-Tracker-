@@ -294,7 +294,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
               <button
                 type="button"
                 onClick={() => setGender('male')}
-                className={`py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                className={`w-full py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center text-center ${
                   gender === 'male'
                     ? 'bg-indigo-600 text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -305,7 +305,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
               <button
                 type="button"
                 onClick={() => setGender('female')}
-                className={`py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                className={`w-full py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center text-center ${
                   gender === 'female'
                     ? 'bg-indigo-600 text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -353,7 +353,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
               <button
                 type="button"
                 onClick={() => setWeightUnit('lbs')}
-                className={`py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                className={`w-full py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center text-center ${
                   weightUnit === 'lbs'
                     ? 'bg-indigo-600 text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -364,7 +364,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
               <button
                 type="button"
                 onClick={() => setWeightUnit('kg')}
-                className={`py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                className={`w-full py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center text-center ${
                   weightUnit === 'kg'
                     ? 'bg-indigo-600 text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -458,7 +458,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
             <button
               type="button"
               onClick={() => setShowActivityModal(true)}
-              className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
+              className="w-full sm:w-auto px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center text-center gap-1.5 shrink-0"
               id="open-activity-modal-btn"
             >
               <Settings className="w-3.5 h-3.5" />
@@ -498,7 +498,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
         </div>
 
         {/* Safe Save BMR & Physical Settings Button on Card 1 */}
-        <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-100">
           <div className="text-xs font-medium text-slate-500">
             {card1Saved && (
               <span className="text-emerald-600 font-extrabold flex items-center gap-1.5 animate-fadeIn" id="card1-saved-alert">
@@ -534,7 +534,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
               setCard1Saved(true);
               setTimeout(() => setCard1Saved(false), 3000);
             }}
-            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-100 transition-all cursor-pointer flex items-center gap-2"
+            className="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-100 transition-all cursor-pointer flex items-center justify-center text-center gap-2"
             id="save-bmr-settings-btn"
           >
             <Check className="w-4 h-4" />
@@ -632,11 +632,11 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
             </div>
 
             {/* Modal Footer */}
-            <div className="flex items-center justify-end border-t border-slate-100 pt-3 shrink-0">
+            <div className="flex items-center justify-end border-t border-slate-100 pt-3 shrink-0 w-full">
               <button
                 type="button"
                 onClick={() => setShowActivityModal(false)}
-                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center text-center gap-1.5"
               >
                 <Check className="w-3.5 h-3.5" />
                 Done
@@ -662,7 +662,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
           <button
             type="button"
             onClick={applyBmrCalculations}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition-all cursor-pointer shrink-0"
+            className="w-full sm:w-auto flex items-center justify-center text-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition-all cursor-pointer shrink-0"
             id="recalculate-bmr-btn"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isAutoSyncing ? 'animate-spin' : ''}`} />
@@ -757,7 +757,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
           </div>
         </div>
 
-        <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-100">
           <div className="text-xs text-slate-500 font-medium">
             {saved && (
               <span className="text-emerald-600 font-extrabold flex items-center gap-1.5 animate-fadeIn" id="goals-saved-alert">
@@ -769,7 +769,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
 
           <button
             type="submit"
-            className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-100 hover:shadow-indigo-200 transition-all cursor-pointer flex items-center gap-2"
+            className="w-full sm:w-auto px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-100 hover:shadow-indigo-200 transition-all cursor-pointer flex items-center justify-center text-center gap-2"
             id="save-goals-btn"
           >
             <Check className="w-4 h-4" />
@@ -793,7 +793,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
             <button
               type="button"
               onClick={() => setShowHistoryList(!showHistoryList)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+              className={`w-full sm:w-auto flex items-center justify-center text-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
                 showHistoryList
                   ? 'bg-purple-50 text-purple-700 border-purple-200'
                   : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
@@ -831,10 +831,10 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
               />
             </div>
 
-            <div className="pt-2 sm:pt-4">
+            <div className="pt-2 sm:pt-4 w-full sm:w-auto">
               <button
                 type="submit"
-                className="w-full sm:w-auto px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                className="w-full sm:w-auto px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all cursor-pointer flex items-center justify-center text-center gap-1.5"
               >
                 <Plus className="w-3.5 h-3.5" />
                 Record Reading
