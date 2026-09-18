@@ -1800,7 +1800,7 @@ export default function WorkoutLogger({
                                       setSelectedDayIdx(idx);
                                     }
                                   }}
-                                  className={`group relative rounded-2xl border transition-all duration-150 px-3 sm:px-4 h-[64px] sm:h-[68px] flex items-center justify-between gap-2.5 sm:gap-3 cursor-pointer select-none w-full ${
+                                  className={`group relative rounded-2xl border transition-all duration-150 px-3 sm:px-4 py-2.5 flex items-center justify-between gap-2.5 sm:gap-3 cursor-pointer select-none w-full min-h-[60px] ${
                                     isDragging
                                       ? 'opacity-40 scale-[0.99] border-dashed border-indigo-400 bg-indigo-50/70 shadow-inner'
                                       : isDragOver
@@ -1814,7 +1814,7 @@ export default function WorkoutLogger({
                                 >
                                   {/* Left: Drag Handle */}
                                   <div
-                                    className="p-1.5 -ml-1 text-slate-400 group-hover:text-slate-700 hover:bg-slate-200/70 rounded-xl cursor-grab active:cursor-grabbing transition-colors shrink-0"
+                                    className="p-1 -ml-0.5 text-slate-400 group-hover:text-slate-700 hover:bg-slate-200/70 rounded-xl cursor-grab active:cursor-grabbing transition-colors shrink-0 self-center"
                                     title="Drag to reorder this day"
                                     aria-label="Drag to reorder day"
                                     onClick={(e) => e.stopPropagation()}
@@ -1822,51 +1822,61 @@ export default function WorkoutLogger({
                                     <GripVertical className="w-5 h-5" />
                                   </div>
 
-                                  {/* Day of Week Badge & Today Tag */}
-                                  <div className="flex items-center gap-1.5 shrink-0">
-                                    <span
-                                      className={`px-3 py-1.5 rounded-xl font-black text-sm shrink-0 min-w-[85px] text-center ${
-                                        isRest
-                                          ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                                          : isSelected
-                                          ? 'bg-indigo-600 text-white border border-indigo-700'
-                                          : 'bg-white text-slate-800 border border-slate-200'
-                                      }`}
-                                    >
-                                      {d.dayOfWeek || (d.day || `Day ${idx + 1}`)}
-                                    </span>
+                                  {/* Main content: 2 rows for full data visibility without increasing height */}
+                                  <div className="flex-1 min-w-0 flex flex-col justify-center gap-0.5 py-0.5">
+                                    {/* Top Row: Day Pill, Today Tag, Shifted Tag & Status Badge */}
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span
+                                          className={`px-2.5 py-0.5 rounded-lg font-black text-sm shrink-0 ${
+                                            isRest
+                                              ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                              : isSelected
+                                              ? 'bg-indigo-600 text-white border border-indigo-700'
+                                              : 'bg-white text-slate-800 border border-slate-200'
+                                          }`}
+                                        >
+                                          {d.dayOfWeek || (d.day || `Day ${idx + 1}`)}
+                                        </span>
 
-                                    {isTodayMatch && (
-                                      <span className="px-2 py-0.5 text-sm font-black uppercase rounded-lg bg-emerald-600 text-white shadow-2xs shrink-0">
-                                        Today
-                                      </span>
-                                    )}
-                                  </div>
+                                        {isTodayMatch && (
+                                          <span className="px-2 py-0.5 text-sm font-black uppercase rounded-lg bg-emerald-600 text-white shadow-2xs shrink-0">
+                                            Today
+                                          </span>
+                                        )}
 
-                                  {/* Routine Title (Main Focus) */}
-                                  <div className="flex-1 min-w-0 px-1">
-                                    <span className="font-extrabold text-sm sm:text-base text-slate-900 truncate block">
-                                      {isRest ? 'Rest & Recovery' : (d.focusArea || 'Workout')}
-                                    </span>
-                                  </div>
+                                        {Boolean(logs?.find((l: any) => l.date === getWeekDateForDisplayIndex(idx))?.oneTimeScheduleOverride) && (
+                                          <span className="text-sm font-bold uppercase px-2 py-0.5 rounded-lg bg-violet-600 text-white shadow-2xs shrink-0">
+                                            Shifted
+                                          </span>
+                                        )}
+                                      </div>
 
-                                  {/* Right Status Badge */}
-                                  <div className="flex items-center gap-2 shrink-0">
-                                    {isRest ? (
-                                      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-100 text-amber-900 font-bold text-sm border border-amber-300 shrink-0">
-                                        <Coffee className="w-4 h-4 text-amber-700" /> Rest
-                                      </span>
-                                    ) : isSelected ? (
-                                      <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-indigo-100 text-indigo-800 font-black text-sm border border-indigo-200 shrink-0">
-                                        <Check className="w-4 h-4 text-indigo-600" /> Active
-                                      </span>
-                                    ) : null}
+                                      {/* Right Status Badge */}
+                                      <div className="flex items-center gap-1 shrink-0">
+                                        {isRest ? (
+                                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-amber-100 text-amber-900 font-bold text-sm border border-amber-300 shrink-0">
+                                            <Coffee className="w-3.5 h-3.5 text-amber-700" /> Rest
+                                          </span>
+                                        ) : isSelected ? (
+                                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-indigo-100 text-indigo-800 font-black text-sm border border-indigo-200 shrink-0">
+                                            <Check className="w-3.5 h-3.5 text-indigo-600" /> Active
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                    </div>
 
-                                    {Boolean(logs?.find((l: any) => l.date === getWeekDateForDisplayIndex(idx))?.oneTimeScheduleOverride) && (
-                                      <span className="text-sm font-bold uppercase px-2.5 py-1 rounded-lg bg-violet-600 text-white shrink-0 shadow-2xs">
-                                        Shifted
+                                    {/* Bottom Row: Full Routine Focus & Exercise Count */}
+                                    <div className="flex items-center gap-2 pt-0.5 flex-wrap">
+                                      <span className={`text-sm font-black tracking-tight ${isRest ? 'text-amber-800/90 italic' : 'text-slate-800'}`}>
+                                        {isRest ? 'Rest & Recovery' : (d.focusArea || 'Workout')}
                                       </span>
-                                    )}
+                                      {d.exercises && d.exercises.length > 0 && (
+                                        <span className="text-sm font-semibold text-slate-400">
+                                          • {d.exercises.length} {d.exercises.length === 1 ? 'exercise' : 'exercises'}
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
                                 </div>
                               );

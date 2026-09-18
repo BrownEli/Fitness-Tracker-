@@ -993,6 +993,52 @@ export default function App() {
     }
   };
 
+  // Remove single item from a logged meal's plate breakdown and recalculate totals
+  const handleRemoveItemFromMealBreakdown = (mealId: string, itemIndex: number) => {
+    updateDailyLog(selectedDate, (log) => {
+      const targetMeal = log.meals.find((m) => m.id === mealId);
+      if (!targetMeal || !targetMeal.items || targetMeal.items.length === 0) {
+        return log;
+      }
+
+      const updatedItems = targetMeal.items.filter((_, idx) => idx !== itemIndex);
+
+      // If all items are removed, delete the meal
+      if (updatedItems.length === 0) {
+        return {
+          ...log,
+          meals: log.meals.filter((m) => m.id !== mealId)
+        };
+      }
+
+      // Recalculate macro and calorie totals based on remaining items
+      const newProtein = Math.round(updatedItems.reduce((acc, it) => acc + (Number(it.protein) || 0), 0));
+      const newCarbs = Math.round(updatedItems.reduce((acc, it) => acc + (Number(it.carbs) || 0), 0));
+      const newFat = Math.round(updatedItems.reduce((acc, it) => acc + (Number(it.fat) || 0), 0));
+      const newFiber = Math.round(updatedItems.reduce((acc, it) => acc + (Number(it.fiber) || 0), 0));
+      const newCalories = Math.round(updatedItems.reduce((acc, it) => acc + (Number(it.calories) || 0), 0));
+
+      const updatedMeal: Meal = {
+        ...targetMeal,
+        name: updatedItems.length === 1 && targetMeal.name.includes('+')
+          ? updatedItems[0].name
+          : targetMeal.name,
+        portion: updatedItems.length === 1 ? (updatedItems[0].portion || targetMeal.portion) : targetMeal.portion,
+        protein: newProtein,
+        carbs: newCarbs,
+        fat: newFat,
+        fiber: newFiber,
+        calories: newCalories,
+        items: updatedItems
+      };
+
+      return {
+        ...log,
+        meals: log.meals.map((m) => (m.id === mealId ? updatedMeal : m))
+      };
+    });
+  };
+
   // Star / Favorite food handler (persisted in user goals and synchronized across logs)
   const handleToggleFavoriteFood = (foodName: string) => {
     const trimmed = (foodName || '').trim();
@@ -2009,7 +2055,7 @@ export default function App() {
                             </div>
 
                             {/* Expandable Plate Breakdown If Available */}
-                            {meal.items && meal.items.length > 1 && (
+                            {meal.items && meal.items.length > 0 && (
                               <div className="mt-3 pt-2.5 border-t border-slate-200">
                                 <button
                                   type="button"
@@ -2018,7 +2064,7 @@ export default function App() {
                                 >
                                   <Layers className="w-4 h-4 text-emerald-600" />
                                   <span>Plate Breakdown</span>
-                                  <span className="text-sm text-emerald-600 font-bold">• {meal.items.length} items</span>
+                                  <span className="text-sm text-emerald-600 font-bold">• {meal.items.length} {meal.items.length === 1 ? 'item' : 'items'}</span>
                                   {expandedMealBreakdowns[meal.id] ? (
                                     <ChevronUp className="w-4 h-4 text-emerald-600 ml-0.5" />
                                   ) : (
@@ -2034,11 +2080,23 @@ export default function App() {
                                           key={itIdx}
                                           className="p-2.5 bg-white rounded-xl border border-emerald-100/90 shadow-2xs space-y-1.5"
                                         >
-                                          <div className="flex items-center justify-between text-sm">
-                                            <span className="font-bold text-slate-800">{it.name}</span>
-                                            {it.portion && (
-                                              <span className="text-slate-500 font-medium">{it.portion}</span>
-                                            )}
+                                          <div className="flex items-center justify-between gap-2 text-sm">
+                                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                                              <span className="font-bold text-slate-800 truncate">{it.name}</span>
+                                              {it.portion && (
+                                                <span className="text-slate-500 font-medium shrink-0">• {it.portion}</span>
+                                              )}
+                                            </div>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleRemoveItemFromMealBreakdown(meal.id, itIdx)}
+                                              className="px-2 py-1 text-rose-600 hover:text-rose-700 hover:bg-rose-50 border border-rose-200/80 rounded-lg transition-colors cursor-pointer shrink-0 flex items-center gap-1 text-sm font-semibold"
+                                              title="Remove item from plate breakdown"
+                                              aria-label={`Remove ${it.name} from plate`}
+                                            >
+                                              <Trash2 className="w-3.5 h-3.5" />
+                                              <span>Remove</span>
+                                            </button>
                                           </div>
                                           <div className="flex flex-wrap items-center gap-1.5 text-sm font-bold">
                                             <span className="px-2 py-0.5 rounded-md bg-sky-50 text-sky-800 border border-sky-200">

@@ -1338,8 +1338,8 @@ export default function MealLogger({
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-base font-black text-slate-900">Favorite Foods</span>
-                  <span className="text-sm font-bold text-amber-800 bg-amber-100 px-2.5 py-0.5 rounded-full font-mono">
+                  <span className="text-base font-black text-slate-900 whitespace-nowrap">Favorite Foods</span>
+                  <span className="text-sm font-bold text-amber-800 bg-amber-100 px-2.5 py-0.5 rounded-full font-mono whitespace-nowrap">
                     Top 5 • Most Eaten
                   </span>
                 </div>
@@ -1453,36 +1453,41 @@ export default function MealLogger({
               <div className="p-2.5 bg-amber-100/70 text-amber-600 rounded-xl shrink-0">
                 <Flame className="w-5 h-5 fill-amber-500 text-amber-500" />
               </div>
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0 flex-1 space-y-1.5">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-base font-black text-slate-900">Suggested Meals</span>
+                  <span className="text-base font-black text-slate-900 whitespace-nowrap">Suggested Meals</span>
                   {frequentMeals90Days.length > 0 && (
-                    <span className="text-sm font-bold text-amber-800 bg-amber-100 px-2.5 py-0.5 rounded-full font-mono">
+                    <span className="text-sm font-bold text-amber-800 bg-amber-100 px-2.5 py-0.5 rounded-full font-mono whitespace-nowrap inline-block">
                       Most Eaten • 90 Days
                     </span>
                   )}
                 </div>
-                <p className="text-sm text-slate-500 font-medium mt-0.5 truncate">
+
+                {/* View All Frequent button placed directly under the title */}
+                <div className="pt-0.5">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setFrequentMealSearch('');
+                      setIsAllFrequentModalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 text-sm font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-xl transition-all cursor-pointer shadow-2xs active:scale-95 shrink-0"
+                    id="view-all-frequent-btn"
+                  >
+                    <span>View All Frequent</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <p className="text-sm text-slate-500 font-medium truncate pt-0.5">
                   Quick 1-click logging based on your most frequently eaten foods
                 </p>
               </div>
             </div>
 
             <div className="flex items-center gap-2 shrink-0 ml-3">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setFrequentMealSearch('');
-                  setIsAllFrequentModalOpen(true);
-                }}
-                className="text-sm font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1 shrink-0"
-                id="view-all-frequent-btn"
-              >
-                <span>View All Frequent</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-              <span className="text-sm font-bold text-slate-400 hidden sm:inline ml-1">
+              <span className="text-sm font-bold text-slate-400 hidden sm:inline">
                 {isSuggestedDropdownOpen ? 'Collapse' : 'Expand'}
               </span>
               <div className="p-1.5 rounded-lg text-slate-500 bg-white border border-slate-200/80 shadow-2xs hover:bg-slate-100 transition-colors">
@@ -2183,7 +2188,7 @@ export default function MealLogger({
                                   className="px-2 py-0.5 bg-white border border-slate-200 focus:border-indigo-500 rounded-md text-sm font-mono font-bold text-slate-700 w-32 focus:outline-none"
                                 />
                               </div>
-                              {detectedItems.length > 2 && (
+                              {detectedItems.length > 1 && (
                                 <button
                                   type="button"
                                   onClick={() => handleRemoveDetectedItem(idx)}
