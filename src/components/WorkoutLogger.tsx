@@ -3,6 +3,8 @@ import { Workout, SetLog, ParsedWorkoutDay, ParsedWorkoutExercise, JogSession, U
 import FormVisualizer, { EXERCISES_DATABASE, matchExerciseKey } from './FormVisualizer';
 import { ConfirmModal } from './ConfirmModal';
 import JogTracker, { formatDuration } from './JogTracker';
+import { formatDateDDMMYYYY } from '../dateUtils';
+import { normalizeWorkoutCategory } from '../workoutCategories';
 import {
   PlayCircle,
   CheckCircle2,
@@ -37,7 +39,10 @@ import {
   Copy,
   MoreVertical,
   Footprints,
-  Navigation
+  Navigation,
+  Pencil,
+  GripVertical,
+  Minus
 } from 'lucide-react';
 
 interface WorkoutLoggerProps {
@@ -265,6 +270,9 @@ export default function WorkoutLogger({
   // Active view tab when workout is not active: 'session' | 'jog' | 'manage'
   const [activeTabMode, setActiveTabMode] = useState<'session' | 'jog' | 'manage'>('session');
 
+  // Collapsible dropdown state for routine days list in session view
+  const [isRoutineScheduleOpen, setIsRoutineScheduleOpen] = useState(false);
+
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
   const [shiftSuccessMsg, setShiftSuccessMsg] = useState<string | null>(null);
 
@@ -365,6 +373,17 @@ export default function WorkoutLogger({
   const [duplicateModalEx, setDuplicateModalEx] = useState<{ exercise: ParsedWorkoutExercise; sourceDayIdx: number } | null>(null);
   const [duplicateToastMsg, setDuplicateToastMsg] = useState<string | null>(null);
   const longPressTimerRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  // Exercise Drag and Drop Reordering State
+  const [draggedDayIdx, setDraggedDayIdx] = useState<number | null>(null);
+  const [draggedExIdx, setDraggedExIdx] = useState<number | null>(null);
+  const [dragOverDayIdx, setDragOverDayIdx] = useState<number | null>(null);
+  const [dragOverExIdx, setDragOverExIdx] = useState<number | null>(null);
+
+  // Routine Day Drag and Drop Reordering State
+  const [draggedDaySlotIdx, setDraggedDaySlotIdx] = useState<number | null>(null);
+  const [dragOverDaySlotIdx, setDragOverDaySlotIdx] = useState<number | null>(null);
+  const [reorderSuccessMsg, setReorderSuccessMsg] = useState<string | null>(null);
 
   const handleLongPressStart = (exercise: ParsedWorkoutExercise, sourceDayIdx: number) => {
     if (longPressTimerRef.current) {
@@ -492,17 +511,16 @@ export default function WorkoutLogger({
       });
 
       const DAYS_ORDER = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-      const sorted = [...mapped].sort((a, b) => {
-        const idxA = mapped.indexOf(a);
-        const idxB = mapped.indexOf(b);
-        return getDayWeekdayOrder(a, idxA) - getDayWeekdayOrder(b, idxB);
-      });
+      const resultDays = mapped.map((d, idx) => ({
+        ...d,
+        dayOfWeek: d.dayOfWeek || DAYS_ORDER[idx % 7]
+      }));
 
       // Ensure constant size of 7 days
-      while (sorted.length < 7) {
-        const nextIdx = sorted.length;
+      while (resultDays.length < 7) {
+        const nextIdx = resultDays.length;
         const assignedDow = DAYS_ORDER[nextIdx] || undefined;
-        sorted.push({
+        resultDays.push({
           day: `Day ${nextIdx + 1}`,
           focusArea: 'Rest & Recovery',
           isRestDay: true,
@@ -511,7 +529,7 @@ export default function WorkoutLogger({
         });
       }
 
-      return sorted.slice(0, 7);
+      return resultDays.slice(0, 7);
     }
 
     // Default 7 days if empty
@@ -728,7 +746,7 @@ export default function WorkoutLogger({
     }));
 
     setIsShiftModalOpen(false);
-    setShiftSuccessMsg(`Set today (${selectedDateStr}) as a one-time Rest Day.`);
+    setShiftSuccessMsg(`Set today (${formatDateDDMMYYYY(selectedDateStr)}) as a one-time Rest Day.`);
     setTimeout(() => setShiftSuccessMsg(null), 5000);
   };
 
@@ -770,9 +788,10 @@ export default function WorkoutLogger({
     if (onUpdateDailyLog) {
       onUpdateDailyLog(selectedDateStr, (log: any) => {
         const existingJogs = log?.jogs || [];
+        const activityLabel = session.activityType === 'fast_walk' ? 'Fast Walk' : 'Outdoor Jog';
         const cardioWorkout: Workout = {
           id: `jog-${session.id}`,
-          name: `Outdoor Jog (${session.distanceKm.toFixed(2)} km)`,
+          name: `${activityLabel} - ${session.distanceKm.toFixed(2)} km`,
           category: 'Cardio',
           sets: [
             {
@@ -795,6 +814,37 @@ export default function WorkoutLogger({
     setActiveTabMode('session');
     setCompletedSuccessMsg(true);
     setTimeout(() => setCompletedSuccessMsg(false), 4000);
+  };
+
+  const handleUpdateJogSession = (session: JogSession) => {
+    if (onUpdateDailyLog) {
+      onUpdateDailyLog(selectedDateStr, (log: any) => {
+        const activityLabel = session.activityType === 'fast_walk' ? 'Fast Walk' : 'Outdoor Jog';
+        const updatedJogs = (log?.jogs || []).map((j: any) => (j.id === session.id ? session : j));
+        const updatedWorkouts = (log?.workouts || []).map((w: any) => {
+          if (w.id === `jog-${session.id}`) {
+            return {
+              ...w,
+              name: `${activityLabel} - ${session.distanceKm.toFixed(2)} km`,
+              sets: [
+                {
+                  id: w.sets?.[0]?.id || `set-jog-${Date.now()}`,
+                  reps: Math.max(1, Math.round(session.durationSeconds / 60)),
+                  weight: session.caloriesBurned,
+                  completed: true,
+                }
+              ]
+            };
+          }
+          return w;
+        });
+        return {
+          ...log,
+          jogs: updatedJogs,
+          workouts: updatedWorkouts
+        };
+      });
+    }
   };
 
   const handleDeleteJogSession = (jogId: string) => {
@@ -1010,6 +1060,61 @@ export default function WorkoutLogger({
     }
   };
 
+  const handleDeleteSetFromExercise = (exName: string, setIdxToDelete: number, rawEx: any) => {
+    const setKeysForEx = Object.keys(workoutProgress)
+      .filter(k => k.startsWith(`${exName}-`))
+      .map(k => parseInt(k.replace(`${exName}-`, ''), 10))
+      .filter(n => !isNaN(n));
+    const maxSetIdx = setKeysForEx.length > 0 ? Math.max(...setKeysForEx) : (rawEx?.sets ? rawEx.sets - 1 : 2);
+    const currentTotalSets = Math.max(rawEx?.sets || 1, maxSetIdx + 1);
+    if (currentTotalSets <= 1) return; // Keep at least 1 working set
+
+    const newTotalSets = currentTotalSets - 1;
+
+    setWorkoutProgress(prev => {
+      const next = { ...prev };
+      // Delete old indexed keys for this exercise
+      for (let i = 0; i <= maxSetIdx; i++) {
+        delete next[`${exName}-${i}`];
+      }
+      // Re-index remaining sets sequentially
+      let newIdx = 0;
+      for (let i = 0; i < currentTotalSets; i++) {
+        if (i === setIdxToDelete) continue;
+        const oldKey = `${exName}-${i}`;
+        if (prev[oldKey]) {
+          next[`${exName}-${newIdx}`] = prev[oldKey];
+        } else {
+          next[`${exName}-${newIdx}`] = {
+            reps: rawEx?.reps || 10,
+            weight: rawEx?.weight !== undefined ? rawEx.weight : 30,
+            completed: false
+          };
+        }
+        newIdx++;
+      }
+      return next;
+    });
+
+    // Update routine day in displayDays as well
+    const currentDays = getDisplayDays();
+    if (currentDays[currentDayIndex]) {
+      const updated = [...currentDays];
+      const dayObj = { ...updated[currentDayIndex] };
+      const exercises = [...(dayObj.exercises || [])];
+      const targetExIdx = exercises.findIndex(e => e.name === exName);
+      if (targetExIdx >= 0) {
+        exercises[targetExIdx] = {
+          ...exercises[targetExIdx],
+          sets: Math.max(1, newTotalSets)
+        };
+        dayObj.exercises = exercises;
+        updated[currentDayIndex] = dayObj;
+        saveDisplayDays(updated);
+      }
+    }
+  };
+
   const MUSCLE_GROUP_OPTIONS = ['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio'];
 
   const inferMuscleGroups = (name?: string, dayFocus?: string, categoryStr?: string): string[] => {
@@ -1040,9 +1145,8 @@ export default function WorkoutLogger({
       if (nm.includes('pull') || nm.includes('row')) results.add('Arms');
     }
 
-    if (nm.includes('squat') || nm.includes('lunge') || nm.includes('leg') || nm.includes('quad') || nm.includes('hamstring') || nm.includes('calf')) {
+    if (nm.includes('squat') || nm.includes('lunge') || (nm.includes('leg') && !nm.includes('leg raise')) || nm.includes('quad') || nm.includes('hamstring') || nm.includes('calf')) {
       results.add('Legs');
-      if (nm.includes('squat')) results.add('Core');
     }
 
     if (nm.includes('shoulder') || nm.includes('delt') || nm.includes('overhead') || nm.includes('lateral raise') || nm.includes('front raise')) {
@@ -1102,7 +1206,8 @@ export default function WorkoutLogger({
         });
       }
 
-      const exCategory = rawEx?.category || inferMuscleGroups(rawEx?.name || exName, currentPlan.focus).join(', ');
+      const rawCategory = rawEx?.category || inferMuscleGroups(rawEx?.name || exName, currentPlan.focus).join(', ');
+      const exCategory = normalizeWorkoutCategory(rawCategory, rawEx?.name || exName);
 
       workoutsToSave.push({
         name: exName,
@@ -1296,15 +1401,137 @@ export default function WorkoutLogger({
     );
   };
 
-  const handleMoveDay = (dayIdx: number, direction: 'up' | 'down') => {
+  const handleReorderDays = (fromIdx: number, toIdx: number) => {
+    if (fromIdx === toIdx) return;
     const currentDays = getDisplayDays();
-    const targetIdx = direction === 'up' ? dayIdx - 1 : dayIdx + 1;
-    if (targetIdx < 0 || targetIdx >= currentDays.length) return;
-    const updated = [...currentDays];
-    const temp = updated[dayIdx];
-    updated[dayIdx] = updated[targetIdx];
-    updated[targetIdx] = temp;
+    if (fromIdx < 0 || fromIdx >= currentDays.length || toIdx < 0 || toIdx >= currentDays.length) return;
+
+    const reordered = [...currentDays];
+    const [movedDay] = reordered.splice(fromIdx, 1);
+    reordered.splice(toIdx, 0, movedDay);
+
+    const DAYS_ORDER = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+    // Update weekday assignment to match the new slot order in the weekly routine
+    // so that today's date and the calendar seamlessly reflect the new day for each routine!
+    const updated = reordered.map((d, idx) => ({
+      ...d,
+      dayOfWeek: DAYS_ORDER[idx % 7],
+      day: d.day && /^Day \d+$/i.test(d.day.trim()) ? `Day ${idx + 1}` : d.day
+    }));
+
     saveDisplayDays(updated);
+
+    // Keep active selection aligned with the user's focus
+    if (selectedDayIdx === fromIdx) {
+      setSelectedDayIdx(toIdx);
+    } else if (selectedDayIdx !== null) {
+      if (fromIdx < selectedDayIdx && toIdx >= selectedDayIdx) {
+        setSelectedDayIdx(selectedDayIdx - 1);
+      } else if (fromIdx > selectedDayIdx && toIdx <= selectedDayIdx) {
+        setSelectedDayIdx(selectedDayIdx + 1);
+      }
+    }
+
+    setReorderSuccessMsg(`Schedule updated: ${movedDay.focusArea || movedDay.day || 'Day'} moved to ${DAYS_ORDER[toIdx % 7]}.`);
+    setTimeout(() => setReorderSuccessMsg(null), 3500);
+  };
+
+  const handleMoveDay = (dayIdx: number, direction: 'up' | 'down') => {
+    const targetIdx = direction === 'up' ? dayIdx - 1 : dayIdx + 1;
+    const currentDays = getDisplayDays();
+    if (targetIdx < 0 || targetIdx >= currentDays.length) return;
+    handleReorderDays(dayIdx, targetIdx);
+  };
+
+  const handleDayDragStart = (e: React.DragEvent, idx: number) => {
+    setDraggedDaySlotIdx(idx);
+    e.dataTransfer.effectAllowed = 'move';
+    try {
+      e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'day', daySlotIdx: idx }));
+    } catch {
+      // fallback
+    }
+  };
+
+  const handleDayDragOver = (e: React.DragEvent, idx: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverDaySlotIdx !== idx) {
+      setDragOverDaySlotIdx(idx);
+    }
+  };
+
+  const handleDayDragEnd = () => {
+    setDraggedDaySlotIdx(null);
+    setDragOverDaySlotIdx(null);
+  };
+
+  const handleDayDrop = (e: React.DragEvent, targetIdx: number) => {
+    e.preventDefault();
+    if (draggedDaySlotIdx !== null && draggedDaySlotIdx !== targetIdx) {
+      handleReorderDays(draggedDaySlotIdx, targetIdx);
+    }
+    handleDayDragEnd();
+  };
+
+  const handleReorderExercise = (dayIdx: number, fromIdx: number, toIdx: number) => {
+    if (fromIdx === toIdx) return;
+    const currentDays = getDisplayDays();
+    if (!currentDays[dayIdx]) return;
+    const updated = [...currentDays];
+    const dayObj = { ...updated[dayIdx] };
+    const exercises = [...(dayObj.exercises || [])];
+    if (fromIdx < 0 || fromIdx >= exercises.length || toIdx < 0 || toIdx >= exercises.length) return;
+    const [movedEx] = exercises.splice(fromIdx, 1);
+    exercises.splice(toIdx, 0, movedEx);
+    dayObj.exercises = exercises;
+    updated[dayIdx] = dayObj;
+    saveDisplayDays(updated);
+  };
+
+  const handleMoveExercise = (dayIdx: number, exIdx: number, direction: 'up' | 'down') => {
+    const currentDays = getDisplayDays();
+    const dayObj = currentDays[dayIdx];
+    if (!dayObj || !dayObj.exercises) return;
+    const targetIdx = direction === 'up' ? exIdx - 1 : exIdx + 1;
+    if (targetIdx < 0 || targetIdx >= dayObj.exercises.length) return;
+    handleReorderExercise(dayIdx, exIdx, targetIdx);
+  };
+
+  const handleDragStart = (e: React.DragEvent, dayIdx: number, exIdx: number) => {
+    setDraggedDayIdx(dayIdx);
+    setDraggedExIdx(exIdx);
+    e.dataTransfer.effectAllowed = 'move';
+    try {
+      e.dataTransfer.setData('text/plain', JSON.stringify({ dayIdx, exIdx }));
+    } catch {
+      // safe fallback
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent, dayIdx: number, exIdx: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverDayIdx !== dayIdx || dragOverExIdx !== exIdx) {
+      setDragOverDayIdx(dayIdx);
+      setDragOverExIdx(exIdx);
+    }
+  };
+
+  const handleDragEnd = () => {
+    setDraggedDayIdx(null);
+    setDraggedExIdx(null);
+    setDragOverDayIdx(null);
+    setDragOverExIdx(null);
+  };
+
+  const handleDrop = (e: React.DragEvent, targetDayIdx: number, targetExIdx: number) => {
+    e.preventDefault();
+    if (draggedDayIdx !== null && draggedExIdx !== null && draggedDayIdx === targetDayIdx) {
+      handleReorderExercise(targetDayIdx, draggedExIdx, targetExIdx);
+    }
+    handleDragEnd();
   };
 
   const handleSortDaysSundayToSaturday = () => {
@@ -1405,7 +1632,7 @@ export default function WorkoutLogger({
             <div className="grid grid-cols-3 border-b border-slate-200 gap-2 pb-0.5 pt-2 w-full">
               {[
                 { id: 'session', label: "Today's Session", icon: Dumbbell },
-                { id: 'jog', label: 'Outdoor Jog', icon: Footprints },
+                { id: 'jog', label: 'Walk & Jog', icon: Footprints },
                 { id: 'manage', label: 'Add & Edit', icon: Settings2 }
               ].map((tab) => (
                 <button
@@ -1420,7 +1647,7 @@ export default function WorkoutLogger({
                 >
                   <tab.icon className="w-4 h-4 shrink-0" />
                   <span className="hidden sm:inline">{tab.label}</span>
-                  <span className="sm:hidden">{tab.id === 'session' ? 'Session' : tab.id === 'jog' ? 'Jog' : 'Edit'}</span>
+                  <span className="sm:hidden">{tab.id === 'session' ? 'Session' : tab.id === 'jog' ? 'Walk/Jog' : 'Edit'}</span>
                 </button>
               ))}
             </div>
@@ -1460,94 +1687,193 @@ export default function WorkoutLogger({
               ) : currentPlan ? (
                 <>
                   {/* 7-Day Weekly Schedule & Day Navigation Bar */}
-                  <div className="bg-slate-50/80 border border-slate-200/90 rounded-2xl p-4 shadow-xs space-y-3">
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-                      <div className="flex items-center gap-2">
-                        <Calendar className="w-4 h-4 text-indigo-600 shrink-0" />
-                        <span className="text-xs font-black text-slate-800 uppercase tracking-wider">
-                          Weekly Schedule & Routine Navigation
-                        </span>
+                  <div className="space-y-4 w-full" id="weekly-schedule-section">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-200/80 pb-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-2 bg-indigo-100 text-indigo-700 rounded-xl">
+                          <Calendar className="w-5 h-5 shrink-0" />
+                        </div>
+                        <div>
+                          <span className="text-sm font-black text-slate-900 uppercase tracking-wider block">
+                            Weekly Schedule & Routine Order
+                          </span>
+                          <span className="text-sm text-slate-500 font-medium">
+                            Drag items to reorder your workout schedule
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 text-[11px] font-bold text-slate-500">
-                        <span>Today is <strong className="text-indigo-600">{todayDayOfWeek}</strong></span>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-bold text-slate-600 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
+                          Today is <strong className="text-indigo-600 font-black">{todayDayOfWeek}</strong>
+                        </span>
                         {selectedDayIdx !== null && (
                           <button
                             type="button"
                             onClick={() => setSelectedDayIdx(null)}
                             aria-label="Reset to Today's Scheduled Day"
-                            className="text-[11px] text-indigo-600 font-extrabold hover:underline flex items-center gap-1 cursor-pointer bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-150"
+                            className="text-sm text-indigo-600 font-black hover:bg-indigo-100/70 flex items-center gap-1.5 cursor-pointer bg-indigo-50 px-3 py-1.5 rounded-xl border border-indigo-200 transition-colors"
                           >
-                            <RotateCcw className="w-3 h-3" /> Reset to Today
+                            <RotateCcw className="w-4 h-4" /> Reset to Today
                           </button>
                         )}
+                        <button
+                          type="button"
+                          onClick={handleSortDaysSundayToSaturday}
+                          title="Reset days to standard calendar order"
+                          className="text-sm text-slate-700 font-bold hover:bg-slate-200/80 flex items-center gap-1.5 cursor-pointer bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 transition-colors"
+                        >
+                          <RotateCcw className="w-4 h-4 text-slate-500" /> Default Order
+                        </button>
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
-                      {displayDays.map((d, idx) => {
-                        const isSelected = idx === currentDayIndex;
-                        const isRest = Boolean(d.isRestDay || d.focusArea?.toLowerCase().includes('rest'));
-                        const isTodayMatch = Boolean(
-                          (d.dayOfWeek && d.dayOfWeek.toLowerCase() === todayDayOfWeek.toLowerCase()) ||
-                          (d.day && d.day.toLowerCase().includes(todayDayOfWeek.toLowerCase()))
-                        );
+                    {reorderSuccessMsg && (
+                      <div className="text-sm bg-emerald-50 text-emerald-800 px-4 py-2.5 rounded-xl border border-emerald-200 font-bold flex items-center gap-2.5 shadow-2xs">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>{reorderSuccessMsg}</span>
+                      </div>
+                    )}
 
-                        return (
-                          <button
-                            key={`day-nav-${idx}`}
-                            type="button"
-                            onClick={() => setSelectedDayIdx(idx)}
-                            className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between min-h-[68px] relative ${
-                              isSelected
-                                ? 'bg-indigo-600 border-indigo-600 text-white shadow-md ring-2 ring-indigo-200'
-                                : isRest
-                                  ? 'bg-amber-50/80 hover:bg-amber-100/80 border-amber-200 text-amber-900'
-                                  : 'bg-white hover:bg-slate-100 border-slate-200 text-slate-800'
-                            }`}
-                          >
-                            {isTodayMatch && (
-                              <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md absolute top-1.5 right-1.5 ${
-                                isSelected ? 'bg-white text-indigo-700' : 'bg-indigo-600 text-white'
-                              }`}>
-                                Today
-                              </span>
-                            )}
-
-                            <div>
-                              <span className={`text-[10px] font-black uppercase tracking-wider block ${
-                                isSelected ? 'text-indigo-100' : isRest ? 'text-amber-700' : 'text-slate-400'
-                              }`}>
-                                {d.dayOfWeek ? d.dayOfWeek.substring(0, 3) : (d.day || `Day ${idx + 1}`)}
-                              </span>
-                              <span className={`text-xs font-black line-clamp-1 mt-0.5 ${
-                                isSelected ? 'text-white' : 'text-slate-800'
-                              }`}>
-                                {isRest ? 'Rest' : d.focusArea}
+                    {/* Collapsible Dropdown: ONLY the tiles are in the dropdown */}
+                    <div className="bg-white border border-slate-200/90 rounded-2xl shadow-2xs overflow-hidden w-full transition-all" id="routine-tiles-dropdown-card">
+                      <button
+                        type="button"
+                        onClick={() => setIsRoutineScheduleOpen((prev) => !prev)}
+                        className="w-full p-3.5 sm:p-4 flex items-center justify-between text-left hover:bg-slate-50/70 transition-colors cursor-pointer"
+                        id="routine-tiles-dropdown-toggle"
+                        aria-expanded={isRoutineScheduleOpen}
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl shrink-0">
+                            <Calendar className="w-5 h-5 text-indigo-600" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-black text-slate-900">Weekly Routine Days</span>
+                              <span className="text-xs font-bold text-indigo-600 bg-indigo-50/90 border border-indigo-100/80 px-2 py-0.5 rounded-md">
+                                {displayDays.length} Days
                               </span>
                             </div>
+                            <p className="text-xs text-slate-500 font-medium mt-0.5 truncate">
+                              Tap to expand and reorder workout routine days
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 ml-3">
+                          <span className="text-xs font-bold text-slate-400 hidden sm:inline">
+                            {isRoutineScheduleOpen ? 'Collapse' : 'Expand'}
+                          </span>
+                          <div className="p-1.5 rounded-lg text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors">
+                            <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isRoutineScheduleOpen ? 'rotate-180' : ''}`} />
+                          </div>
+                        </div>
+                      </button>
 
-                            <div className="mt-1 flex items-center justify-between">
-                              {isRest ? (
-                                <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md flex items-center gap-1 ${
-                                  isSelected ? 'bg-white/20 text-white' : 'bg-amber-200/70 text-amber-900'
-                                }`}>
-                                  <Coffee className="w-2.5 h-2.5" /> Rest Day
-                                </span>
-                              ) : (
-                                <span className={`text-[9px] font-bold ${isSelected ? 'text-indigo-200' : 'text-slate-500'}`}>
-                                  {d.exercises?.length || 0} exercises
-                                </span>
-                              )}
+                      {isRoutineScheduleOpen && (
+                        <div className="p-3.5 sm:p-4 pt-1 border-t border-slate-100">
+                          {/* Draggable Routine Days List - all tiles match full width */}
+                          <div className="flex flex-col gap-2 w-full pt-1" id="weekly-schedule-days-list" role="list">
+                            {displayDays.map((d, idx) => {
+                              const isSelected = idx === currentDayIndex;
+                              const isRest = Boolean(d.isRestDay || d.focusArea?.toLowerCase().includes('rest'));
+                              const isTodayMatch = Boolean(
+                                (d.dayOfWeek && d.dayOfWeek.toLowerCase() === todayDayOfWeek.toLowerCase()) ||
+                                (d.day && d.day.toLowerCase().includes(todayDayOfWeek.toLowerCase()))
+                              );
+                              const isDragging = draggedDaySlotIdx === idx;
+                              const isDragOver = dragOverDaySlotIdx === idx;
 
-                              {Boolean(logs?.find((l: any) => l.date === getWeekDateForDisplayIndex(idx))?.oneTimeScheduleOverride) && (
-                                <span className="text-[8px] font-black uppercase px-1 py-0.5 rounded bg-violet-500 text-white shadow-2xs">
-                                  Shifted
-                                </span>
-                              )}
-                            </div>
-                          </button>
-                        );
-                      })}
+                              return (
+                                <div
+                                  key={`day-list-row-${idx}`}
+                                  role="button"
+                                  tabIndex={0}
+                                  draggable
+                                  onDragStart={(e) => handleDayDragStart(e, idx)}
+                                  onDragOver={(e) => handleDayDragOver(e, idx)}
+                                  onDragEnd={handleDayDragEnd}
+                                  onDrop={(e) => handleDayDrop(e, idx)}
+                                  onClick={() => setSelectedDayIdx(idx)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.preventDefault();
+                                      setSelectedDayIdx(idx);
+                                    }
+                                  }}
+                                  className={`group relative rounded-2xl border transition-all duration-150 px-3 sm:px-4 h-[64px] sm:h-[68px] flex items-center justify-between gap-2.5 sm:gap-3 cursor-pointer select-none w-full ${
+                                    isDragging
+                                      ? 'opacity-40 scale-[0.99] border-dashed border-indigo-400 bg-indigo-50/70 shadow-inner'
+                                      : isDragOver
+                                      ? 'ring-2 ring-indigo-500 bg-indigo-50/80 border-indigo-400 shadow-md'
+                                      : isSelected
+                                      ? isRest
+                                        ? 'bg-amber-50/90 border-amber-400 ring-2 ring-amber-300 shadow-xs'
+                                        : 'bg-indigo-50/90 border-indigo-300 ring-2 ring-indigo-400/40 shadow-xs'
+                                      : 'bg-slate-50/70 hover:bg-slate-100/80 border-slate-200 shadow-2xs'
+                                  }`}
+                                >
+                                  {/* Left: Drag Handle */}
+                                  <div
+                                    className="p-1.5 -ml-1 text-slate-400 group-hover:text-slate-700 hover:bg-slate-200/70 rounded-xl cursor-grab active:cursor-grabbing transition-colors shrink-0"
+                                    title="Drag to reorder this day"
+                                    aria-label="Drag to reorder day"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <GripVertical className="w-5 h-5" />
+                                  </div>
+
+                                  {/* Day of Week Badge & Today Tag */}
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <span
+                                      className={`px-3 py-1.5 rounded-xl font-black text-sm shrink-0 min-w-[85px] text-center ${
+                                        isRest
+                                          ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                          : isSelected
+                                          ? 'bg-indigo-600 text-white border border-indigo-700'
+                                          : 'bg-white text-slate-800 border border-slate-200'
+                                      }`}
+                                    >
+                                      {d.dayOfWeek || (d.day || `Day ${idx + 1}`)}
+                                    </span>
+
+                                    {isTodayMatch && (
+                                      <span className="px-2 py-0.5 text-sm font-black uppercase rounded-lg bg-emerald-600 text-white shadow-2xs shrink-0">
+                                        Today
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* Routine Title (Main Focus) */}
+                                  <div className="flex-1 min-w-0 px-1">
+                                    <span className="font-extrabold text-sm sm:text-base text-slate-900 truncate block">
+                                      {isRest ? 'Rest & Recovery' : (d.focusArea || 'Workout')}
+                                    </span>
+                                  </div>
+
+                                  {/* Right Status Badge */}
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {isRest ? (
+                                      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-100 text-amber-900 font-bold text-sm border border-amber-300 shrink-0">
+                                        <Coffee className="w-4 h-4 text-amber-700" /> Rest
+                                      </span>
+                                    ) : isSelected ? (
+                                      <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-indigo-100 text-indigo-800 font-black text-sm border border-indigo-200 shrink-0">
+                                        <Check className="w-4 h-4 text-indigo-600" /> Active
+                                      </span>
+                                    ) : null}
+
+                                    {Boolean(logs?.find((l: any) => l.date === getWeekDateForDisplayIndex(idx))?.oneTimeScheduleOverride) && (
+                                      <span className="text-sm font-bold uppercase px-2.5 py-1 rounded-lg bg-violet-600 text-white shrink-0 shadow-2xs">
+                                        Shifted
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -1562,16 +1888,16 @@ export default function WorkoutLogger({
                       </span>
                       <h3 className="text-3xl font-black tracking-tight">Day {streak} Active</h3>
                       <p className="text-indigo-100 text-sm font-semibold">
-                        Today's Focus: <span className="text-white font-black">{currentPlan.focus}</span> ({currentPlan.title})
+                        Today's Focus: <span className="text-white font-black">{currentPlan.focus}</span> &bull; {currentPlan.title}
                       </p>
                     </div>
 
                     <div className="shrink-0 bg-white/10 border border-white/15 px-4.5 py-3 rounded-2xl">
-                      <span className="text-[9px] font-black text-indigo-100 uppercase tracking-widest block mb-1">
+                      <span className="text-xs font-black text-indigo-100 uppercase tracking-widest block mb-1">
                         Routine Schedule
                       </span>
                       <span className="font-mono text-xs font-black text-white bg-slate-950/30 px-3.5 py-1.5 rounded-xl inline-block">
-                        {displayDays.length}-Day Plan (#{currentPlan.day})
+                        {displayDays.length}-Day Plan &bull; Day {currentPlan.day}
                       </span>
                     </div>
                   </div>
@@ -1583,70 +1909,65 @@ export default function WorkoutLogger({
                       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
                         <div className="space-y-2">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-[10px] font-black uppercase tracking-widest bg-amber-500 text-white px-3 py-1 rounded-full shadow-xs flex items-center gap-1">
-                              <Coffee className="w-3.5 h-3.5" /> Rest Day
+                            <span className="text-xs font-black uppercase tracking-widest bg-amber-500 text-white px-3 py-1 rounded-full shadow-xs flex items-center gap-1.5">
+                              <Coffee className="w-4 h-4" /> Rest Day
                             </span>
                             {currentPlan.dayOfWeek && (
-                              <span className="text-xs font-extrabold text-amber-800 bg-amber-100 border border-amber-200 px-2.5 py-0.5 rounded-lg">
+                              <span className="text-sm font-extrabold text-amber-900 bg-amber-100 border border-amber-250 px-3 py-0.5 rounded-lg">
                                 {currentPlan.dayOfWeek}
                               </span>
                             )}
                           </div>
                           <h3 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-                            {currentPlan.title} — Rest & Muscle Repair 🧘‍♂️
+                            {currentPlan.title} — Rest & Muscle Repair
                           </h3>
-                          <p className="text-slate-600 text-xs sm:text-sm font-medium max-w-xl leading-relaxed">
-                            Hypertrophy and recovery occur during rest days. Taking today as scheduled allows your central nervous system to reset, muscle glycogen to replenish, and protein synthesis to rebuild lean tissue.
+                          <p className="text-slate-600 text-sm font-medium max-w-xl leading-relaxed">
+                            Hypertrophy and recovery occur during rest days. Taking today as scheduled allows your central nervous system to reset, muscle glycogen to replenish, and protein synthesis to rebuild lean tissue. No workouts or cardio should be logged today.
                           </p>
                         </div>
 
-                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full sm:w-auto max-w-full">
+                        {/* Informative Rest Day Status Indicator (Non-clickable Badge) */}
+                        <div className="flex flex-col items-start md:items-end gap-2 w-full md:w-auto shrink-0">
                           <div
-                            className="flex items-center justify-center gap-2 px-5 py-3.5 bg-amber-600 text-white rounded-2xl font-black text-sm shadow-md text-center max-w-full"
-                            id="rest-day-logged-badge"
+                            className="flex items-center gap-2.5 px-4 py-2.5 bg-amber-100/90 text-amber-950 border border-amber-300 rounded-2xl font-black text-sm select-none shadow-2xs"
+                            id="rest-day-status-badge"
                           >
-                            <Coffee className="w-4 h-4 animate-pulse shrink-0" />
-                            <span className="whitespace-nowrap">Rest Day</span>
+                            <Coffee className="w-4 h-4 text-amber-700 shrink-0" />
+                            <span className="whitespace-nowrap">Scheduled Rest Day</span>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => setActiveTabMode('jog')}
-                            className="flex items-center justify-center gap-2 px-5 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm rounded-2xl transition-all shadow-md shadow-emerald-200 cursor-pointer active:scale-95 max-w-full"
-                            title="Start an outdoor jog or fast walk with live GPS mapping"
-                          >
-                            <Footprints className="w-4 h-4 shrink-0" />
-                            <span className="whitespace-nowrap">Start Jog / Walk</span>
-                          </button>
+                          <span className="text-xs font-bold text-amber-800/90">
+                            Cardio & Lift Logging Disabled for Recovery
+                          </span>
                         </div>
                       </div>
 
                       {/* Rest Day Recovery Targets */}
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
-                        <div className="bg-white/80 border border-amber-200/80 rounded-2xl p-4 space-y-1.5 shadow-xs">
-                          <div className="flex items-center gap-2 text-amber-800 font-bold text-xs">
+                        <div className="bg-white/90 border border-amber-200/90 rounded-2xl p-4.5 space-y-1.5 shadow-xs">
+                          <div className="flex items-center gap-2 text-amber-800 font-bold text-sm">
                             <Activity className="w-4 h-4 text-amber-600" />
                             <span>Hydration Target</span>
                           </div>
                           <p className="text-sm font-extrabold text-slate-800">3.5 - 4.0 Liters Water</p>
-                          <p className="text-[11px] text-slate-500 font-medium">Flushes metabolic waste products and aids nutrient transport into muscle tissue.</p>
+                          <p className="text-xs text-slate-500 font-medium leading-normal">Flushes metabolic waste products and aids nutrient transport into muscle tissue.</p>
                         </div>
 
-                        <div className="bg-white/80 border border-amber-200/80 rounded-2xl p-4 space-y-1.5 shadow-xs">
-                          <div className="flex items-center gap-2 text-amber-800 font-bold text-xs">
+                        <div className="bg-white/90 border border-amber-200/90 rounded-2xl p-4.5 space-y-1.5 shadow-xs">
+                          <div className="flex items-center gap-2 text-amber-800 font-bold text-sm">
                             <Moon className="w-4 h-4 text-indigo-600" />
                             <span>Sleep & Growth Hormone</span>
                           </div>
                           <p className="text-sm font-extrabold text-slate-800">8+ Hours Quality Sleep</p>
-                          <p className="text-[11px] text-slate-500 font-medium">Natural Growth Hormone (GH) spikes during deep sleep cycles.</p>
+                          <p className="text-xs text-slate-500 font-medium leading-normal">Natural Growth Hormone spikes during deep slow-wave sleep cycles.</p>
                         </div>
 
-                        <div className="bg-white/80 border border-amber-200/80 rounded-2xl p-4 space-y-1.5 shadow-xs">
-                          <div className="flex items-center gap-2 text-amber-800 font-bold text-xs">
+                        <div className="bg-white/90 border border-amber-200/90 rounded-2xl p-4.5 space-y-1.5 shadow-xs">
+                          <div className="flex items-center gap-2 text-amber-800 font-bold text-sm">
                             <Sun className="w-4 h-4 text-amber-500" />
-                            <span>Active Recovery</span>
+                            <span>Mobility & Recovery</span>
                           </div>
-                          <p className="text-sm font-extrabold text-slate-800">15–20 Min Light Walk</p>
-                          <p className="text-[11px] text-slate-500 font-medium">Promotes soft tissue blood flow and foam rolling mobility work.</p>
+                          <p className="text-sm font-extrabold text-slate-800">Light Mobility & Stretching</p>
+                          <p className="text-xs text-slate-500 font-medium leading-normal">Promotes soft tissue blood flow and gentle joint mobility.</p>
                         </div>
                       </div>
 
@@ -1654,10 +1975,10 @@ export default function WorkoutLogger({
                       {nextNonRestDayObj && (
                         <div className="border-t border-amber-200/80 pt-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                           <div>
-                            <span className="text-[10px] font-black uppercase text-amber-800 tracking-wider block">
+                            <span className="text-xs font-black uppercase text-amber-800 tracking-wider block">
                               Next Scheduled Workout Session Up in Order
                             </span>
-                            <p className="text-xs sm:text-sm font-bold text-slate-800">
+                            <p className="text-sm font-bold text-slate-800">
                               {nextNonRestDayObj.day} ({nextNonRestDayObj.focusArea}) — {nextNonRestDayObj.exercises?.length || 0} exercises
                             </p>
                           </div>
@@ -1698,15 +2019,15 @@ export default function WorkoutLogger({
                         <div>
                           <span className="text-xs uppercase font-black px-3 py-1 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-150">
                             {hasLiftingWorkoutsLogged && isPreviousDay
-                              ? `LOGGED LIFTS (${selectedDateStr})`
+                              ? `LOGGED LIFTS (${formatDateDDMMYYYY(selectedDateStr)})`
                               : `${currentPlan.category} TARGETS`}
                           </span>
                           <h3 className="text-lg font-black text-slate-800 mt-2">
                             {isPreviousDay
                               ? hasLiftingWorkoutsLogged
-                                ? `Completed Workout for ${selectedDateStr}`
-                                : `Scheduled Routine (${currentPlan.title}) — ${selectedDateStr}`
-                              : `Start Today's Lift (${currentPlan.title})`}
+                                ? `Completed Workout for ${formatDateDDMMYYYY(selectedDateStr)}`
+                                : `Scheduled Routine (${currentPlan.title}) — ${formatDateDDMMYYYY(selectedDateStr)}`
+                              : `Today's Workout (${currentPlan.title})`}
                           </h3>
                         </div>
 
@@ -1722,75 +2043,65 @@ export default function WorkoutLogger({
                               <span>Past Date — Use '+ Add Lift' to log past exercises.</span>
                             </div>
                           )
-                        ) : isLiftingCompletedToday ? (
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 w-full">
-                            <div
-                              className="w-full flex items-center justify-center text-center gap-2 px-4 py-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl font-black text-xs"
-                              id="workout-already-completed-badge"
-                            >
-                              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                              <span>Daily Lift Completed</span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={handleStartWorkout}
-                              className="w-full flex items-center justify-center text-center gap-2 px-4 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs sm:text-sm rounded-2xl transition-all shadow-md shadow-indigo-150 cursor-pointer active:scale-95"
-                              id="redo-lift-btn"
-                              title="Start guided lift session or log more sets"
-                            >
-                              <PlayCircle className="w-4 h-4 shrink-0" />
-                              <span>Start / Log Lift</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setActiveTabMode('jog')}
-                              className="w-full flex items-center justify-center text-center gap-2 px-4 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs sm:text-sm rounded-2xl transition-all shadow-md shadow-emerald-200 cursor-pointer active:scale-95"
-                              id="start-jog-completed-day-btn"
-                              title="Start an outdoor jog with live GPS mapping and calorie calculation"
-                            >
-                              <Footprints className="w-4 h-4 shrink-0" />
-                              <span>Start Jog</span>
-                            </button>
-                          </div>
-                        ) : currentPlan.exercises.length > 0 ? (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full">
-                            <button
-                              type="button"
-                              onClick={handleStartWorkout}
-                              className="w-full flex items-center justify-center text-center gap-2 px-7 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-sm rounded-2xl transition-all shadow-md hover:shadow-lg shadow-indigo-150 cursor-pointer active:scale-95"
-                              id="start-workout-btn"
-                            >
-                              <PlayCircle className="w-5 h-5 shrink-0" />
-                              Start Day {streak} Workout
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setActiveTabMode('jog')}
-                              className="w-full flex items-center justify-center text-center gap-2 px-6 py-3.5 font-black text-sm rounded-2xl transition-all shadow-md bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200 hover:shadow-lg cursor-pointer active:scale-95"
-                              id="start-jog-btn"
-                              title="Start an outdoor jog with live GPS mapping and calorie calculation"
-                            >
-                              <Footprints className="w-5 h-5 shrink-0" />
-                              Start Jog
-                            </button>
-                          </div>
                         ) : (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full">
-                            <button
-                              type="button"
-                              onClick={() => setActiveTabMode('manage')}
-                              className="w-full flex items-center justify-center text-center gap-2 px-6 py-3 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-2xl transition-all cursor-pointer"
-                            >
-                              <Plus className="w-4 h-4" /> Add Exercises
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setActiveTabMode('jog')}
-                              className="w-full flex items-center justify-center text-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-2xl transition-all shadow-md shadow-emerald-200 cursor-pointer active:scale-95"
-                              id="start-jog-empty-day-btn"
-                            >
-                              <Footprints className="w-4 h-4" /> Start Jog
-                            </button>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
+                            {/* Workout Session Button: Enabled or Disabled if already completed */}
+                            {isLiftingCompletedToday ? (
+                              <button
+                                type="button"
+                                disabled
+                                className="w-full flex items-center justify-center text-center gap-2 px-5 py-3.5 bg-slate-100 border border-slate-200 text-slate-500 font-bold text-xs sm:text-sm rounded-2xl cursor-not-allowed opacity-80"
+                                id="workout-completed-disabled-btn"
+                                title="Today's workout session is already logged (1 workout per day)"
+                              >
+                                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                                <span className="truncate">Workout Logged ({loggedLiftingWorkouts.length} exercises)</span>
+                              </button>
+                            ) : currentPlan.exercises.length > 0 ? (
+                              <button
+                                type="button"
+                                onClick={handleStartWorkout}
+                                className="w-full flex items-center justify-center text-center gap-2 px-5 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs sm:text-sm rounded-2xl transition-all shadow-md hover:shadow-lg shadow-indigo-150 cursor-pointer active:scale-95"
+                                id="start-workout-btn"
+                              >
+                                <PlayCircle className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
+                                <span className="truncate">Start Workout</span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setActiveTabMode('manage')}
+                                className="w-full flex items-center justify-center text-center gap-2 px-5 py-3.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs sm:text-sm rounded-2xl transition-all cursor-pointer"
+                              >
+                                <Plus className="w-4 h-4 shrink-0" />
+                                <span className="truncate">Add Exercises</span>
+                              </button>
+                            )}
+
+                            {/* Jog Session Button: Enabled or navigate to tracker */}
+                            {hasJogsLogged ? (
+                              <button
+                                type="button"
+                                onClick={() => setActiveTabMode('jog')}
+                                className="w-full flex items-center justify-center text-center gap-2 px-5 py-3.5 bg-emerald-50 border border-emerald-300 text-emerald-800 font-bold text-sm rounded-2xl hover:bg-emerald-100 transition-all cursor-pointer shadow-xs"
+                                id="jog-completed-open-btn"
+                                title="View or manage today's walk and jog sessions"
+                              >
+                                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                                <span className="truncate">Cardio Completed &bull; Open Tracker</span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setActiveTabMode('jog')}
+                                className="w-full flex items-center justify-center text-center gap-2 px-5 py-3.5 font-black text-sm rounded-2xl transition-all shadow-md bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200 hover:shadow-lg cursor-pointer active:scale-95"
+                                id="start-jog-btn"
+                                title="Start an outdoor jog or fast walk with live GPS mapping and calorie calculation"
+                              >
+                                <Footprints className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
+                                <span className="truncate">Start Walk or Jog</span>
+                              </button>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1804,64 +2115,61 @@ export default function WorkoutLogger({
                                 <Footprints className="w-4 h-4" />
                               </div>
                               <div>
-                                <h4 className="text-xs sm:text-sm font-black text-emerald-950">
-                                  Jogs & Cardio Sessions ({currentDateJogs.length || loggedJogWorkouts.length})
+                                <h4 className="text-sm font-black text-emerald-950">
+                                  Cardio Session Logged
                                 </h4>
-                                <p className="text-[10px] font-semibold text-emerald-700">
-                                  Tracked separately from your lifting routine — you can log multiple jogs anytime.
+                                <p className="text-xs font-semibold text-emerald-700">
+                                  Tracked separately from your lifting routine.
                                 </p>
                               </div>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => setActiveTabMode('jog')}
-                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1 cursor-pointer"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                              Log Another Jog
-                            </button>
                           </div>
 
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
                             {currentDateJogs.length > 0 ? (
                               currentDateJogs.map((jog, jIdx) => (
-                                <div key={jog.id || jIdx} className="bg-white border border-emerald-200/80 rounded-xl p-3 flex items-center justify-between shadow-xs">
+                                <div key={jog.id || jIdx} className="bg-white border border-emerald-200/80 rounded-xl p-3.5 flex items-center justify-between shadow-xs">
                                   <div>
                                     <div className="flex items-center gap-2">
-                                      <span className="text-xs font-black text-slate-800 font-mono">
+                                      <span className="text-sm font-black text-slate-800 font-mono">
                                         {jog.distanceKm.toFixed(2)} km
                                       </span>
-                                      <span className="text-[10px] text-slate-400 font-medium">
-                                        ({(jog.distanceKm * 0.621371).toFixed(2)} mi)
+                                      <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                        {jog.activityType === 'fast_walk' ? 'Fast Walk' : 'Outdoor Jog'}
                                       </span>
-                                      {jog.startTime && (
-                                        <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-150">
-                                          {jog.startTime}
-                                        </span>
-                                      )}
                                     </div>
-                                    <div className="flex items-center gap-2 text-[10px] text-slate-500 font-semibold mt-1">
-                                      <span>⏱ {formatDuration(jog.durationSeconds)}</span>
-                                      <span>•</span>
-                                      <span className="text-amber-700 font-bold">🔥 {jog.caloriesBurned} kcal</span>
+                                    <div className="flex items-center gap-2 text-xs text-slate-500 font-semibold mt-1">
+                                      <span className="font-mono">{formatDuration(jog.durationSeconds)}</span>
+                                      <span>&bull;</span>
+                                      <span className="text-amber-700 font-bold">{jog.caloriesBurned} kcal</span>
                                     </div>
                                   </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteJogSession(jog.id)}
-                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                                    title="Delete this jog entry"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => setActiveTabMode('jog')}
+                                      className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                                      title="Open in Tracker"
+                                    >
+                                      <Pencil className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteJogSession(jog.id)}
+                                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                      title="Delete this cardio entry"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </div>
                                 </div>
                               ))
                             ) : (
                               loggedJogWorkouts.map((w: any, jIdx: number) => (
                                 <div key={w.id || jIdx} className="bg-white border border-emerald-200/80 rounded-xl p-3 flex items-center justify-between shadow-xs">
                                   <div>
-                                    <h5 className="text-xs font-bold text-slate-800">{w.name}</h5>
-                                    <span className="text-[10px] text-emerald-700 font-semibold">Cardio session logged</span>
+                                    <h5 className="text-sm font-bold text-slate-800">{w.name}</h5>
+                                    <span className="text-xs text-emerald-700 font-semibold">Cardio session logged</span>
                                   </div>
                                   <button
                                     type="button"
@@ -1881,7 +2189,7 @@ export default function WorkoutLogger({
                       <div className="border-t border-slate-200/60 pt-6 space-y-4">
                         <div className="flex justify-between items-center">
                           <span className="text-xs font-black text-slate-400 uppercase tracking-wider block">
-                            {hasLiftingWorkoutsLogged ? `Logged Lifts for ${selectedDateStr}:` : 'Exercises for this routine:'}
+                            {hasLiftingWorkoutsLogged ? `Logged Lifts for ${formatDateDDMMYYYY(selectedDateStr)}:` : 'Exercises for this routine:'}
                           </span>
                           <button
                             type="button"
@@ -1944,19 +2252,63 @@ export default function WorkoutLogger({
                             {currentPlan.rawExercises.map((rawEx, idx) => {
                               const dbEntry = EXERCISES_DATABASE[matchExerciseKey(rawEx.name)];
                               const matchUrl = rawEx.youtubeUrl || findMatchingYoutubeUrl(rawEx.name);
+                              const isFirst = idx === 0;
+                              const isLast = idx === currentPlan.rawExercises.length - 1;
+
                               return (
                                 <div
                                   key={idx}
-                                  className="bg-white border border-slate-200 rounded-xl p-4 flex items-start justify-between gap-4 shadow-xs"
+                                  draggable
+                                  onDragStart={(e) => handleDragStart(e, currentDayIndex, idx)}
+                                  onDragOver={(e) => handleDragOver(e, currentDayIndex, idx)}
+                                  onDrop={(e) => handleDrop(e, currentDayIndex, idx)}
+                                  onDragEnd={handleDragEnd}
+                                  className={`bg-white border rounded-xl p-4 flex items-start justify-between gap-3 shadow-xs transition-all ${
+                                    draggedDayIdx === currentDayIndex && draggedExIdx === idx
+                                      ? 'opacity-40 border-indigo-400 border-dashed'
+                                      : dragOverDayIdx === currentDayIndex && dragOverExIdx === idx
+                                      ? 'border-indigo-600 border-2 bg-indigo-50/40'
+                                      : 'border-slate-200 hover:border-indigo-300'
+                                  }`}
                                 >
-                                  <div className="flex items-start gap-3 min-w-0">
-                                    <div className="w-9 h-9 rounded-lg bg-indigo-50 text-indigo-600 font-mono font-black text-sm flex items-center justify-center shrink-0">
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    {/* Reorder Buttons & Drag Handle */}
+                                    <div className="flex items-center gap-0.5 shrink-0">
+                                      <div
+                                        className="p-1 text-slate-400 hover:text-slate-700 cursor-grab active:cursor-grabbing rounded hover:bg-slate-100 transition-colors"
+                                        title="Drag to reorder exercise"
+                                      >
+                                        <GripVertical className="w-4 h-4" />
+                                      </div>
+                                      <div className="flex flex-col">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleMoveExercise(currentDayIndex, idx, 'up')}
+                                          disabled={isFirst}
+                                          className="p-0.5 text-slate-400 hover:text-indigo-600 disabled:opacity-20 disabled:hover:text-slate-400 cursor-pointer disabled:cursor-not-allowed transition-colors"
+                                          title="Move Up"
+                                        >
+                                          <ChevronUp className="w-3.5 h-3.5" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleMoveExercise(currentDayIndex, idx, 'down')}
+                                          disabled={isLast}
+                                          className="p-0.5 text-slate-400 hover:text-indigo-600 disabled:opacity-20 disabled:hover:text-slate-400 cursor-pointer disabled:cursor-not-allowed transition-colors"
+                                          title="Move Down"
+                                        >
+                                          <ChevronDown className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 font-mono font-black text-sm flex items-center justify-center shrink-0">
                                       {idx + 1}
                                     </div>
                                     <div className="min-w-0">
                                       <h4 className="text-sm font-bold text-slate-800 truncate">{rawEx.name}</h4>
                                       <span className="text-xs text-indigo-600 font-extrabold block mt-0.5">
-                                        {dbEntry?.volume || '3 sets'}
+                                        {rawEx.sets || dbEntry?.volume || 3} sets × {rawEx.reps || 10} reps
                                       </span>
                                     </div>
                                   </div>
@@ -1966,10 +2318,10 @@ export default function WorkoutLogger({
                                       href={matchUrl}
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-[10px] font-extrabold flex items-center gap-1 shrink-0 transition-colors"
+                                      className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-xs font-extrabold flex items-center gap-1 shrink-0 transition-colors"
                                       title="Watch Video"
                                     >
-                                      <PlayCircle className="w-3.5 h-3.5 text-red-600" />
+                                      <PlayCircle className="w-4 h-4 text-red-600" />
                                       Video
                                     </a>
                                   )}
@@ -2016,6 +2368,7 @@ export default function WorkoutLogger({
                 isRestDay={isRestDayToday}
                 onBack={() => setActiveTabMode('session')}
                 onSaveJog={handleSaveJogSession}
+                onUpdateJog={handleUpdateJogSession}
                 existingJogs={currentDateJogs}
                 onDeleteJog={handleDeleteJogSession}
               />
@@ -2052,7 +2405,18 @@ export default function WorkoutLogger({
                   return (
                     <div
                       key={`day-${dayIdx}`}
-                      className="bg-slate-50 border border-slate-200/90 rounded-2xl p-5 sm:p-6 space-y-4 shadow-xs"
+                      draggable
+                      onDragStart={(e) => handleDayDragStart(e, dayIdx)}
+                      onDragOver={(e) => handleDayDragOver(e, dayIdx)}
+                      onDragEnd={handleDayDragEnd}
+                      onDrop={(e) => handleDayDrop(e, dayIdx)}
+                      className={`bg-slate-50 border rounded-2xl p-5 sm:p-6 space-y-4 shadow-xs transition-all ${
+                        draggedDaySlotIdx === dayIdx
+                          ? 'opacity-40 border-dashed border-indigo-400 bg-indigo-50/60'
+                          : dragOverDaySlotIdx === dayIdx
+                          ? 'ring-2 ring-indigo-500 border-indigo-400 bg-indigo-50/80'
+                          : 'border-slate-200/90'
+                      }`}
                     >
                       {/* Day Header */}
                       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-200 pb-3">
@@ -2062,73 +2426,62 @@ export default function WorkoutLogger({
                               type="text"
                               value={editDayTitle}
                               onChange={e => setEditDayTitle(e.target.value)}
-                              placeholder="Day Title (e.g. Monday)"
-                              className="px-2.5 py-1 bg-white border border-indigo-300 rounded-lg text-xs font-bold text-slate-900"
+                              placeholder="Day Title"
+                              className="px-3 py-1.5 bg-white border border-indigo-300 rounded-xl text-sm font-bold text-slate-900"
                             />
                             <input
                               type="text"
                               value={editDayFocus}
                               onChange={e => setEditDayFocus(e.target.value)}
-                              placeholder="Focus (e.g. Chest & Triceps)"
-                              className="px-2.5 py-1 bg-white border border-indigo-300 rounded-lg text-xs font-bold text-slate-900"
+                              placeholder="Focus Area"
+                              className="px-3 py-1.5 bg-white border border-indigo-300 rounded-xl text-sm font-bold text-slate-900"
                             />
                             <button
                               type="button"
                               onClick={() => handleSaveDayHeader(dayIdx)}
-                              className="px-2.5 py-1 bg-indigo-600 text-white rounded-lg text-xs font-bold cursor-pointer flex items-center justify-center text-center"
+                              className="px-3.5 py-1.5 bg-indigo-600 text-white rounded-xl text-sm font-bold cursor-pointer flex items-center justify-center text-center"
                             >
                               Save
                             </button>
                             <button
                               type="button"
                               onClick={() => setEditingDayHeaderIdx(null)}
-                              className="px-2.5 py-1 bg-slate-200 text-slate-700 rounded-lg text-xs font-bold cursor-pointer flex items-center justify-center text-center"
+                              className="px-3.5 py-1.5 bg-slate-200 text-slate-700 rounded-xl text-sm font-bold cursor-pointer flex items-center justify-center text-center"
                             >
                               Cancel
                             </button>
                           </div>
                         ) : (
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {/* Reorder Day Up / Down Arrows */}
-                            <div className="flex items-center bg-white border border-slate-200 rounded-lg overflow-hidden shrink-0">
-                              <button
-                                type="button"
-                                onClick={() => handleMoveDay(dayIdx, 'up')}
-                                disabled={dayIdx === 0}
-                                title="Move Day Up"
-                                className="p-1 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-white text-slate-600 transition-colors cursor-pointer"
-                              >
-                                <ChevronUp className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleMoveDay(dayIdx, 'down')}
-                                disabled={dayIdx === displayDays.length - 1}
-                                title="Move Day Down"
-                                className="p-1 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-white text-slate-600 transition-colors cursor-pointer border-l border-slate-200"
-                              >
-                                <ChevronDown className="w-3.5 h-3.5" />
-                              </button>
+                          <div className="flex items-center gap-2.5 flex-wrap">
+                            {/* Grip Drag Handle */}
+                            <div
+                              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-lg cursor-grab active:cursor-grabbing transition-colors shrink-0"
+                              title="Drag to reorder day"
+                              aria-label="Drag to reorder day"
+                            >
+                              <GripVertical className="w-5 h-5" />
                             </div>
 
-                            <span className={`px-3 py-1 font-extrabold text-xs rounded-lg shadow-xs flex items-center gap-1 ${
+                            <span className={`px-3 py-1 font-extrabold text-sm rounded-xl shadow-xs flex items-center gap-1.5 ${
                               dayObj.isRestDay ? 'bg-amber-500 text-white' : 'bg-indigo-600 text-white'
                             }`}>
-                              {dayObj.isRestDay && <Coffee className="w-3 h-3" />}
+                              {dayObj.isRestDay && <Coffee className="w-3.5 h-3.5" />}
                               {dayObj.day || `Day ${dayIdx + 1}`}
                             </span>
                             <div>
-                              <h4 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+                              <h4 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
                                 <span>{dayObj.focusArea || 'Full Body'}</span>
                                 {dayObj.isRestDay && (
-                                  <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-black rounded-md border border-amber-200">
+                                  <span className="px-2.5 py-0.5 bg-amber-100 text-amber-800 text-sm font-black rounded-lg border border-amber-200">
                                     REST DAY 🧘
                                   </span>
                                 )}
                               </h4>
-                              <span className="text-[11px] text-slate-500 font-medium">
-                                {dayObj.dayOfWeek ? `Scheduled for ${dayObj.dayOfWeek}` : (dayObj.isRestDay ? 'Scheduled Rest Day' : `${dayObj.exercises ? dayObj.exercises.length : 0} Exercises`)}
-                              </span>
+                              {dayObj.dayOfWeek && (
+                                <span className="text-sm text-slate-500 font-medium block">
+                                  Scheduled for {dayObj.dayOfWeek}
+                                </span>
+                              )}
                             </div>
                           </div>
                         )}
@@ -2199,7 +2552,18 @@ export default function WorkoutLogger({
                             return (
                               <div
                                 key={`ex-item-${exKey}`}
-                                className="bg-white p-3.5 rounded-xl border border-slate-200/90 space-y-2 hover:border-indigo-300 transition-all relative group"
+                                draggable={!isEditing}
+                                onDragStart={(e) => handleDragStart(e, dayIdx, exIdx)}
+                                onDragOver={(e) => handleDragOver(e, dayIdx, exIdx)}
+                                onDrop={(e) => handleDrop(e, dayIdx, exIdx)}
+                                onDragEnd={handleDragEnd}
+                                className={`bg-white p-3.5 rounded-xl border space-y-2 transition-all relative group ${
+                                  draggedDayIdx === dayIdx && draggedExIdx === exIdx
+                                    ? 'opacity-40 border-indigo-400 border-dashed scale-98'
+                                    : dragOverDayIdx === dayIdx && dragOverExIdx === exIdx
+                                    ? 'border-indigo-600 border-2 bg-indigo-50/40'
+                                    : 'border-slate-200/90 hover:border-indigo-300'
+                                }`}
                               >
                                 {isEditing ? (
                                   <div className="space-y-3 bg-slate-50/80 p-3 rounded-xl border border-indigo-200">
@@ -2363,33 +2727,74 @@ export default function WorkoutLogger({
                                   </div>
                                 ) : (
                                   <div className="flex justify-between items-center gap-2">
-                                    <div className="space-y-1 min-w-0 pr-2">
-                                      <div className="flex items-center gap-2 flex-wrap">
-                                        <h5 className="text-xs font-extrabold text-slate-900">{ex.name}</h5>
-                                        {inferMuscleGroups(ex.name, dayObj.focusArea, ex.category).map((catTag) => (
-                                          <span key={`ex-tag-${exKey}-${catTag}`} className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full text-[10px] font-extrabold uppercase border border-indigo-200">
-                                            {catTag}
-                                          </span>
-                                        ))}
-                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
-                                          isBodyweight ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-slate-100 text-slate-700 border border-slate-200'
-                                        }`}>
-                                          {isBodyweight ? 'Bodyweight' : 'Weight Workout'}
-                                        </span>
-                                        <span className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded-full text-[10px] font-bold border border-slate-200">
-                                          {ex.sets || 3} Sets × {ex.reps || 10} Reps
-                                        </span>
-                                        {!isBodyweight && (
-                                          <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full text-[10px] font-bold border border-indigo-200/80">
-                                            {ex.weight !== undefined ? ex.weight : 30} lbs
-                                          </span>
-                                        )}
+                                    <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                                      {/* Drag Handle & Move Up/Down Controls */}
+                                      <div className="flex items-center gap-0.5 shrink-0">
+                                        <div
+                                          className="p-1 text-slate-400 hover:text-slate-700 cursor-grab active:cursor-grabbing rounded hover:bg-slate-100 transition-colors"
+                                          title="Drag to reorder"
+                                        >
+                                          <GripVertical className="w-4 h-4" />
+                                        </div>
+                                        <div className="flex flex-col">
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleMoveExercise(dayIdx, exIdx, 'up');
+                                            }}
+                                            disabled={exIdx === 0}
+                                            className="p-0.5 text-slate-400 hover:text-indigo-600 disabled:opacity-20 disabled:hover:text-slate-400 cursor-pointer disabled:cursor-not-allowed transition-colors"
+                                            title="Move Up"
+                                          >
+                                            <ChevronUp className="w-3.5 h-3.5" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleMoveExercise(dayIdx, exIdx, 'down');
+                                            }}
+                                            disabled={!dayObj.exercises || exIdx === dayObj.exercises.length - 1}
+                                            className="p-0.5 text-slate-400 hover:text-indigo-600 disabled:opacity-20 disabled:hover:text-slate-400 cursor-pointer disabled:cursor-not-allowed transition-colors"
+                                            title="Move Down"
+                                          >
+                                            <ChevronDown className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
                                       </div>
-                                      <div className="flex items-center gap-2 text-[11px] text-slate-500 font-mono">
-                                        <Link2 className="w-3 h-3 text-indigo-500 shrink-0" />
-                                        <span className="truncate max-w-[280px]">
-                                          {ex.youtubeUrl || <em className="text-slate-400">No YouTube URL linked</em>}
-                                        </span>
+
+                                      <div className="space-y-1 min-w-0">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className="w-6 h-6 rounded-md bg-indigo-50 text-indigo-700 font-mono font-black text-xs flex items-center justify-center shrink-0">
+                                            {exIdx + 1}
+                                          </span>
+                                          <h5 className="text-xs font-extrabold text-slate-900">{ex.name}</h5>
+                                          {inferMuscleGroups(ex.name, dayObj.focusArea, ex.category).map((catTag) => (
+                                            <span key={`ex-tag-${exKey}-${catTag}`} className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full text-[10px] font-extrabold uppercase border border-indigo-200">
+                                              {catTag}
+                                            </span>
+                                          ))}
+                                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
+                                            isBodyweight ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-slate-100 text-slate-700 border border-slate-200'
+                                          }`}>
+                                            {isBodyweight ? 'Bodyweight' : 'Weight Workout'}
+                                          </span>
+                                          <span className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded-full text-[10px] font-bold border border-slate-200">
+                                            {ex.sets || 3} Sets × {ex.reps || 10} Reps
+                                          </span>
+                                          {!isBodyweight && (
+                                            <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full text-[10px] font-bold border border-indigo-200/80">
+                                              {ex.weight !== undefined ? ex.weight : 30} lbs
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="flex items-center gap-2 text-[11px] text-slate-500 font-mono">
+                                          <Link2 className="w-3 h-3 text-indigo-500 shrink-0" />
+                                          <span className="truncate max-w-[280px]">
+                                            {ex.youtubeUrl || <em className="text-slate-400">No YouTube URL linked</em>}
+                                          </span>
+                                        </div>
                                       </div>
                                     </div>
 
@@ -2420,6 +2825,34 @@ export default function WorkoutLogger({
                                               <ExternalLink className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
                                               <span>Open YouTube Demo</span>
                                             </a>
+                                          )}
+                                          {exIdx > 0 && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setActiveMenuKey(null);
+                                                handleMoveExercise(dayIdx, exIdx, 'up');
+                                              }}
+                                              className="w-full flex items-center gap-2.5 px-3 py-2 text-slate-700 hover:bg-slate-100 rounded-xl transition-colors text-left cursor-pointer"
+                                            >
+                                              <ChevronUp className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                              <span>Move Up</span>
+                                            </button>
+                                          )}
+                                          {dayObj.exercises && exIdx < dayObj.exercises.length - 1 && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setActiveMenuKey(null);
+                                                handleMoveExercise(dayIdx, exIdx, 'down');
+                                              }}
+                                              className="w-full flex items-center gap-2.5 px-3 py-2 text-slate-700 hover:bg-slate-100 rounded-xl transition-colors text-left cursor-pointer"
+                                            >
+                                              <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                              <span>Move Down</span>
+                                            </button>
                                           )}
                                           <button
                                             type="button"
@@ -2844,7 +3277,7 @@ export default function WorkoutLogger({
                             <span className="text-xs font-bold text-slate-700">Set {setIdx + 1}</span>
                           </div>
 
-                          <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-2 sm:gap-3">
                             {/* Weight Input */}
                             {!isBodyweight ? (
                               <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
@@ -2856,10 +3289,10 @@ export default function WorkoutLogger({
                                     handleUpdateSetField(exName, setIdx, 'weight', e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)
                                   }
                                   onFocus={e => e.target.select()}
-                                  className="w-12 text-xs font-bold text-slate-800 text-center focus:outline-none"
+                                  className="w-12 text-sm font-bold text-slate-800 text-center focus:outline-none"
                                   step="2.5"
                                 />
-                                <span className="text-[10px] font-extrabold text-slate-400 uppercase">{weightUnit}</span>
+                                <span className="text-xs font-extrabold text-slate-400 uppercase">{weightUnit}</span>
                               </div>
                             ) : (
                               <span className="text-xs font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">
@@ -2877,23 +3310,46 @@ export default function WorkoutLogger({
                                   handleUpdateSetField(exName, setIdx, 'reps', e.target.value === '' ? 0 : parseInt(e.target.value, 10) || 0)
                                 }
                                 onFocus={e => e.target.select()}
-                                className="w-10 text-xs font-bold text-slate-800 text-center focus:outline-none"
+                                className="w-10 text-sm font-bold text-slate-800 text-center focus:outline-none"
                               />
-                              <span className="text-[10px] font-extrabold text-slate-400 uppercase">reps</span>
+                              <span className="text-xs font-extrabold text-slate-400 uppercase">reps</span>
                             </div>
+
+                            {/* Delete Set Button */}
+                            {targetSetsCount > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteSetFromExercise(exName, setIdx, activeRawEx)}
+                                className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer shrink-0"
+                                title="Delete this set"
+                                aria-label={`Delete Set ${setIdx + 1}`}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
                     })}
                   </div>
 
-                  <div className="pt-2 flex justify-end w-full">
+                  <div className="pt-2 flex items-center justify-end gap-2.5 w-full flex-wrap">
+                    {targetSetsCount > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteSetFromExercise(activeExName, targetSetsCount - 1, activeRawEx)}
+                        className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-extrabold text-sm rounded-xl border border-rose-200 transition-colors flex items-center justify-center text-center gap-1.5 cursor-pointer shadow-2xs"
+                      >
+                        <Minus className="w-4 h-4 text-rose-600" />
+                        <span>Delete Last Set</span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => handleAddExtraSetToExercise(activeExName, activeRawEx)}
-                      className="w-full sm:w-auto px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-xs rounded-xl border border-indigo-200/80 transition-colors flex items-center justify-center text-center gap-1.5 cursor-pointer shadow-2xs"
+                      className="px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-sm rounded-xl border border-indigo-200/80 transition-colors flex items-center justify-center text-center gap-1.5 cursor-pointer shadow-2xs"
                     >
-                      <Plus className="w-3.5 h-3.5 text-indigo-600" />
+                      <Plus className="w-4 h-4 text-indigo-600" />
                       <span>Add Extra Set</span>
                     </button>
                   </div>
@@ -3090,7 +3546,7 @@ export default function WorkoutLogger({
                     <div className="text-xs font-black text-indigo-950 flex flex-wrap items-center gap-1.5">
                       Move Today's Session to Tomorrow
                       <span className="text-[10px] font-extrabold bg-indigo-200/80 text-indigo-900 px-2 py-0.5 rounded-md">
-                        {getDayNameFromDateString(addDaysToDateString(selectedDateStr, 1))} ({addDaysToDateString(selectedDateStr, 1)})
+                        {getDayNameFromDateString(addDaysToDateString(selectedDateStr, 1))} ({formatDateDDMMYYYY(addDaysToDateString(selectedDateStr, 1))})
                       </span>
                     </div>
                     <p className="text-[11px] font-medium text-slate-600 mt-1">

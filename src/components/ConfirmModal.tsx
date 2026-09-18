@@ -9,6 +9,7 @@ export interface ConfirmModalProps {
   confirmText?: string;
   cancelText?: string;
   variant?: 'danger' | 'warning' | 'info';
+  zIndex?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -20,6 +21,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   confirmText = 'Confirm',
   cancelText = 'Cancel',
   variant = 'danger',
+  zIndex = 'z-50',
   onConfirm,
   onCancel
 }) => {
@@ -37,7 +39,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
+        <div className={`fixed inset-0 ${zIndex} flex items-center justify-center p-4 sm:p-6 overflow-y-auto`}>
           {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
@@ -102,14 +104,14 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
               <button
                 type="button"
                 onClick={onCancel}
-                className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-extrabold rounded-xl transition-all cursor-pointer flex items-center justify-center text-center"
+                className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center text-center"
               >
                 {cancelText}
               </button>
               <button
                 type="button"
                 onClick={onConfirm}
-                className={`w-full py-3 text-xs font-black text-white rounded-xl transition-all shadow-md active:scale-95 cursor-pointer flex items-center justify-center text-center ${
+                className={`w-full py-3 text-sm font-bold text-white rounded-xl transition-all shadow-md active:scale-95 cursor-pointer flex items-center justify-center text-center ${
                   variant === 'danger'
                     ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-200'
                     : variant === 'warning'

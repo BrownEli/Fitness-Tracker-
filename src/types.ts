@@ -14,14 +14,28 @@ export interface Workout {
   youtubeUrl?: string;
 }
 
+export interface MealItemBreakdown {
+  name: string;
+  portion?: string;
+  protein: number;
+  carbs: number;
+  fiber: number;
+  fat: number;
+  calories: number;
+}
+
 export interface Meal {
   id: string;
   name: string;
+  portion?: string; // e.g. "200g" or "350ml"
   protein: number; // in grams
   calories: number;
   carbs?: number; // in grams
   fiber?: number; // in grams
+  fat?: number; // in grams
   timestamp: string; // e.g. "08:30"
+  items?: MealItemBreakdown[];
+  isFavorite?: boolean;
 }
 
 export interface OneTimeScheduleOverride {
@@ -43,6 +57,7 @@ export interface JogPoint {
 export interface JogSession {
   id: string;
   date: string; // YYYY-MM-DD
+  activityType?: 'fast_walk' | 'jog';
   startTime: string; // ISO string
   endTime?: string;
   durationSeconds: number;
@@ -55,6 +70,7 @@ export interface JogSession {
 
 export interface DailyLog {
   date: string; // YYYY-MM-DD
+  userId?: string;
   meals: Meal[];
   workouts: Workout[];
   jogs?: JogSession[];
@@ -78,6 +94,7 @@ export interface UserGoals {
   dailyProteinTarget: number; // grams
   dailyCarbsTarget?: number; // grams
   dailyFiberTarget?: number; // grams
+  dailyFatTarget?: number; // grams
   dailyCalorieTarget: number; // kcal
   weeklyWorkoutDaysTarget: number;
   foodsDocId?: string;
@@ -87,6 +104,7 @@ export interface UserGoals {
   syncDocsOnBackup?: boolean;
   backupReminderEnabled?: boolean;
   backupReminderTime?: string; // e.g. "22:00"
+  favoriteFoods?: string[]; // list of food names marked as favorite
 }
 
 export interface ParsedWorkoutExercise {
@@ -107,9 +125,18 @@ export interface ParsedWorkoutDay {
   dayOfWeek?: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday' | string;
 }
 
+export interface CoachingChatMessage {
+  id: string;
+  sender: 'user' | 'ai';
+  text: string;
+  timestamp: string;
+}
+
 export interface CoachingInsight {
   timestamp: string;
+  createdAt?: string;
   summary: string;
   text: string;
   type: 'hypertrophy' | 'nutrition' | 'recovery' | 'general';
+  chatMessages?: CoachingChatMessage[];
 }

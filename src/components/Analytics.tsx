@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { DailyLog, UserGoals } from '../types';
+import { formatDateDDMMYYYY } from '../dateUtils';
 import {
   ResponsiveContainer,
   BarChart,
@@ -16,7 +17,7 @@ import {
   Cell,
   ReferenceLine
 } from 'recharts';
-import { Dumbbell, Flame, Award, Scale, Plus, Trash2, Calendar, TrendingUp, History, Check, Utensils, Sparkles } from 'lucide-react';
+import { Dumbbell, Flame, Award, Scale, Plus, Trash2, Calendar, TrendingUp, History, Check, Utensils, Sparkles, ChevronDown } from 'lucide-react';
 
 interface AnalyticsProps {
   logs: DailyLog[];
@@ -74,6 +75,11 @@ export default function Analytics({ logs, goals, onLogWeight, onDeleteWeight, on
     ...getPresetDates(7)
   }));
 
+  const [fatRange, setFatRange] = useState<DateRangeState>(() => ({
+    preset: '7d',
+    ...getPresetDates(7)
+  }));
+
   const [fiberRange, setFiberRange] = useState<DateRangeState>(() => ({
     preset: '7d',
     ...getPresetDates(7)
@@ -94,6 +100,9 @@ export default function Analytics({ logs, goals, onLogWeight, onDeleteWeight, on
     ...getPresetDates(7)
   }));
 
+  // Collapsible dropdown toggle state for 7-day metric badges
+  const [isMetricsDropdownOpen, setIsMetricsDropdownOpen] = useState(false);
+
   // Filter weight entries based on selected date range (7d, 30d, 90d)
   const filteredWeightEntries = useMemo(() => {
     return allWeightEntries.filter(
@@ -105,8 +114,8 @@ export default function Analytics({ logs, goals, onLogWeight, onDeleteWeight, on
   const weightChartPoints = useMemo(() => {
     if (filteredWeightEntries.length === 0) return [];
     return filteredWeightEntries.map((entry) => {
-      const d = new Date(entry.date + 'T00:00:00');
-      const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const parts = entry.date.split('-');
+      const label = parts.length === 3 ? `${parts[2]}/${parts[1]}` : entry.date;
       return {
         date: entry.date,
         label,
@@ -127,23 +136,28 @@ export default function Analytics({ logs, goals, onLogWeight, onDeleteWeight, on
     return filteredLogs.map((log) => {
       const totalProtein = log.meals.reduce((sum, meal) => sum + (meal.protein || 0), 0);
       const totalCarbs = log.meals.reduce((sum, meal) => sum + (meal.carbs || 0), 0);
+      const totalFat = log.meals.reduce((sum, meal) => sum + (meal.fat || 0), 0);
       const totalFiber = log.meals.reduce((sum, meal) => sum + (meal.fiber || 0), 0);
       const totalCalories = log.meals.reduce((sum, meal) => sum + (meal.calories || 0), 0);
 
+      const parts = log.date.split('-');
+      const ddmm = parts.length === 3 ? `${parts[2]}/${parts[1]}` : log.date;
       const dateObj = new Date(log.date + 'T00:00:00');
       const isMultiWeek = filteredLogs.length > 14;
       const label = isMultiWeek
-        ? dateObj.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })
-        : dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
+        ? ddmm
+        : `${dateObj.toLocaleDateString('en-US', { weekday: 'short' })} ${ddmm}`;
 
       return {
         date: log.date,
         label,
         Protein: totalProtein,
         Carbs: totalCarbs,
+        Fat: totalFat,
         Fiber: totalFiber,
         ProteinGoal: goals.dailyProteinTarget,
         CarbsGoal: goals.dailyCarbsTarget || 250,
+        FatGoal: goals.dailyFatTarget || 78,
         FiberGoal: goals.dailyFiberTarget || 30,
         Calories: totalCalories,
         CalorieGoal: goals.dailyCalorieTarget,
@@ -157,6 +171,9 @@ export default function Analytics({ logs, goals, onLogWeight, onDeleteWeight, on
 
   const carbsLogs = useMemo(() => getFilteredLogs(carbsRange), [logs, carbsRange]);
   const carbsChartData = useMemo(() => formatChartData(carbsLogs), [carbsLogs, goals]);
+
+  const fatLogs = useMemo(() => getFilteredLogs(fatRange), [logs, fatRange]);
+  const fatChartData = useMemo(() => formatChartData(fatLogs), [fatLogs, goals]);
 
   const fiberLogs = useMemo(() => getFilteredLogs(fiberRange), [logs, fiberRange]);
   const fiberChartData = useMemo(() => formatChartData(fiberLogs), [fiberLogs, goals]);
@@ -305,12 +322,14 @@ export default function Analytics({ logs, goals, onLogWeight, onDeleteWeight, on
   // Custom Tooltip component for consistent light mode theme
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
+      const rawDate = payload[0]?.payload?.date;
+      const displayDate = rawDate ? formatDateDDMMYYYY(rawDate) : label;
       return (
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-md">
-          <p className="text-slate-400 text-[11px] font-bold uppercase tracking-wider mb-1">{label}</p>
+          <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1 font-mono">{displayDate}</p>
           {payload.map((p: any, index: number) => (
             <p key={index} className="text-xs font-bold" style={{ color: p.color }}>
-              {p.name}: {p.value} {p.name.includes('Protein') || p.name.includes('Carb') || p.name.includes('Fiber') ? 'g' : p.name.includes('Weight') ? goals.weightUnit : p.name.includes('Intake') || p.name.includes('Calorie') ? 'kcal' : 'sets'}
+              {p.name}: {p.value} {p.name.includes('Protein') || p.name.includes('Carb') || p.name.includes('Fiber') || p.name.includes('Fat') ? 'g' : p.name.includes('Weight') ? goals.weightUnit : p.name.includes('Intake') || p.name.includes('Calorie') ? 'kcal' : 'sets'}
             </p>
           ))}
         </div>
@@ -336,7 +355,7 @@ export default function Analytics({ logs, goals, onLogWeight, onDeleteWeight, on
     };
 
     return (
-      <div className="grid grid-cols-3 gap-1 bg-slate-100/90 p-1 rounded-xl border border-slate-200/80 text-xs w-full sm:w-64">
+      <div className="grid grid-cols-3 gap-1 bg-slate-100/90 p-1.5 rounded-xl border border-slate-200/80 text-sm w-full sm:w-72">
         {(['7d', '30d', '90d'] as RangePreset[]).map((p) => {
           const label = p === '7d' ? '7 Days' : p === '30d' ? '30 Days' : '90 Days';
           const isActive = state.preset === p;
@@ -346,7 +365,7 @@ export default function Analytics({ logs, goals, onLogWeight, onDeleteWeight, on
               type="button"
               id={`${idPrefix}-preset-${p}`}
               onClick={() => handlePresetChange(p)}
-              className={`w-full py-1.5 rounded-lg font-bold text-xs transition-all flex items-center justify-center text-center ${
+              className={`w-full py-1.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center text-center cursor-pointer ${
                 isActive
                   ? 'bg-indigo-600 text-white shadow-2xs'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
@@ -362,89 +381,141 @@ export default function Analytics({ logs, goals, onLogWeight, onDeleteWeight, on
 
   return (
     <div className="space-y-6" id="analytics-panel">
-      {/* Overview Metric Badges */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5" id="analytics-badges-grid">
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shadow-sm shrink-0">
-            <Award className="w-4 h-4" />
+      {/* 7-Day Performance Metric Badges Collapsible Dropdown */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl shadow-2xs overflow-hidden w-full transition-all" id="performance-badges-dropdown-card">
+        <button
+          type="button"
+          onClick={() => setIsMetricsDropdownOpen((prev) => !prev)}
+          className="w-full p-3.5 sm:p-4 flex items-center justify-between text-left hover:bg-slate-50/70 transition-colors cursor-pointer"
+          id="performance-badges-dropdown-toggle"
+          aria-expanded={isMetricsDropdownOpen}
+        >
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl shrink-0">
+              <Award className="w-5 h-5 text-indigo-600" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-black text-slate-900">Performance Summary</span>
+                <span className="text-xs font-bold text-indigo-600 bg-indigo-50/90 border border-indigo-100/80 px-2 py-0.5 rounded-md">
+                  7 Metrics
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 font-medium mt-0.5 truncate">
+                Macro targets, hypertrophy volume & scale weight compliance
+              </p>
+            </div>
           </div>
-          <div>
-            <span className="text-indigo-600 text-[10px] uppercase tracking-wider font-extrabold block">Protein Success</span>
-            <h3 className="text-base font-black text-slate-900 mt-0.5">
-              {default7dChartData.filter((d) => d.Protein >= d.ProteinGoal).length}/7 <span className="text-slate-500 text-xs font-bold">Days</span>
-            </h3>
-            <p className="text-[10px] font-semibold text-slate-500 mt-0.5 truncate">Protein target</p>
+          <div className="flex items-center gap-2 shrink-0 ml-3">
+            <span className="text-xs font-bold text-slate-400 hidden sm:inline">
+              {isMetricsDropdownOpen ? 'Collapse' : 'Expand'}
+            </span>
+            <div className="p-1.5 rounded-lg text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors">
+              <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isMetricsDropdownOpen ? 'rotate-180' : ''}`} />
+            </div>
           </div>
-        </div>
+        </button>
 
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-sky-50 border border-sky-100 flex items-center justify-center text-sky-600 shadow-sm shrink-0">
-            <Utensils className="w-4 h-4" />
-          </div>
-          <div>
-            <span className="text-sky-600 text-[10px] uppercase tracking-wider font-extrabold block">Carbs Target</span>
-            <h3 className="text-base font-black text-slate-900 mt-0.5">
-              {default7dChartData.filter((d) => d.Carbs >= d.CarbsGoal).length}/7 <span className="text-slate-500 text-xs font-bold">Days</span>
-            </h3>
-            <p className="text-[10px] font-semibold text-slate-500 mt-0.5 truncate">Glycogen target</p>
-          </div>
-        </div>
+        {isMetricsDropdownOpen && (
+          <div className="p-3.5 sm:p-4 pt-1 border-t border-slate-100">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 pt-2" id="analytics-badges-grid">
+              <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-3.5 shadow-xs flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-indigo-100/70 border border-indigo-100 flex items-center justify-center text-indigo-600 shadow-2xs shrink-0">
+                  <Award className="w-4 h-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <span className="text-indigo-600 text-xs uppercase tracking-wider font-extrabold block truncate">Protein Success</span>
+                  <h3 className="text-base font-black text-slate-900 mt-0.5">
+                    {default7dChartData.filter((d) => d.Protein >= d.ProteinGoal).length}/7 <span className="text-slate-500 text-xs font-bold">Days</span>
+                  </h3>
+                  <p className="text-xs font-semibold text-slate-500 mt-0.5 truncate">Protein target</p>
+                </div>
+              </div>
 
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600 shadow-sm shrink-0">
-            <Sparkles className="w-4 h-4" />
-          </div>
-          <div>
-            <span className="text-emerald-600 text-[10px] uppercase tracking-wider font-extrabold block">Fiber Target</span>
-            <h3 className="text-base font-black text-slate-900 mt-0.5">
-              {default7dChartData.filter((d) => d.Fiber >= d.FiberGoal).length}/7 <span className="text-slate-500 text-xs font-bold">Days</span>
-            </h3>
-            <p className="text-[10px] font-semibold text-slate-500 mt-0.5 truncate">Gut health target</p>
-          </div>
-        </div>
+              <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-3.5 shadow-xs flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-sky-100/70 border border-sky-100 flex items-center justify-center text-sky-600 shadow-2xs shrink-0">
+                  <Utensils className="w-4 h-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <span className="text-sky-600 text-xs uppercase tracking-wider font-extrabold block truncate">Carbs Target</span>
+                  <h3 className="text-base font-black text-slate-900 mt-0.5">
+                    {default7dChartData.filter((d) => d.Carbs >= d.CarbsGoal).length}/7 <span className="text-slate-500 text-xs font-bold">Days</span>
+                  </h3>
+                  <p className="text-xs font-semibold text-slate-500 mt-0.5 truncate">Glycogen target</p>
+                </div>
+              </div>
 
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600 shadow-sm shrink-0">
-            <Flame className="w-4 h-4" />
-          </div>
-          <div>
-            <span className="text-amber-600 text-[10px] uppercase tracking-wider font-extrabold block">Caloric Surplus</span>
-            <h3 className="text-base font-black text-slate-900 mt-0.5">
-              {default7dChartData.filter((d) => d.Calories >= d.CalorieGoal).length}/7 <span className="text-slate-500 text-xs font-bold">Days</span>
-            </h3>
-            <p className="text-[10px] font-semibold text-slate-500 mt-0.5 truncate">Bulking surplus</p>
-          </div>
-        </div>
+              <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-3.5 shadow-xs flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-100/70 border border-amber-100 flex items-center justify-center text-amber-600 shadow-2xs shrink-0">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <span className="text-amber-600 text-xs uppercase tracking-wider font-extrabold block truncate">Fat Compliance</span>
+                  <h3 className="text-base font-black text-slate-900 mt-0.5">
+                    {default7dChartData.filter((d) => d.Fat <= d.FatGoal).length}/7 <span className="text-slate-500 text-xs font-bold">Days</span>
+                  </h3>
+                  <p className="text-xs font-semibold text-slate-500 mt-0.5 truncate">Controlled target</p>
+                </div>
+              </div>
 
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-violet-50 border border-violet-100 flex items-center justify-center text-violet-600 shadow-sm shrink-0">
-            <Dumbbell className="w-4 h-4" />
-          </div>
-          <div>
-            <span className="text-violet-600 text-[10px] uppercase tracking-wider font-extrabold block">Hypertrophy Sets</span>
-            <h3 className="text-base font-black text-slate-900 mt-0.5">
-              {totalWeeklySets} <span className="text-slate-500 text-xs font-bold">Sets</span>
-            </h3>
-            <p className="text-[10px] font-semibold text-slate-500 mt-0.5 truncate">Completed volume</p>
-          </div>
-        </div>
+              <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-3.5 shadow-xs flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-emerald-100/70 border border-emerald-100 flex items-center justify-center text-emerald-600 shadow-2xs shrink-0">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <span className="text-emerald-600 text-xs uppercase tracking-wider font-extrabold block truncate">Fiber Target</span>
+                  <h3 className="text-base font-black text-slate-900 mt-0.5">
+                    {default7dChartData.filter((d) => d.Fiber >= d.FiberGoal).length}/7 <span className="text-slate-500 text-xs font-bold">Days</span>
+                  </h3>
+                  <p className="text-xs font-semibold text-slate-500 mt-0.5 truncate">Gut health target</p>
+                </div>
+              </div>
 
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-purple-50 border border-purple-100 flex items-center justify-center text-purple-600 shadow-sm shrink-0">
-            <Scale className="w-4 h-4" />
+              <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-3.5 shadow-xs flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-100/70 border border-amber-100 flex items-center justify-center text-amber-600 shadow-2xs shrink-0">
+                  <Flame className="w-4 h-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <span className="text-amber-600 text-xs uppercase tracking-wider font-extrabold block truncate">Caloric Surplus</span>
+                  <h3 className="text-base font-black text-slate-900 mt-0.5">
+                    {default7dChartData.filter((d) => d.Calories >= d.CalorieGoal).length}/7 <span className="text-slate-500 text-xs font-bold">Days</span>
+                  </h3>
+                  <p className="text-xs font-semibold text-slate-500 mt-0.5 truncate">Bulking surplus</p>
+                </div>
+              </div>
+
+              <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-3.5 shadow-xs flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-violet-100/70 border border-violet-100 flex items-center justify-center text-violet-600 shadow-2xs shrink-0">
+                  <Dumbbell className="w-4 h-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <span className="text-violet-600 text-xs uppercase tracking-wider font-extrabold block truncate">Hypertrophy Sets</span>
+                  <h3 className="text-base font-black text-slate-900 mt-0.5">
+                    {totalWeeklySets} <span className="text-slate-500 text-xs font-bold">Sets</span>
+                  </h3>
+                  <p className="text-xs font-semibold text-slate-500 mt-0.5 truncate">Completed volume</p>
+                </div>
+              </div>
+
+              <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-3.5 shadow-xs flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-purple-100/70 border border-purple-100 flex items-center justify-center text-purple-600 shadow-2xs shrink-0">
+                  <Scale className="w-4 h-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <span className="text-purple-600 text-xs uppercase tracking-wider font-extrabold block truncate">Scale Weight</span>
+                  <h3 className="text-base font-black text-slate-900 mt-0.5 truncate">
+                    {default7dChartData[default7dChartData.length - 1]?.Weight ? (
+                      `${default7dChartData[default7dChartData.length - 1].Weight} ${goals.weightUnit}`
+                    ) : 'No log'}
+                  </h3>
+                  <p className="text-xs text-purple-600 font-extrabold mt-0.5 truncate">
+                    Goal: {goals.targetWeight} {goals.weightUnit}
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
-          <div>
-            <span className="text-purple-600 text-[10px] uppercase tracking-wider font-extrabold block">Scale Weight</span>
-            <h3 className="text-base font-black text-slate-900 mt-0.5 truncate">
-              {default7dChartData[default7dChartData.length - 1]?.Weight ? (
-                `${default7dChartData[default7dChartData.length - 1].Weight} ${goals.weightUnit}`
-              ) : 'No log'}
-            </h3>
-            <p className="text-[10px] text-purple-600 font-extrabold mt-0.5 truncate">
-              Goal: {goals.targetWeight} {goals.weightUnit}
-            </p>
-          </div>
-        </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -518,6 +589,36 @@ export default function Analytics({ logs, goals, onLogWeight, onDeleteWeight, on
                 <Legend iconType="circle" wrapperStyle={{ fontSize: 11, paddingTop: 10 }} />
                 <ReferenceLine y={goals.dailyCarbsTarget || 250} stroke="#0284c7" strokeDasharray="5 5" label={{ value: `Carbs Target (${goals.dailyCarbsTarget || 250}g)`, position: 'top', fill: '#0284c7', fontSize: 9 }} />
                 <Bar dataKey="Carbs" name="Carbohydrates (g)" fill="#0284c7" radius={[6, 6, 0, 0]} maxBarSize={32} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Dietary Fats Intake Analytics */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+            <div>
+              <h4 className="text-sm font-bold text-slate-900">Dietary Fats Tracker</h4>
+              <p className="text-slate-500 text-xs mt-0.5">Monitors daily fats (g) against your metabolic limit</p>
+            </div>
+            <DateRangeSelector state={fatRange} onChange={setFatRange} idPrefix="fat" />
+          </div>
+
+          <div className="h-72" id="fat-progress-chart">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={fatChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="label" stroke="#64748b" fontSize={10} tickLine={false} />
+                <YAxis stroke="#64748b" fontSize={11} tickLine={false} />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend iconType="circle" wrapperStyle={{ fontSize: 11, paddingTop: 10 }} />
+                <ReferenceLine
+                  y={goals.dailyFatTarget || 78}
+                  stroke="#d97706"
+                  strokeDasharray="5 5"
+                  label={{ value: `Fat Limit (${goals.dailyFatTarget || 78}g)`, position: 'top', fill: '#d97706', fontSize: 9 }}
+                />
+                <Bar dataKey="Fat" name="Dietary Fat (g)" fill="#f59e0b" radius={[6, 6, 0, 0]} maxBarSize={32} />
               </BarChart>
             </ResponsiveContainer>
           </div>

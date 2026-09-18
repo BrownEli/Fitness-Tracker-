@@ -11,10 +11,12 @@ export const INITIAL_GOALS: UserGoals = {
   dailyProteinTarget: 165, // grams
   dailyCarbsTarget: 250, // grams
   dailyFiberTarget: 30, // grams
+  dailyFatTarget: 78, // grams (~25% of calories / 9)
   dailyCalorieTarget: 2800, // Surplus for lean bulk
   weeklyWorkoutDaysTarget: 5,
   backupReminderEnabled: true,
-  backupReminderTime: '22:00'
+  backupReminderTime: '22:00',
+  favoriteFoods: []
 };
 
 export const INITIAL_LOGS: DailyLog[] = [];

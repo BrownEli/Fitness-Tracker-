@@ -43,6 +43,8 @@ interface WorkspaceHubProps {
   onUpdateParsedFoods: React.Dispatch<React.SetStateAction<Omit<Meal, 'id' | 'timestamp'>[]>>;
   onUpdateParsedWorkouts: React.Dispatch<React.SetStateAction<any[]>>;
   onPerformDriveBackup?: (overrideToken?: string) => Promise<{ filename?: string; folderId?: string }>;
+  currentUserId?: string;
+  currentUserEmail?: string;
 }
 
 export default function WorkspaceHub({
@@ -58,7 +60,9 @@ export default function WorkspaceHub({
   parsedWorkouts,
   onUpdateParsedFoods,
   onUpdateParsedWorkouts,
-  onPerformDriveBackup
+  onPerformDriveBackup,
+  currentUserId,
+  currentUserEmail
 }: WorkspaceHubProps) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -339,9 +343,13 @@ export default function WorkspaceHub({
         filename = res.filename;
         resolvedFolderId = res.folderId;
       } else {
+        const effectiveUid = currentUserId || user?.uid;
+        const userScopedLogs = effectiveUid ? logs.filter((l) => !l.userId || l.userId === effectiveUid) : logs;
         const payload = {
+          userId: effectiveUid || 'user-default',
+          userEmail: currentUserEmail || user?.email || undefined,
           goals,
-          logs,
+          logs: userScopedLogs,
           insights,
           parsedFoods,
           parsedWorkouts,
@@ -350,7 +358,7 @@ export default function WorkspaceHub({
         };
 
         const folderId = goals.driveFolderLink ? extractFolderId(goals.driveFolderLink) : undefined;
-        const res = await backupDataToDrive(payload, activeToken, folderId);
+        const res = await backupDataToDrive(payload, activeToken, folderId, effectiveUid);
         filename = res.filename;
         resolvedFolderId = res.folderId;
 
@@ -377,9 +385,13 @@ export default function WorkspaceHub({
   // Manual Local Export (Download JSON file with timestamp)
   const handleLocalExport = () => {
     try {
+      const effectiveUid = currentUserId || user?.uid;
+      const userScopedLogs = effectiveUid ? logs.filter((l) => !l.userId || l.userId === effectiveUid) : logs;
       const payload = {
+        userId: effectiveUid || 'user-default',
+        userEmail: currentUserEmail || user?.email || undefined,
         goals,
-        logs,
+        logs: userScopedLogs,
         insights,
         parsedFoods,
         parsedWorkouts,

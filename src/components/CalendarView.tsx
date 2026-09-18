@@ -1,5 +1,6 @@
 import { DailyLog, UserGoals, ParsedWorkoutDay } from '../types';
 import { Calendar as CalendarIcon, Check, Dumbbell, Sparkles, Coffee, Footprints } from 'lucide-react';
+import { formatDateDDMMYYYY } from '../dateUtils';
 
 interface CalendarViewProps {
   logs: DailyLog[];
@@ -45,7 +46,9 @@ export default function CalendarView({ logs, goals, selectedDate, onSelectDate, 
             <CalendarIcon className="w-5.5 h-5.5 text-indigo-600" />
             Consistency Calendar
           </h2>
-          <p className="text-slate-500 text-xs mt-1">Select a day to review and log workouts or nutrition</p>
+          <p className="text-slate-500 text-xs mt-1">
+            Select a day to review and log &bull; Active: <span className="font-mono font-bold text-indigo-600">{formatDateDDMMYYYY(selectedDate)}</span>
+          </p>
         </div>
         <div className="bg-indigo-50/75 px-4.5 py-1.5 rounded-xl border border-indigo-100 inline-flex items-center justify-center self-start sm:self-auto">
           <span className="text-sm font-black text-indigo-700 font-mono tracking-tight">{monthName}</span>
@@ -105,7 +108,9 @@ export default function CalendarView({ logs, goals, selectedDate, onSelectDate, 
           const proteinGoalMet = totalProtein >= goals.dailyProteinTarget;
           const carbsGoalMet = totalCarbs >= targetCarbs;
           const fiberGoalMet = totalFiber >= targetFiber;
-          const calorieGoalMet = totalCalories >= goals.dailyCalorieTarget;
+          const calorieOverTarget = totalCalories - goals.dailyCalorieTarget;
+          const isCalorieRedAlert = calorieOverTarget >= 50;
+          const isCalorieSoftOver = calorieOverTarget > 0 && !isCalorieRedAlert;
 
           return (
             <button
@@ -173,12 +178,22 @@ export default function CalendarView({ logs, goals, selectedDate, onSelectDate, 
                   <span
                     className={`w-1.5 h-1.5 rounded-full ${
                       isSelected
-                        ? 'bg-amber-200'
-                        : calorieGoalMet
-                        ? 'bg-amber-500'
-                        : 'bg-amber-300'
+                        ? isCalorieRedAlert
+                          ? 'bg-rose-300 ring-1 ring-white'
+                          : 'bg-amber-200'
+                        : isCalorieRedAlert
+                        ? 'bg-red-600 ring-1 ring-red-400 animate-pulse'
+                        : isCalorieSoftOver
+                        ? 'bg-amber-400'
+                        : 'bg-emerald-500'
                     }`}
-                    title={`Calories: ${totalCalories} / ${goals.dailyCalorieTarget} kcal`}
+                    title={
+                      isCalorieRedAlert
+                        ? `Calorie Red Alert: ${totalCalories} / ${goals.dailyCalorieTarget} kcal (+${calorieOverTarget} kcal over - back off!)`
+                        : isCalorieSoftOver
+                        ? `Calories: ${totalCalories} / ${goals.dailyCalorieTarget} kcal (+${calorieOverTarget} kcal buffer)`
+                        : `Calories: ${totalCalories} / ${goals.dailyCalorieTarget} kcal`
+                    }
                   ></span>
                 )}
 

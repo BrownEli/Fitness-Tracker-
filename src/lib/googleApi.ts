@@ -355,14 +355,28 @@ export function getBackupFilename(prefix: string = 'fitness_tracker_backup'): st
 /**
  * Backs up all application data (logs, goals, insights) to Google Drive in JSON format.
  * ALWAYS creates a brand new timestamped JSON file in the specified Google Drive location and never overwrites existing files.
+ * Enforces strict user-specific isolation so exported data only belongs to the authenticated user ID.
  */
 export async function backupDataToDrive(
   data: any,
   accessToken: string,
-  folderId?: string
+  folderId?: string,
+  userId?: string
 ): Promise<{ fileId: string; folderId: string; filename: string }> {
   const filename = getBackupFilename();
   
+  // Enforce strict user-scoping for exported payload
+  const effectiveUserId = userId || data.userId;
+  const userScopedData = {
+    ...data,
+    userId: effectiveUserId || 'user-default'
+  };
+
+  // Strictly filter logs so no other user's records can ever be exported
+  if (effectiveUserId && Array.isArray(userScopedData.logs)) {
+    userScopedData.logs = userScopedData.logs.filter((l: any) => !l.userId || l.userId === effectiveUserId);
+  }
+
   let resolvedFolderId = folderId;
   if (!resolvedFolderId) {
     const defaultFolderId = await getOrCreateFolderByPath(['Fitness Tracker', 'Backups'], accessToken, true);
@@ -401,7 +415,7 @@ export async function backupDataToDrive(
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify(data)
+    body: JSON.stringify(userScopedData)
   });
   if (!uploadRes.ok) {
     throw new Error(`Failed to upload backup JSON data to Google Drive: ${uploadRes.statusText}`);
@@ -413,7 +427,11 @@ export async function backupDataToDrive(
 /**
  * Restores data from the most recent backup JSON file in Google Drive
  */
-export async function restoreDataFromDrive(accessToken: string, folderId?: string): Promise<any> {
+export async function restoreDataFromDrive(
+  accessToken: string,
+  folderId?: string,
+  currentUserId?: string
+): Promise<any> {
   let fileId: string | undefined;
   let resolvedFolderId = folderId;
 
@@ -501,6 +519,15 @@ export async function restoreDataFromDrive(accessToken: string, folderId?: strin
   
   const content = await downloadRes.json();
   
+  // If backup content has a userId and the current session is authenticated,
+  // ensure we do not overwrite or import other users' logs
+  if (content.userId && currentUserId && content.userId !== currentUserId) {
+    console.warn(`Drive backup belongs to userId ${content.userId}, filtering out logs not matching current user ${currentUserId}`);
+    if (Array.isArray(content.logs)) {
+      content.logs = content.logs.filter((l: any) => l.userId === currentUserId);
+    }
+  }
+
   // Inject the resolved parent folder ID to update drive folder link in state
   return {
     ...content,

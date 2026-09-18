@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { UserGoals, DailyLog } from '../types';
+import { formatDateDDMMYYYY, getTodayString } from '../dateUtils';
 import {
   Settings,
   Check,
@@ -18,7 +19,10 @@ import {
   ShieldCheck,
   RefreshCw,
   Info,
-  X
+  X,
+  AlertTriangle,
+  Utensils,
+  Layers
 } from 'lucide-react';
 
 interface GoalsConfigProps {
@@ -28,8 +32,6 @@ interface GoalsConfigProps {
   onDeleteWeight?: (date: string) => void;
   logs?: DailyLog[];
 }
-
-const getTodayString = () => new Date().toISOString().split('T')[0];
 
 const ACTIVITY_OPTIONS = [
   {
@@ -102,6 +104,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
   // Daily Anabolic Macro Targets (Card 2)
   const [protein, setProtein] = useState(goals.dailyProteinTarget.toString());
   const [carbs, setCarbs] = useState((goals.dailyCarbsTarget || 250).toString());
+  const [fat, setFat] = useState((goals.dailyFatTarget || 78).toString());
   const [fiber, setFiber] = useState((goals.dailyFiberTarget || 30).toString());
   const [calories, setCalories] = useState(goals.dailyCalorieTarget.toString());
   const [workoutDays, setWorkoutDays] = useState(goals.weeklyWorkoutDaysTarget.toString());
@@ -135,6 +138,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
     setBodyFat(goals.bodyFat ? goals.bodyFat.toString() : '');
     setProtein(goals.dailyProteinTarget.toString());
     setCarbs((goals.dailyCarbsTarget || 250).toString());
+    setFat((goals.dailyFatTarget || 78).toString());
     setFiber((goals.dailyFiberTarget || 30).toString());
     setCalories(goals.dailyCalorieTarget.toString());
     setWorkoutDays(goals.weeklyWorkoutDaysTarget.toString());
@@ -152,7 +156,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
     const weightLbs = weightUnit === 'lbs' ? weightNum : weightNum * 2.20462;
 
     if (weightKg <= 0 || heightNum <= 0 || ageNum <= 0) {
-      return { bmr: 1750, tdee: 2400, leanBulkCalories: 2750, targetProtein: 165, targetCarbs: 320, targetFiber: 33 };
+      return { bmr: 1750, tdee: 2400, leanBulkCalories: 2750, targetProtein: 165, targetCarbs: 320, targetFiber: 33, targetFat: 76, targetFatKcal: 688 };
     }
 
     let bmr = 0;
@@ -181,6 +185,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
     // Recommended Macro Split for Hypertrophy
     const targetProtein = Math.round(weightLbs * 1.0); // 1.0g per lb bodyweight
     const targetFatKcal = Math.round(leanBulkCalories * 0.25);
+    const targetFat = Math.round(targetFatKcal / 9); // 9 kcal per gram of fat
     const targetProteinKcal = targetProtein * 4;
     const targetCarbsKcal = Math.max(0, leanBulkCalories - targetProteinKcal - targetFatKcal);
     const targetCarbs = Math.round(targetCarbsKcal / 4);
@@ -194,7 +199,9 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
       leanBulkCalories,
       targetProtein,
       targetCarbs,
-      targetFiber
+      targetFiber,
+      targetFat,
+      targetFatKcal
     };
   }, [gender, age, currentHeight, currentWeight, weightUnit, activityLevel, bodyFat]);
 
@@ -202,6 +209,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
   const applyBmrCalculations = () => {
     setProtein(liveMetabolicStats.targetProtein.toString());
     setCarbs(liveMetabolicStats.targetCarbs.toString());
+    setFat(liveMetabolicStats.targetFat.toString());
     setFiber(liveMetabolicStats.targetFiber.toString());
     setCalories(liveMetabolicStats.leanBulkCalories.toString());
 
@@ -213,9 +221,10 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
   useEffect(() => {
     setProtein(liveMetabolicStats.targetProtein.toString());
     setCarbs(liveMetabolicStats.targetCarbs.toString());
+    setFat(liveMetabolicStats.targetFat.toString());
     setFiber(liveMetabolicStats.targetFiber.toString());
     setCalories(liveMetabolicStats.leanBulkCalories.toString());
-  }, [liveMetabolicStats.targetProtein, liveMetabolicStats.targetCarbs, liveMetabolicStats.targetFiber, liveMetabolicStats.leanBulkCalories]);
+  }, [liveMetabolicStats.targetProtein, liveMetabolicStats.targetCarbs, liveMetabolicStats.targetFat, liveMetabolicStats.targetFiber, liveMetabolicStats.leanBulkCalories]);
 
   const handleSaveSpecificWeight = (e: React.FormEvent) => {
     e.preventDefault();
@@ -254,6 +263,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
       bodyFat: !isNaN(parsedBodyFat) && parsedBodyFat > 0 ? parsedBodyFat : undefined,
       dailyProteinTarget: parseFloat(protein) || 150,
       dailyCarbsTarget: parseFloat(carbs) || 250,
+      dailyFatTarget: parseFloat(fat) || 78,
       dailyFiberTarget: parseFloat(fiber) || 30,
       dailyCalorieTarget: parseInt(calories) || 2500,
       weeklyWorkoutDaysTarget: parseInt(workoutDays) || 5
@@ -412,7 +422,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
           {/* Body Fat % */}
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1.5">
-              Body Fat % <span className="text-[10px] text-slate-400 font-normal">(Optional)</span>
+              Body Fat %
             </label>
             <div className="relative">
               <input
@@ -473,7 +483,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
             <div className="space-y-1">
               <span className="text-[10px] font-black uppercase text-indigo-400 tracking-wider flex items-center gap-1.5">
                 <Flame className="w-3.5 h-3.5 text-indigo-400" />
-                Live Metabolic Calculations ({liveMetabolicStats.formulaName})
+                Live Metabolic Calculations &bull; {liveMetabolicStats.formulaName}
               </span>
               <p className="text-xs text-slate-300 font-medium">
                 Target calories and macros below auto-update from these scientific metrics
@@ -670,10 +680,10 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
           </button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
           {/* Daily Protein Goal */}
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1.5">Daily Protein Target</label>
+            <label className="block text-sm font-bold text-slate-700 mb-1.5">Daily Protein Target</label>
             <div className="relative">
               <input
                 type="number"
@@ -683,14 +693,15 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
                 value={protein}
                 onChange={(e) => setProtein(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl px-3.5 py-2 text-sm font-bold text-slate-900 focus:outline-none transition-all"
+                id="daily-protein-target-input"
               />
-              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">g</span>
+              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">g</span>
             </div>
           </div>
 
           {/* Daily Carbs Goal */}
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1.5">Daily Carbs Target</label>
+            <label className="block text-sm font-bold text-slate-700 mb-1.5">Daily Carbs Target</label>
             <div className="relative">
               <input
                 type="number"
@@ -700,14 +711,36 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
                 value={carbs}
                 onChange={(e) => setCarbs(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl px-3.5 py-2 text-sm font-bold text-slate-900 focus:outline-none transition-all"
+                id="daily-carbs-target-input"
               />
-              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">g</span>
+              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">g</span>
             </div>
+          </div>
+
+          {/* Daily Fat Goal */}
+          <div>
+            <label className="block text-sm font-bold text-slate-700 mb-1.5">Daily Fat Target</label>
+            <div className="relative">
+              <input
+                type="number"
+                required
+                min="10"
+                max="300"
+                value={fat}
+                onChange={(e) => setFat(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl px-3.5 py-2 text-sm font-bold text-slate-900 focus:outline-none transition-all"
+                id="daily-fat-target-input"
+              />
+              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">g</span>
+            </div>
+            <p className="text-xs font-semibold text-slate-500 mt-1">
+              Red alert triggers when exceeding this target to help you stay within your fat limits.
+            </p>
           </div>
 
           {/* Daily Fiber Goal */}
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1.5">Daily Fiber Target</label>
+            <label className="block text-sm font-bold text-slate-700 mb-1.5">Daily Fiber Target</label>
             <div className="relative">
               <input
                 type="number"
@@ -717,14 +750,15 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
                 value={fiber}
                 onChange={(e) => setFiber(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl px-3.5 py-2 text-sm font-bold text-slate-900 focus:outline-none transition-all"
+                id="daily-fiber-target-input"
               />
-              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">g</span>
+              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">g</span>
             </div>
           </div>
 
           {/* Daily Calorie Goal */}
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1.5">Daily Calorie Target</label>
+            <label className="block text-sm font-bold text-slate-700 mb-1.5">Daily Calorie Target</label>
             <div className="relative">
               <input
                 type="number"
@@ -734,14 +768,18 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
                 value={calories}
                 onChange={(e) => setCalories(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl px-3.5 py-2 text-sm font-bold text-slate-900 focus:outline-none transition-all"
+                id="daily-calories-target-input"
               />
-              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">kcal</span>
+              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">kcal</span>
             </div>
+            <p className="text-xs font-semibold text-slate-500 mt-1">
+              Red alert triggers when exceeding this target by 50 or more calories to keep your fat loss on track.
+            </p>
           </div>
 
           {/* Weekly Workouts Goal */}
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1.5">Weekly Workouts Goal</label>
+            <label className="block text-sm font-bold text-slate-700 mb-1.5">Weekly Workouts Goal</label>
             <div className="relative">
               <input
                 type="number"
@@ -751,14 +789,15 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
                 value={workoutDays}
                 onChange={(e) => setWorkoutDays(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl px-3.5 py-2 text-sm font-bold text-slate-900 focus:outline-none transition-all"
+                id="weekly-workouts-target-input"
               />
-              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">days</span>
+              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">days</span>
             </div>
           </div>
         </div>
 
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-100">
-          <div className="text-xs text-slate-500 font-medium">
+          <div className="text-sm text-slate-500 font-medium">
             {saved && (
               <span className="text-emerald-600 font-extrabold flex items-center gap-1.5 animate-fadeIn" id="goals-saved-alert">
                 <Check className="w-4 h-4 text-emerald-600" />
@@ -769,7 +808,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
 
           <button
             type="submit"
-            className="w-full sm:w-auto px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-100 hover:shadow-indigo-200 transition-all cursor-pointer flex items-center justify-center text-center gap-2"
+            className="w-full sm:w-auto px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl shadow-md shadow-indigo-100 hover:shadow-indigo-200 transition-all cursor-pointer flex items-center justify-center text-center gap-2"
             id="save-goals-btn"
           >
             <Check className="w-4 h-4" />
@@ -785,9 +824,9 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
             <div>
               <h2 className="text-base font-black text-slate-900 tracking-tight flex items-center gap-2">
                 <Scale className="w-5 h-5 text-purple-600" />
-                3. Scale Weight Log & History
+                3. Scale Weight Log and History
               </h2>
-              <p className="text-slate-500 text-xs mt-0.5">Record or edit scale weight entries for specific dates</p>
+              <p className="text-slate-500 text-sm mt-0.5">Record or edit scale weight entries for specific dates</p>
             </div>
 
             <button
@@ -859,7 +898,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
                     <div key={entry.date} className="flex items-center justify-between bg-white border border-slate-200 rounded-lg p-2.5 text-xs">
                       <div className="flex items-center gap-2">
                         <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                        <span className="font-bold text-slate-700">{entry.date}</span>
+                        <span className="font-bold text-slate-700 font-mono">{formatDateDDMMYYYY(entry.date)}</span>
                       </div>
                       <div className="flex items-center gap-3">
                         <span className="font-mono font-black text-purple-700">{entry.weight} {weightUnit}</span>

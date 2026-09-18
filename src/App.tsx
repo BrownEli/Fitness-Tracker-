@@ -6,10 +6,13 @@ import WorkoutLogger from './components/WorkoutLogger';
 import Analytics from './components/Analytics';
 import BmrCalculator from './components/BmrCalculator';
 import CalendarView from './components/CalendarView';
+import ActivityRecords from './components/ActivityRecords';
 import CoachInsights from './components/CoachInsights';
 import GoalsConfig from './components/GoalsConfig';
 import WorkspaceHub from './components/WorkspaceHub';
 import { ConfirmModal } from './components/ConfirmModal';
+import { APP_VERSION } from './version';
+import { formatDateDDMMYYYY } from './dateUtils';
 import { auth, initAuth, getAccessToken, isTokenExpired, googleSignIn } from './lib/googleAuth';
 import { backupDataToDrive, extractFolderId, fetchGoogleDocText, parseFoodsFromText, parseWorkoutsFromText, restoreDataFromDrive } from './lib/googleApi';
 import { sendWebNotification } from './lib/notifications';
@@ -51,7 +54,13 @@ import {
   Check,
   Loader2,
   Lock,
-  ShieldCheck
+  ShieldCheck,
+  Coffee,
+  ChevronDown,
+  ChevronUp,
+  Layers,
+  Star,
+  AlertTriangle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -80,8 +89,8 @@ export default function App() {
     'nutrition' | 'workouts' | 'analytics' | 'coach' | 'settings' | 'workspace'
   >('nutrition');
 
-  // Sub-tabs state inside Analytics section (Graphs, BMR Calculator, & Calendar)
-  const [analyticsSubTab, setAnalyticsSubTab] = useState<'graphs' | 'bmr' | 'calendar'>('graphs');
+  // Sub-tabs state inside Analytics section (Graphs, BMR Calculator, Calendar, & Activity Records)
+  const [analyticsSubTab, setAnalyticsSubTab] = useState<'graphs' | 'bmr' | 'calendar' | 'records'>('graphs');
 
   // Hamburger drawer open/close state
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -207,9 +216,16 @@ export default function App() {
   const [editMealName, setEditMealName] = useState('');
   const [editMealProtein, setEditMealProtein] = useState('');
   const [editMealCarbs, setEditMealCarbs] = useState('');
+  const [editMealFat, setEditMealFat] = useState('');
   const [editMealFiber, setEditMealFiber] = useState('');
   const [editMealCalories, setEditMealCalories] = useState('');
   const [editMealTime, setEditMealTime] = useState('');
+
+  // Expandable plate breakdown toggle state for logged meals
+  const [expandedMealBreakdowns, setExpandedMealBreakdowns] = useState<Record<string, boolean>>({});
+  const toggleMealBreakdown = (mealId: string) => {
+    setExpandedMealBreakdowns((prev) => ({ ...prev, [mealId]: !prev[mealId] }));
+  };
 
   // State for adding or editing logged workouts manually on selected date
   const [isAddingWorkoutModal, setIsAddingWorkoutModal] = useState(false);
@@ -229,6 +245,9 @@ export default function App() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isSyncingDrive, setIsSyncingDrive] = useState(false);
   const [syncStatusMessage, setSyncStatusMessage] = useState<string | null>(null);
+
+  // Collapsible dropdown toggle state for Daily Target Budgets overview
+  const [isBudgetsDropdownOpen, setIsBudgetsDropdownOpen] = useState(false);
 
   // Firebase Auth & Firestore Persistence state
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
@@ -573,7 +592,7 @@ export default function App() {
       const folderId = goals.driveFolderLink ? extractFolderId(goals.driveFolderLink) : undefined;
       
       // Try to restore first
-      const restored = await restoreDataFromDrive(accessToken, folderId);
+      const restored = await restoreDataFromDrive(accessToken, folderId, firebaseUser?.uid);
       
       if (restored) {
         console.log('Found existing backup on Google Drive, restoring data...', restored);
@@ -680,16 +699,20 @@ export default function App() {
         const hasLocalData = logs.length > 0 || parsedFoods.length > 0 || parsedWorkouts.length > 0;
         if (hasLocalData) {
           console.log('No backup found on Google Drive. Performing initial backup of local data...');
+          const activeUid = firebaseUser?.uid;
+          const userScopedLogs = activeUid ? logs.filter((l) => !l.userId || l.userId === activeUid) : logs;
           const payload = {
+            userId: activeUid || 'user-default',
+            userEmail: firebaseUser?.email || undefined,
             goals,
-            logs,
+            logs: userScopedLogs,
             insights,
             parsedFoods,
             parsedWorkouts,
             backupVersion: '1.0',
             exportedAt: new Date().toISOString()
           };
-          const { fileId, folderId: resolvedFolderId } = await backupDataToDrive(payload, accessToken, folderId);
+          const { fileId, folderId: resolvedFolderId } = await backupDataToDrive(payload, accessToken, folderId, activeUid);
           
           const nowStr = new Date().toLocaleString();
           const newFolderLink = resolvedFolderId ? `https://drive.google.com/drive/folders/${resolvedFolderId}` : goals.driveFolderLink;
@@ -737,9 +760,13 @@ export default function App() {
       setIsSyncingDrive(true);
 
       const folderId = goals.driveFolderLink ? extractFolderId(goals.driveFolderLink) : undefined;
+      const activeUid = firebaseUser?.uid;
+      const userScopedLogs = activeUid ? logs.filter((l) => !l.userId || l.userId === activeUid) : logs;
       const payload = {
+        userId: activeUid || 'user-default',
+        userEmail: firebaseUser?.email || undefined,
         goals,
-        logs,
+        logs: userScopedLogs,
         insights,
         parsedFoods,
         parsedWorkouts,
@@ -747,7 +774,7 @@ export default function App() {
         exportedAt: new Date().toISOString()
       };
 
-      const { filename, fileId, folderId: resolvedFolderId } = await backupDataToDrive(payload, accessToken, folderId);
+      const { filename, fileId, folderId: resolvedFolderId } = await backupDataToDrive(payload, accessToken, folderId, activeUid);
       const nowStr = new Date().toLocaleString();
 
       const newFolderLink = resolvedFolderId ? `https://drive.google.com/drive/folders/${resolvedFolderId}` : goals.driveFolderLink;
@@ -966,11 +993,52 @@ export default function App() {
     }
   };
 
+  // Star / Favorite food handler (persisted in user goals and synchronized across logs)
+  const handleToggleFavoriteFood = (foodName: string) => {
+    const trimmed = (foodName || '').trim();
+    if (!trimmed) return;
+    const lower = trimmed.toLowerCase();
+    const currentFavs = goals.favoriteFoods || [];
+    const exists = currentFavs.some((f) => f.trim().toLowerCase() === lower);
+
+    const updatedFavs = exists
+      ? currentFavs.filter((f) => f.trim().toLowerCase() !== lower)
+      : [...currentFavs, trimmed];
+
+    const updatedGoals: UserGoals = {
+      ...goals,
+      favoriteFoods: updatedFavs
+    };
+    setGoals(updatedGoals);
+    localStorage.setItem('hypertrophy_goals', JSON.stringify(updatedGoals));
+
+    // Also persist to Firestore if Firebase user is authenticated
+    if (firebaseUser) {
+      saveUserGoalsToFirestore(firebaseUser.uid, updatedGoals).catch((err) => {
+        console.error('Error saving updated favorite foods to Firestore:', err);
+      });
+    }
+
+    // Update isFavorite in state across loaded logs
+    setLogs((prev) =>
+      prev.map((l) => ({
+        ...l,
+        meals: l.meals.map((m) => {
+          if (m.name.trim().toLowerCase() === lower) {
+            return { ...m, isFavorite: !exists };
+          }
+          return m;
+        })
+      }))
+    );
+  };
+
   const startEditingMeal = (meal: Meal) => {
     setEditingMealId(meal.id);
     setEditMealName(meal.name);
     setEditMealProtein(meal.protein.toString());
     setEditMealCarbs(meal.carbs !== undefined ? meal.carbs.toString() : '0');
+    setEditMealFat(meal.fat !== undefined ? meal.fat.toString() : '0');
     setEditMealFiber(meal.fiber !== undefined ? meal.fiber.toString() : '0');
     setEditMealCalories(meal.calories.toString());
     setEditMealTime(meal.timestamp || '');
@@ -981,6 +1049,7 @@ export default function App() {
     setEditMealName('');
     setEditMealProtein('');
     setEditMealCarbs('');
+    setEditMealFat('');
     setEditMealFiber('');
     setEditMealCalories('');
     setEditMealTime('');
@@ -988,14 +1057,17 @@ export default function App() {
 
   const saveEditingMeal = (mealId: string) => {
     if (!editMealName.trim()) return;
+    const existingMeal = currentLog.meals.find((m) => m.id === mealId);
     const updatedMeal: Meal = {
       id: mealId,
       name: editMealName.trim(),
       protein: Number(editMealProtein) || 0,
       carbs: Number(editMealCarbs) || 0,
+      fat: Number(editMealFat) || 0,
       fiber: Number(editMealFiber) || 0,
       calories: Number(editMealCalories) || 0,
-      timestamp: editMealTime ? formatTime12Hour(editMealTime) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      items: existingMeal?.items,
+      timestamp: editMealTime ? formatTime12Hour(editMealTime) : (existingMeal?.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
     };
     
     updateDailyLog(selectedDate, (log) => ({
@@ -1195,31 +1267,45 @@ export default function App() {
     setInsights((prev) => [newInsight, ...prev]);
   };
 
+  // Update existing coaching insight (e.g. after adding chat messages)
+  const handleUpdateInsight = (index: number, updatedInsight: CoachingInsight) => {
+    setInsights((prev) => prev.map((item, i) => (i === index ? updatedInsight : item)));
+  };
+
+  // Delete coaching insight recommendation
+  const handleDeleteInsight = (index: number) => {
+    setInsights((prev) => prev.filter((_, i) => i !== index));
+  };
+
   // Compute stats for current selected date
   const todayProtein = currentLog.meals.reduce((sum, m) => sum + (m.protein || 0), 0);
   const todayCarbs = currentLog.meals.reduce((sum, m) => sum + (m.carbs || 0), 0);
+  const todayFat = currentLog.meals.reduce((sum, m) => sum + (m.fat || 0), 0);
   const todayFiber = currentLog.meals.reduce((sum, m) => sum + (m.fiber || 0), 0);
   const todayCalories = currentLog.meals.reduce((sum, m) => sum + (m.calories || 0), 0);
   const completedWorkouts = currentLog.workouts.filter((w) => w.completed).length;
 
   const targetCarbs = goals.dailyCarbsTarget || 250;
+  const targetFat = goals.dailyFatTarget || 78;
   const targetFiber = goals.dailyFiberTarget || 30;
 
   const proteinPercentage = Math.min(100, Math.round((todayProtein / goals.dailyProteinTarget) * 100));
   const carbsPercentage = Math.min(100, Math.round((todayCarbs / targetCarbs) * 100));
+  const fatPercentage = Math.min(100, Math.round((todayFat / targetFat) * 100));
   const fiberPercentage = Math.min(100, Math.round((todayFiber / targetFiber) * 100));
   const caloriePercentage = Math.min(100, Math.round((todayCalories / goals.dailyCalorieTarget) * 100));
+
+  const calorieSurplus = todayCalories - goals.dailyCalorieTarget;
+  const isCalorieRedAlert = calorieSurplus >= 50;
+  const isCalorieSoftOver = calorieSurplus > 0 && calorieSurplus < 50;
+
+  const fatSurplus = todayFat - targetFat;
+  const isFatRedAlert = Boolean(goals.dailyFatTarget && todayFat > goals.dailyFatTarget);
 
   // Determine date label
   const getFriendlyDateLabel = () => {
     const todayStr = new Date().toISOString().split('T')[0];
-    const logDateObj = new Date(selectedDate + 'T00:00:00');
-
-    const formattedDate = logDateObj.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
+    const formattedDate = formatDateDDMMYYYY(selectedDate);
 
     if (selectedDate === todayStr) {
       return `Today, ${formattedDate}`;
@@ -1522,29 +1608,34 @@ export default function App() {
                 </nav>
               </div>
 
-              {/* Menu Footer with targets/profile summary */}
-              <div className="p-6 border-t border-slate-100 bg-slate-50/50 space-y-4 shrink-0">
+              {/* Menu Footer with targets/profile summary and Versioning */}
+              <div className="p-5 border-t border-slate-100 bg-slate-50/50 space-y-4 shrink-0">
                 <div className="space-y-2">
-                  <span className="text-[9px] text-slate-400 uppercase tracking-widest font-black block">Fitness Targets</span>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    <div className="bg-white border border-slate-200/60 p-2 rounded-xl text-center">
-                      <span className="text-[8px] text-slate-400 font-bold block leading-tight">Weight Goal</span>
-                      <span className="text-[11px] font-black text-indigo-600 font-mono mt-0.5 block">{goals.targetWeight}{goals.weightUnit}</span>
+                  <span className="text-xs text-slate-500 uppercase tracking-wider font-black block">Fitness Targets</span>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="bg-white border border-slate-200/80 p-2.5 rounded-xl text-center shadow-2xs">
+                      <span className="text-xs text-slate-500 font-bold block leading-tight">Weight</span>
+                      <span className="text-sm font-black text-indigo-600 font-mono mt-0.5 block">{goals.targetWeight} {goals.weightUnit}</span>
                     </div>
-                    <div className="bg-white border border-slate-200/60 p-2 rounded-xl text-center">
-                      <span className="text-[8px] text-slate-400 font-bold block leading-tight">Height</span>
-                      <span className="text-[11px] font-black text-violet-600 font-mono mt-0.5 block">{goals.currentHeight || 178}cm</span>
+                    <div className="bg-white border border-slate-200/80 p-2.5 rounded-xl text-center shadow-2xs">
+                      <span className="text-xs text-slate-500 font-bold block leading-tight">Height</span>
+                      <span className="text-sm font-black text-violet-600 font-mono mt-0.5 block">{goals.currentHeight || 178} cm</span>
                     </div>
-                    <div className="bg-white border border-slate-200/60 p-2 rounded-xl text-center">
-                      <span className="text-[8px] text-slate-400 font-bold block leading-tight">Protein Goal</span>
-                      <span className="text-[11px] font-black text-emerald-600 font-mono mt-0.5 block">{goals.dailyProteinTarget}g</span>
+                    <div className="bg-white border border-slate-200/80 p-2.5 rounded-xl text-center shadow-2xs">
+                      <span className="text-xs text-slate-500 font-bold block leading-tight">Protein</span>
+                      <span className="text-sm font-black text-emerald-600 font-mono mt-0.5 block">{goals.dailyProteinTarget}g</span>
                     </div>
                   </div>
                 </div>
 
-                <div className="text-[10px] text-slate-400 font-semibold flex items-center justify-between border-t border-slate-100 pt-3">
-                  <span>Firestore Sync:</span>
-                  <span className="font-bold text-amber-600 font-mono">{firebaseUser ? 'Online & Persistent' : 'Local Cache'}</span>
+                <div className="text-xs text-slate-500 font-semibold flex items-center justify-between border-t border-slate-100 pt-3">
+                  <span>Firestore Sync</span>
+                  <span className="font-bold text-amber-600 font-mono">{firebaseUser ? 'Online' : 'Local Cache'}</span>
+                </div>
+
+                <div className="text-xs text-slate-500 font-semibold flex items-center justify-between border-t border-slate-100 pt-3">
+                  <span>App Version</span>
+                  <span className="font-black text-indigo-600 font-mono bg-indigo-50 px-2 py-0.5 rounded-md">{APP_VERSION}</span>
                 </div>
               </div>
             </motion.div>
@@ -1557,22 +1648,32 @@ export default function App() {
         
         {/* Unified Active Day Context & Date Picker (Visible only in Log Area) */}
         {(activeTab === 'nutrition' || activeTab === 'workouts') && (
-          <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-xs flex items-center justify-between gap-4" id="global-metrics-bar">
+          <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-xs flex items-center justify-between gap-4 flex-wrap" id="global-metrics-bar">
             {/* Active Day selection */}
             <div className="flex items-center gap-4">
               <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl shrink-0">
                 <Calendar className="w-6 h-6" />
               </div>
               <div className="space-y-1">
-                <span className="text-[10px] text-slate-400 uppercase tracking-widest font-black block">Active Logging Day</span>
-                <input
-                  type="date"
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  className="text-lg font-black text-slate-900 bg-transparent border-b-2 border-dashed border-indigo-200 hover:border-indigo-400 focus:border-indigo-500 focus:outline-none focus:ring-0 pb-1 cursor-pointer font-mono transition-colors"
-                  id="global-date-selector"
-                />
-                <p className="text-[11px] text-slate-500 font-medium">Changing the date will update logs and graphs below.</p>
+                <span className="text-sm text-slate-500 uppercase tracking-wider font-bold block">Active Logging Day</span>
+                <div className="relative inline-flex items-center group cursor-pointer">
+                  <div className="flex items-center gap-2 text-lg font-black text-slate-900 border-b-2 border-dashed border-indigo-200 group-hover:border-indigo-500 pb-1 font-mono transition-colors">
+                    <span>{formatDateDDMMYYYY(selectedDate)}</span>
+                  </div>
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        setSelectedDate(e.target.value);
+                      }
+                    }}
+                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                    id="global-date-selector"
+                    aria-label="Active Logging Day"
+                  />
+                </div>
+                <p className="text-sm text-slate-500 font-medium">Changing the date will update logs and graphs below.</p>
               </div>
             </div>
           </div>
@@ -1593,6 +1694,11 @@ export default function App() {
                     timestamp={mealTimeInput}
                     setTimestamp={setMealTimeInput}
                     logs={logs}
+                    selectedDate={selectedDate}
+                    favoriteFoods={goals.favoriteFoods || []}
+                    onToggleFavoriteFood={handleToggleFavoriteFood}
+                    dailyCalorieTarget={goals.dailyCalorieTarget}
+                    dailyFatTarget={goals.dailyFatTarget}
                   />
                 </div>
 
@@ -1601,6 +1707,132 @@ export default function App() {
                   <div className="flex justify-between items-center border-b border-slate-100 pb-3">
                     <h3 className="text-sm font-black text-slate-800">Eaten Today</h3>
                     <span className="text-xs font-mono font-bold text-slate-400">{currentLog.meals.length} items logged</span>
+                  </div>
+
+                  {/* Calorie Intake Status Bar with Red Alert in Eaten Today Panel */}
+                  <div
+                    className={`p-4 rounded-2xl border transition-all space-y-2.5 ${
+                      isCalorieRedAlert
+                        ? 'bg-red-50/95 border-2 border-red-500 ring-2 ring-red-400/30 shadow-xs'
+                        : isCalorieSoftOver
+                        ? 'bg-amber-50/90 border-amber-300 shadow-2xs'
+                        : 'bg-slate-50 border-slate-200'
+                    }`}
+                    id="eaten-today-calorie-meter"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        {isCalorieRedAlert ? (
+                          <div className="p-1.5 bg-red-600 text-white rounded-lg animate-pulse">
+                            <AlertTriangle className="w-4 h-4" />
+                          </div>
+                        ) : (
+                          <Flame className={`w-4 h-4 shrink-0 ${isCalorieSoftOver ? 'text-amber-600' : 'text-slate-500'}`} />
+                        )}
+                        <div>
+                          <span className={`text-[11px] font-black uppercase tracking-wider block ${
+                            isCalorieRedAlert ? 'text-red-800' : 'text-slate-500'
+                          }`}>
+                            {isCalorieRedAlert ? 'Red Alert: Back Off' : 'Total Calories'}
+                          </span>
+                          <span className="text-sm font-black text-slate-900 font-mono">
+                            {todayCalories} / {goals.dailyCalorieTarget} kcal
+                          </span>
+                        </div>
+                      </div>
+                      <span className={`px-2 py-0.5 text-xs font-black rounded-lg font-mono ${
+                        isCalorieRedAlert
+                          ? 'bg-red-600 text-white shadow-2xs animate-pulse'
+                          : isCalorieSoftOver
+                          ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                          : 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+                      }`}>
+                        {isCalorieRedAlert
+                          ? `+${calorieSurplus} kcal`
+                          : isCalorieSoftOver
+                          ? `+${calorieSurplus} kcal buffer`
+                          : `${goals.dailyCalorieTarget - todayCalories} left`}
+                      </span>
+                    </div>
+
+                    {isCalorieRedAlert && (
+                      <p className="text-xs font-bold text-red-900 leading-snug">
+                        You have exceeded your target by {calorieSurplus} calories (past the 50 kcal limit). Back off from more food today to stay on track for fat loss.
+                      </p>
+                    )}
+
+                    {/* Visual Progress Bar */}
+                    <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-300 ${
+                          isCalorieRedAlert
+                            ? 'bg-red-600'
+                            : isCalorieSoftOver
+                            ? 'bg-amber-500'
+                            : 'bg-indigo-600'
+                        }`}
+                        style={{ width: `${Math.min(100, Math.round((todayCalories / goals.dailyCalorieTarget) * 100))}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Fat Intake Status Bar with Red Alert in Eaten Today Panel */}
+                  <div
+                    className={`p-4 rounded-2xl border transition-all space-y-2.5 ${
+                      isFatRedAlert
+                        ? 'bg-red-50/95 border-2 border-red-500 ring-2 ring-red-400/30 shadow-xs'
+                        : 'bg-slate-50 border-slate-200'
+                    }`}
+                    id="eaten-today-fat-meter"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        {isFatRedAlert ? (
+                          <div className="p-1.5 bg-red-600 text-white rounded-lg animate-pulse">
+                            <AlertTriangle className="w-4 h-4" />
+                          </div>
+                        ) : (
+                          <Sparkles className="w-4 h-4 shrink-0 text-amber-600" />
+                        )}
+                        <div>
+                          <span className={`text-[11px] font-black uppercase tracking-wider block ${
+                            isFatRedAlert ? 'text-red-800' : 'text-slate-500'
+                          }`}>
+                            {isFatRedAlert ? 'Fat Red Alert: Back Off' : 'Total Fats'}
+                          </span>
+                          <span className="text-sm font-black text-slate-900 font-mono">
+                            {todayFat} / {targetFat}g
+                          </span>
+                        </div>
+                      </div>
+                      <span className={`px-2 py-0.5 text-xs font-black rounded-lg font-mono ${
+                        isFatRedAlert
+                          ? 'bg-red-600 text-white shadow-2xs animate-pulse'
+                          : 'bg-amber-100 text-amber-900 border border-amber-300'
+                      }`}>
+                        {isFatRedAlert
+                          ? `+${fatSurplus}g over`
+                          : `${Math.max(0, targetFat - todayFat)}g left`}
+                      </span>
+                    </div>
+
+                    {isFatRedAlert && (
+                      <p className="text-xs font-bold text-red-900 leading-snug">
+                        You have exceeded your daily fat target of {targetFat}g by {fatSurplus}g. Going above your target fats triggers this red alert — back off on fats to maintain your deficit.
+                      </p>
+                    )}
+
+                    {/* Visual Progress Bar */}
+                    <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-300 ${
+                          isFatRedAlert
+                            ? 'bg-red-600'
+                            : 'bg-amber-500'
+                        }`}
+                        style={{ width: `${Math.min(100, Math.round((todayFat / targetFat) * 100))}%` }}
+                      />
+                    </div>
                   </div>
 
                   {currentLog.meals.length > 0 ? (
@@ -1631,7 +1863,7 @@ export default function App() {
                                     className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
                                   />
                                 </div>
-                                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                                <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
                                   <div>
                                     <label className="text-[9px] font-black text-slate-500 block mb-0.5">Protein (g)</label>
                                     <input
@@ -1647,6 +1879,15 @@ export default function App() {
                                       type="number"
                                       value={editMealCarbs}
                                       onChange={(e) => setEditMealCarbs(e.target.value)}
+                                      className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[9px] font-black text-amber-700 block mb-0.5">Fat (g)</label>
+                                    <input
+                                      type="number"
+                                      value={editMealFat}
+                                      onChange={(e) => setEditMealFat(e.target.value)}
                                       className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
                                     />
                                   </div>
@@ -1705,43 +1946,126 @@ export default function App() {
                         return (
                           <div
                             key={meal.id}
-                            className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200 rounded-xl hover:border-slate-300 transition-colors"
+                            className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl hover:border-slate-300 transition-colors"
                           >
-                            <div className="flex items-center gap-3">
-                              <span className="text-[10px] text-slate-400 font-bold font-mono bg-white px-2 py-1 rounded-lg border border-slate-150">
-                                {meal.timestamp}
-                              </span>
-                              <div>
-                                <h4 className="text-xs font-bold text-slate-800 leading-tight">{meal.name}</h4>
-                                <div className="flex flex-wrap items-center gap-2 mt-1">
-                                  <span className="text-[10px] text-emerald-600 font-black">{meal.protein}g protein</span>
-                                  {meal.carbs !== undefined && (
-                                    <span className="text-[10px] text-sky-600 font-black">• {meal.carbs}g carbs</span>
-                                  )}
-                                  {meal.fiber !== undefined && (
-                                    <span className="text-[10px] text-teal-600 font-black">• {meal.fiber}g fiber</span>
-                                  )}
-                                  <span className="text-[10px] text-slate-400 font-bold font-mono">• {meal.calories} kcal</span>
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <span className="text-sm text-slate-500 font-bold font-mono bg-white px-2.5 py-1 rounded-lg border border-slate-200">
+                                  {meal.timestamp}
+                                </span>
+                                <div>
+                                  <h4 className="text-sm font-bold text-slate-900 leading-tight">{meal.name}</h4>
+                                  <div className="flex flex-wrap items-center gap-2 mt-1">
+                                    <span className="text-sm text-emerald-600 font-black">{meal.protein}g protein</span>
+                                    {meal.carbs !== undefined && (
+                                      <span className="text-sm text-sky-600 font-black">• {meal.carbs}g carbs</span>
+                                    )}
+                                    {meal.fat !== undefined && (
+                                      <span className="text-sm text-amber-700 font-black">• {meal.fat}g fat</span>
+                                    )}
+                                    {meal.fiber !== undefined && (
+                                      <span className="text-sm text-teal-600 font-black">• {meal.fiber}g fiber</span>
+                                    )}
+                                    <span className="text-sm text-slate-500 font-bold font-mono">• {meal.calories} kcal</span>
+                                  </div>
                                 </div>
+                              </div>
+
+                              <div className="flex items-center gap-1">
+                                {(() => {
+                                  const isFav = (goals.favoriteFoods || []).some(
+                                    (f) => f.toLowerCase() === (meal.name || '').trim().toLowerCase()
+                                  ) || meal.isFavorite;
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleFavoriteFood(meal.name)}
+                                      className="p-2 rounded-lg text-slate-400 hover:text-amber-500 hover:bg-amber-50 transition-colors cursor-pointer"
+                                      title={isFav ? "Remove from favorites" : "Add to favorites"}
+                                    >
+                                      {isFav ? (
+                                        <Star className="w-4 h-4 text-amber-500 fill-amber-400" />
+                                      ) : (
+                                        <Star className="w-4 h-4 text-slate-300 hover:text-amber-500" />
+                                      )}
+                                    </button>
+                                  );
+                                })()}
+                                <button
+                                  onClick={() => startEditingMeal(meal)}
+                                  className="p-2 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer"
+                                  title="Edit Meal"
+                                >
+                                  <Pencil className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => handleRemoveMeal(meal.id)}
+                                  className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                  title="Delete Meal"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-1">
-                              <button
-                                onClick={() => startEditingMeal(meal)}
-                                className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer"
-                                title="Edit Meal"
-                              >
-                                <Pencil className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => handleRemoveMeal(meal.id)}
-                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-                                title="Delete Meal"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
+                            {/* Expandable Plate Breakdown If Available */}
+                            {meal.items && meal.items.length > 1 && (
+                              <div className="mt-3 pt-2.5 border-t border-slate-200">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleMealBreakdown(meal.id)}
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg text-sm font-bold shadow-2xs transition-colors cursor-pointer"
+                                >
+                                  <Layers className="w-4 h-4 text-emerald-600" />
+                                  <span>Plate Breakdown</span>
+                                  <span className="text-sm text-emerald-600 font-bold">• {meal.items.length} items</span>
+                                  {expandedMealBreakdowns[meal.id] ? (
+                                    <ChevronUp className="w-4 h-4 text-emerald-600 ml-0.5" />
+                                  ) : (
+                                    <ChevronDown className="w-4 h-4 text-emerald-600 ml-0.5" />
+                                  )}
+                                </button>
+
+                                {expandedMealBreakdowns[meal.id] && (
+                                  <div className="mt-2.5 space-y-2 animate-fadeIn">
+                                    <div className="space-y-1.5">
+                                      {meal.items.map((it, itIdx) => (
+                                        <div
+                                          key={itIdx}
+                                          className="p-2.5 bg-white rounded-xl border border-emerald-100/90 shadow-2xs space-y-1.5"
+                                        >
+                                          <div className="flex items-center justify-between text-sm">
+                                            <span className="font-bold text-slate-800">{it.name}</span>
+                                            {it.portion && (
+                                              <span className="text-slate-500 font-medium">{it.portion}</span>
+                                            )}
+                                          </div>
+                                          <div className="flex flex-wrap items-center gap-1.5 text-sm font-bold">
+                                            <span className="px-2 py-0.5 rounded-md bg-sky-50 text-sky-800 border border-sky-200">
+                                              {it.carbs}g carbs
+                                            </span>
+                                            <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                              {it.protein}g protein
+                                            </span>
+                                            {it.fat !== undefined && (
+                                              <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-300">
+                                                {it.fat}g fat
+                                              </span>
+                                            )}
+                                            <span className="px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 border border-teal-200">
+                                              {it.fiber}g fiber
+                                            </span>
+                                            <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 font-mono">
+                                              {it.calories} kcal
+                                            </span>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -1784,7 +2108,7 @@ export default function App() {
                   <div className="flex justify-between items-center border-b border-slate-100 pb-3">
                     <div>
                       <h3 className="text-sm font-black text-slate-800">
-                        {selectedDate === new Date().toISOString().split('T')[0] ? 'Exercises Today' : `Exercises (${selectedDate})`}
+                        {selectedDate === new Date().toISOString().split('T')[0] ? 'Exercises Today' : `Exercises (${formatDateDDMMYYYY(selectedDate)})`}
                       </h3>
                       <span className="text-[10px] text-slate-400 font-bold font-mono">{currentLog.workouts.length} logged</span>
                     </div>
@@ -1803,7 +2127,7 @@ export default function App() {
                     <div className="p-4 bg-indigo-50/80 border border-indigo-200 rounded-2xl space-y-3.5">
                       <div className="flex justify-between items-center">
                         <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wider">
-                          {editingWorkoutId ? 'Edit Logged Exercise' : `Add Exercise for ${selectedDate}`}
+                          {editingWorkoutId ? 'Edit Logged Exercise' : `Add Exercise for ${formatDateDDMMYYYY(selectedDate)}`}
                         </h4>
                         <button
                           onClick={() => {
@@ -1984,7 +2308,7 @@ export default function App() {
                       <p className="text-xs font-bold">
                         {selectedDate === new Date().toISOString().split('T')[0]
                           ? 'No exercises recorded today.'
-                          : `No exercises recorded for ${selectedDate}.`}
+                          : `No exercises recorded for ${formatDateDDMMYYYY(selectedDate)}.`}
                       </p>
                       <p className="text-[10px] text-slate-400 mt-1">
                         Click "+ Add Lift" above to manually log exercises for this date.
@@ -2001,114 +2325,228 @@ export default function App() {
           {activeTab === 'analytics' && (
             <div className="space-y-6" id="analytics-master-panel">
 
-              {/* Global Budgets Overview Widgets */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5" id="budgets-overview-bar">
-                
-                {/* Protein budget status card */}
-                <div className="bg-white border border-slate-200 rounded-2xl p-3.5 flex items-center justify-between shadow-xs">
-                  <div className="flex items-center gap-2.5">
+              {/* Global Budgets Overview Widgets - Collapsible Dropdown */}
+              <div className="bg-white border border-slate-200/90 rounded-2xl shadow-2xs overflow-hidden w-full transition-all" id="budgets-dropdown-card">
+                <button
+                  type="button"
+                  onClick={() => setIsBudgetsDropdownOpen((prev) => !prev)}
+                  className="w-full p-3.5 sm:p-4 flex items-center justify-between text-left hover:bg-slate-50/70 transition-colors cursor-pointer"
+                  id="budgets-dropdown-toggle"
+                  aria-expanded={isBudgetsDropdownOpen}
+                >
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
                     <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl shrink-0">
-                      <Flame className="w-4 h-4 text-indigo-600" />
+                      <Flame className="w-5 h-5 text-indigo-600" />
                     </div>
-                    <div>
-                      <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block">Protein</span>
-                      <span className="text-xs font-black text-slate-800 font-mono mt-0.5 block">{todayProtein}g / {goals.dailyProteinTarget}g</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-black text-slate-900">Daily Target Budgets</span>
+                        <span className="text-xs font-bold text-indigo-600 bg-indigo-50/90 border border-indigo-100/80 px-2 py-0.5 rounded-md">
+                          6 Targets
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 font-medium mt-0.5 truncate">
+                        {todayCalories} / {goals.dailyCalorieTarget} kcal · {todayProtein}g / {goals.dailyProteinTarget}g Protein
+                      </p>
                     </div>
                   </div>
-                  <div className="text-right shrink-0">
-                    <span className="text-[11px] font-black font-mono text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-lg">
-                      {proteinPercentage}%
+                  <div className="flex items-center gap-2 shrink-0 ml-3">
+                    <span className="text-xs font-bold text-slate-400 hidden sm:inline">
+                      {isBudgetsDropdownOpen ? 'Collapse' : 'Expand'}
                     </span>
+                    <div className="p-1.5 rounded-lg text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors">
+                      <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isBudgetsDropdownOpen ? 'rotate-180' : ''}`} />
+                    </div>
                   </div>
-                </div>
+                </button>
 
-                {/* Carbohydrates budget status card */}
-                <div className="bg-white border border-slate-200 rounded-2xl p-3.5 flex items-center justify-between shadow-xs">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 bg-sky-50 text-sky-600 rounded-xl shrink-0">
-                      <Utensils className="w-4 h-4 text-sky-600" />
+                {isBudgetsDropdownOpen && (
+                  <div className="p-3.5 sm:p-4 pt-1 border-t border-slate-100 flex flex-col gap-2.5 w-full" id="budgets-overview-bar">
+                    {/* Protein budget status card */}
+                    <div className="bg-slate-50/80 border border-slate-200/90 rounded-2xl p-3 sm:p-3.5 flex items-center justify-between gap-3 shadow-2xs w-full">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="p-2 bg-indigo-100/70 text-indigo-600 rounded-xl shrink-0">
+                          <Flame className="w-4 h-4 text-indigo-600" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <span className="text-xs text-slate-500 font-bold uppercase tracking-wider block">Protein</span>
+                          <span className="text-sm font-black text-slate-900 font-mono mt-0.5 block">{todayProtein}g / {goals.dailyProteinTarget}g</span>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="text-sm font-bold font-mono text-indigo-600 bg-indigo-50/90 border border-indigo-100/80 px-2.5 py-1 rounded-xl whitespace-nowrap inline-block">
+                          {proteinPercentage}%
+                        </span>
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block">Carbs</span>
-                      <span className="text-xs font-black text-slate-800 font-mono mt-0.5 block">{todayCarbs}g / {targetCarbs}g</span>
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <span className="text-[11px] font-black font-mono text-sky-600 bg-sky-50 px-2 py-0.5 rounded-lg">
-                      {carbsPercentage}%
-                    </span>
-                  </div>
-                </div>
 
-                {/* Dietary Fiber budget status card */}
-                <div className="bg-white border border-slate-200 rounded-2xl p-3.5 flex items-center justify-between shadow-xs">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl shrink-0">
-                      <Sparkles className="w-4 h-4 text-emerald-600" />
+                    {/* Carbohydrates budget status card */}
+                    <div className="bg-slate-50/80 border border-slate-200/90 rounded-2xl p-3 sm:p-3.5 flex items-center justify-between gap-3 shadow-2xs w-full">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="p-2 bg-sky-100/70 text-sky-600 rounded-xl shrink-0">
+                          <Utensils className="w-4 h-4 text-sky-600" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <span className="text-xs text-slate-500 font-bold uppercase tracking-wider block">Carbs</span>
+                          <span className="text-sm font-black text-slate-900 font-mono mt-0.5 block">{todayCarbs}g / {targetCarbs}g</span>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="text-sm font-bold font-mono text-sky-600 bg-sky-50/90 border border-sky-100/80 px-2.5 py-1 rounded-xl whitespace-nowrap inline-block">
+                          {carbsPercentage}%
+                        </span>
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block">Fiber</span>
-                      <span className="text-xs font-black text-slate-800 font-mono mt-0.5 block">{todayFiber}g / {targetFiber}g</span>
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <span className="text-[11px] font-black font-mono text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg">
-                      {fiberPercentage}%
-                    </span>
-                  </div>
-                </div>
 
-                {/* Calories widget */}
-                <div className="bg-white border border-slate-200 rounded-2xl p-3.5 flex items-center justify-between shadow-xs">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 bg-amber-50 text-amber-600 rounded-xl shrink-0">
-                      <Flame className="w-4 h-4 text-amber-600" />
+                    {/* Fats budget status card with Red Alert */}
+                    <div
+                      className={`border rounded-2xl p-3 sm:p-3.5 flex items-center justify-between gap-3 shadow-2xs transition-all w-full ${
+                        isFatRedAlert
+                          ? 'bg-red-50/95 border-2 border-red-500 ring-2 ring-red-400/30'
+                          : 'bg-slate-50/80 border-slate-200/90'
+                      }`}
+                      id="analytics-fat-widget"
+                    >
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div
+                          className={`p-2 rounded-xl shrink-0 ${
+                            isFatRedAlert ? 'bg-red-600 text-white animate-pulse' : 'bg-amber-100/70 text-amber-600'
+                          }`}
+                        >
+                          {isFatRedAlert ? (
+                            <AlertTriangle className="w-4 h-4 text-white" />
+                          ) : (
+                            <Sparkles className="w-4 h-4 text-amber-600" />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <span
+                            className={`font-black uppercase tracking-wider block whitespace-nowrap ${
+                              isFatRedAlert ? 'text-xs text-red-700' : 'text-xs text-slate-500 font-bold'
+                            }`}
+                          >
+                            {isFatRedAlert ? 'Red Alert: Fat' : 'Fats'}
+                          </span>
+                          <span className="text-sm font-black text-slate-900 font-mono mt-0.5 block">
+                            {todayFat}g / {targetFat}g
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span
+                          className={`font-mono px-2.5 py-1 rounded-xl whitespace-nowrap inline-block text-sm ${
+                            isFatRedAlert
+                              ? 'font-black bg-red-600 text-white shadow-2xs animate-pulse'
+                              : 'font-bold text-amber-600 bg-amber-50/90 border border-amber-100/80'
+                          }`}
+                        >
+                          {isFatRedAlert ? `+${fatSurplus}g` : `${fatPercentage}%`}
+                        </span>
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block">Calories</span>
-                      <span className="text-xs font-black text-slate-800 font-mono mt-0.5 block">{todayCalories} / {goals.dailyCalorieTarget}</span>
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <span className="text-[11px] font-black font-mono text-amber-600 bg-amber-50 px-2 py-0.5 rounded-lg">
-                      {caloriePercentage}%
-                    </span>
-                  </div>
-                </div>
 
-                {/* Workout completed exercises widget */}
-                <div className="bg-white border border-slate-200 rounded-2xl p-3.5 flex items-center justify-between shadow-xs col-span-2 sm:col-span-1 lg:col-span-1">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 bg-violet-50 text-violet-600 rounded-xl shrink-0">
-                      <Dumbbell className="w-4 h-4 text-violet-600" />
+                    {/* Dietary Fiber budget status card */}
+                    <div className="bg-slate-50/80 border border-slate-200/90 rounded-2xl p-3 sm:p-3.5 flex items-center justify-between gap-3 shadow-2xs w-full">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="p-2 bg-emerald-100/70 text-emerald-600 rounded-xl shrink-0">
+                          <Sparkles className="w-4 h-4 text-emerald-600" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <span className="text-xs text-slate-500 font-bold uppercase tracking-wider block">Fiber</span>
+                          <span className="text-sm font-black text-slate-900 font-mono mt-0.5 block">{todayFiber}g / {targetFiber}g</span>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="text-sm font-bold font-mono text-emerald-600 bg-emerald-50/90 border border-emerald-100/80 px-2.5 py-1 rounded-xl whitespace-nowrap inline-block">
+                          {fiberPercentage}%
+                        </span>
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block">Exercises</span>
-                      <span className="text-xs font-black text-slate-800 mt-0.5 block truncate">
-                        {completedWorkouts} / {currentLog.workouts.length} Lifts
-                      </span>
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <span className="text-[11px] font-black font-mono text-violet-600 bg-violet-50 px-2 py-0.5 rounded-lg">
-                      {currentLog.workouts.length > 0 ? Math.round((completedWorkouts / currentLog.workouts.length) * 100) : 0}%
-                    </span>
-                  </div>
-                </div>
 
+                    {/* Calories widget with Red Alert */}
+                    <div
+                      className={`border rounded-2xl p-3 sm:p-3.5 flex items-center justify-between gap-3 shadow-2xs transition-all w-full ${
+                        isCalorieRedAlert
+                          ? 'bg-red-50/95 border-2 border-red-500 ring-2 ring-red-400/30'
+                          : 'bg-slate-50/80 border-slate-200/90'
+                      }`}
+                      id="analytics-calorie-widget"
+                    >
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div
+                          className={`p-2 rounded-xl shrink-0 ${
+                            isCalorieRedAlert ? 'bg-red-600 text-white animate-pulse' : 'bg-amber-100/70 text-amber-600'
+                          }`}
+                        >
+                          {isCalorieRedAlert ? (
+                            <AlertTriangle className="w-4 h-4 text-white" />
+                          ) : (
+                            <Flame className="w-4 h-4 text-amber-600" />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <span
+                            className={`font-black uppercase tracking-wider block whitespace-nowrap ${
+                              isCalorieRedAlert ? 'text-xs text-red-700' : 'text-xs text-slate-500 font-bold'
+                            }`}
+                          >
+                            {isCalorieRedAlert ? 'Red Alert: Calories' : 'Calories'}
+                          </span>
+                          <span className="text-sm font-black text-slate-900 font-mono mt-0.5 block">
+                            {todayCalories} / {goals.dailyCalorieTarget} kcal
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span
+                          className={`font-mono px-2.5 py-1 rounded-xl whitespace-nowrap inline-block text-sm ${
+                            isCalorieRedAlert
+                              ? 'font-black bg-red-600 text-white shadow-2xs animate-pulse'
+                              : isCalorieSoftOver
+                              ? 'font-bold text-amber-800 bg-amber-100 border border-amber-200'
+                              : 'font-bold text-amber-600 bg-amber-50/90 border border-amber-100/80'
+                          }`}
+                        >
+                          {isCalorieRedAlert ? `+${calorieSurplus} kcal` : `${caloriePercentage}%`}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Workout completed exercises widget */}
+                    <div className="bg-slate-50/80 border border-slate-200/90 rounded-2xl p-3 sm:p-3.5 flex items-center justify-between gap-3 shadow-2xs w-full">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="p-2 bg-violet-100/70 text-violet-600 rounded-xl shrink-0">
+                          <Dumbbell className="w-4 h-4 text-violet-600" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <span className="text-xs text-slate-500 font-bold uppercase tracking-wider block">Exercises</span>
+                          <span className="text-sm font-black text-slate-900 mt-0.5 block">
+                            {completedWorkouts} / {currentLog.workouts.length} Lifts
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="text-sm font-bold font-mono text-violet-600 bg-violet-50/90 border border-violet-100/80 px-2.5 py-1 rounded-xl whitespace-nowrap inline-block">
+                          {currentLog.workouts.length > 0 ? Math.round((completedWorkouts / currentLog.workouts.length) * 100) : 0}%
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* Inner Tabs Selector - 3 Tabs splitting full width */}
-              <div className="grid grid-cols-3 border-b border-slate-200 gap-1 pb-0.5 w-full">
+              {/* Inner Tabs Selector - 4 Tabs splitting cleanly across mobile and desktop */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 border-b border-slate-200 gap-1 pb-0.5 w-full">
                 {[
                   { id: 'graphs', label: 'Progress Graphs' },
                   { id: 'bmr', label: 'BMR & TDEE' },
-                  { id: 'calendar', label: 'Calendar Records' }
+                  { id: 'calendar', label: 'Calendar Records' },
+                  { id: 'records', label: 'Activity Records' }
                 ].map((subTab) => (
                   <button
                     key={subTab.id}
                     onClick={() => setAnalyticsSubTab(subTab.id as any)}
-                    className={`w-full flex items-center justify-center text-center px-2 sm:px-4 py-2.5 rounded-t-xl text-xs sm:text-sm font-black whitespace-nowrap transition-all cursor-pointer border-b-2 ${
+                    className={`w-full flex items-center justify-center text-center px-2 sm:px-4 py-2.5 rounded-t-xl text-sm font-black whitespace-nowrap transition-all cursor-pointer border-b-2 ${
                       analyticsSubTab === subTab.id
                         ? 'border-indigo-600 text-indigo-600 font-black bg-indigo-50/50'
                         : 'border-transparent text-slate-400 hover:text-slate-700'
@@ -2126,7 +2564,7 @@ export default function App() {
                   <div className="space-y-6">
                     <div className="mb-4">
                       <h3 className="text-base font-black text-slate-900">Performance Over Time</h3>
-                      <p className="text-slate-400 text-xs mt-1">Review protein, calories, lean muscle metrics, and weight gains</p>
+                      <p className="text-slate-500 text-sm mt-1">Review protein, calories, lean muscle metrics, and weight gains</p>
                     </div>
                     <Analytics
                       logs={logs}
@@ -2140,7 +2578,7 @@ export default function App() {
                   <div className="space-y-6">
                     <div className="mb-4">
                       <h3 className="text-base font-black text-slate-900">Metabolic Rate & Energy Calculator</h3>
-                      <p className="text-slate-400 text-xs mt-1">Calculate your baseline metabolism (BMR) and daily expenditure (TDEE) to calibrate bulking or cutting targets</p>
+                      <p className="text-slate-500 text-sm mt-1">Calculate your baseline metabolism (BMR) and daily expenditure (TDEE) to calibrate bulking or cutting targets</p>
                     </div>
                     <BmrCalculator
                       goals={goals}
@@ -2153,7 +2591,7 @@ export default function App() {
                   <div className="space-y-6">
                     <div className="mb-4">
                       <h3 className="text-base font-black text-slate-900">Consistency Calendar Records</h3>
-                      <p className="text-slate-400 text-xs mt-1">Tap any date to log foods or exercises for that past day</p>
+                      <p className="text-slate-500 text-sm mt-1">Tap any date to log foods or exercises for that past day</p>
                     </div>
                     <CalendarView
                       logs={logs}
@@ -2164,6 +2602,21 @@ export default function App() {
                         setSelectedDate(date);
                         setActiveTab('workouts'); // Bring to workout & exercise logging view for selected date!
                       }}
+                    />
+                  </div>
+                )}
+
+                {analyticsSubTab === 'records' && (
+                  <div className="space-y-6">
+                    <div className="mb-4">
+                      <h3 className="text-base font-black text-slate-900">Activity, Workout & Food Records</h3>
+                      <p className="text-slate-500 text-sm mt-1">Review complete tables of outdoor jogs, fast walks, strength workouts, and logged foods history with favorites</p>
+                    </div>
+                    <ActivityRecords
+                      logs={logs}
+                      weightUnit={goals.weightUnit}
+                      favoriteFoods={goals.favoriteFoods || []}
+                      onToggleFavoriteFood={handleToggleFavoriteFood}
                     />
                   </div>
                 )}
@@ -2188,6 +2641,8 @@ export default function App() {
                 logs={logs}
                 goals={goals}
                 onAddInsight={handleAddInsight}
+                onUpdateInsight={handleUpdateInsight}
+                onDeleteInsight={handleDeleteInsight}
               />
             </div>
           )}
@@ -2235,6 +2690,8 @@ export default function App() {
                 onUpdateParsedFoods={setParsedFoods}
                 onUpdateParsedWorkouts={setParsedWorkouts}
                 onPerformDriveBackup={handlePerformDriveBackup}
+                currentUserId={firebaseUser?.uid}
+                currentUserEmail={firebaseUser?.email || undefined}
               />
             </div>
           )}

@@ -29,69 +29,245 @@ async function startServer() {
     return aiClient;
   }
 
+  // Multi-model fallback execution helper for high availability & low latency with timeout protection
+  async function generateContentWithFallback(ai: GoogleGenAI, requestPayload: any, timeoutMs = 16000): Promise<string> {
+    const candidateModels = [
+      "gemini-3.8-flash",      // latest high-performance model from gemini-api skill
+      "gemini-flash-latest",   // general flash alias
+      "gemini-3.1-flash-lite"  // fast, efficient fallback
+    ];
+
+    let lastError: any = null;
+    for (const modelName of candidateModels) {
+      try {
+        let timeoutId: any;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(new Error(`Model ${modelName} timed out after ${timeoutMs}ms`));
+          }, timeoutMs);
+        });
+
+        const callPromise = ai.models.generateContent({
+          ...requestPayload,
+          model: modelName
+        });
+
+        const response: any = await Promise.race([callPromise, timeoutPromise]);
+        clearTimeout(timeoutId);
+
+        if (response && typeof response.text === "string" && response.text.trim()) {
+          return response.text.trim();
+        }
+      } catch (err: any) {
+        console.warn(`Model ${modelName} encountered error:`, err?.status || err?.message || err);
+        lastError = err;
+      }
+    }
+    throw lastError || new Error("All AI models are currently unavailable.");
+  }
+
+  // Fallback offline generator for fitness advice if Gemini API is degraded
+  function generateFallbackAdvice(query: string, goals: any): { summary: string; text: string; type: string } {
+    const qLower = (query || "").toLowerCase();
+    const weightTarget = goals?.targetWeight ? `${goals.targetWeight} ${goals.weightUnit || 'kg'}` : "target weight";
+    const proteinTarget = goals?.dailyProteinTarget || 160;
+
+    if (qLower.includes("fat") || qLower.includes("burn") || qLower.includes("cut") || qLower.includes("lose")) {
+      return {
+        summary: "Optimal Fat Loss & Muscle Retention Strategy",
+        text: `### Key Principles for Fat Loss While Maintaining Muscle:\n\n* **Caloric Deficit**: Maintain a modest deficit (300-500 kcal below maintenance) to preserve lean muscle tissue.\n* **Compound Lifts**: Prioritize heavy compound exercises (Squats, Deadlifts, Bench Press, Overhead Press, Rows) to signal your body to retain muscle mass.\n* **Protein Intake**: Keep daily protein high at **${proteinTarget}g** (approx. 0.8–1.0g per lb of bodyweight).\n* **Metabolic Conditioning**: Incorporate 2-3 sessions of incline walking or high-intensity interval training (HIIT) 15-20 min post-workout.\n* **Progressive Overload**: Continue tracking and increasing weight or reps each session.`,
+        type: "hypertrophy"
+      };
+    }
+
+    if (qLower.includes("bench") || qLower.includes("plateau") || qLower.includes("stuck")) {
+      return {
+        summary: "Plateau Breakthrough & Progressive Overload Protocol",
+        text: `### Strategy to Overcome Strength Plateaus:\n\n* **Micro-Loading**: Add smaller increments (1.25–2.5 lbs / 0.5–1 kg) rather than big jumps.\n* **Volume Deload**: Take 1 week at 60-70% volume to allow systemic CNS and tendon recovery.\n* **Accessory Focus**: Strengthen weak points (e.g. triceps lockout with close-grip bench, pause reps at the chest for bottom strength).\n* **Nutritional Surplus**: Ensure you are hitting your **${proteinTarget}g** protein goal and sufficient pre-workout carbohydrates.`,
+        type: "hypertrophy"
+      };
+    }
+
+    if (qLower.includes("protein") || qLower.includes("food") || qLower.includes("eat") || qLower.includes("diet") || qLower.includes("meal")) {
+      return {
+        summary: "Protein Distribution & Nutrient Timing Strategy",
+        text: `### Nutrition Timing for Muscle Growth:\n\n* **Meal Distribution**: Distribute your daily **${proteinTarget}g** protein across 3-5 meals with at least 30-40g per feeding.\n* **Pre-Workout Fuel**: Consume easily digestible carbs and 20-30g protein 60-90 minutes prior to training.\n* **Post-Workout Recovery**: Prioritize a complete protein source rich in leucine within 2 hours post-training.\n* **Hydration**: Aim for 3-4 liters of water daily to support intracellular muscle hydration.`,
+        type: "nutrition"
+      };
+    }
+
+    return {
+      summary: query ? `Coaching Insight: ${query.slice(0, 45)}` : "Hypertrophy Progression Protocol",
+      text: `### Tailored Coaching Recommendations:\n\n* **Progressive Overload**: Strive to add weight or repetitions to every working set across your weekly training sessions.\n* **Protein Priority**: Maintain your daily **${proteinTarget}g** target toward your goal of **${weightTarget}**.\n* **Working Volume**: Target 10-20 high-quality working sets per muscle group weekly taken to 1-2 reps in reserve (RIR).\n* **Rest & Recovery**: Allow 48-72 hours before hitting the same muscle group hard again.`,
+      type: "hypertrophy"
+    };
+  }
+
   // API Route: Get AI Coach insights
   app.post("/api/coach/insights", async (req, res) => {
     try {
       const { goals, recentLogs, queryType, customPlanText } = req.body;
       const ai = getAiClient();
 
+      const isCustomQuestion = queryType && queryType !== "general_assessment" && queryType !== "general";
+
       if (!ai) {
+        const fallback = generateFallbackAdvice(isCustomQuestion ? queryType : "", goals);
         return res.json({
-          summary: "Coaching Guide Active",
-          text: "To activate live customized hypertrophy tips from our AI coach, please add your `GEMINI_API_KEY` in the **Settings > Secrets** panel. For now, strive to maintain 0.8-1g of protein per pound of bodyweight and focus on compound lifts to maximize hypertrophy!",
-          type: "general",
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          ...fallback,
+          timestamp: new Date().toISOString()
         });
       }
 
       const prompt = `
-        Analyze the following hypertrophy goals, recent tracking logs, and their personal plan documents to provide a specific, high-impact coaching tip.
+        ${isCustomQuestion
+          ? `The user is asking a direct question to their Hypertrophy & Nutrition AI Coach:\nQUESTION: "${queryType}"\n\nProvide a comprehensive, expert answer tailored to their fitness profile below.`
+          : `Analyze the user's hypertrophy goals, recent tracking logs, and workout history to provide a high-impact coaching recommendation.`
+        }
         
         USER GOALS:
-        - Current Weight: ${goals.currentWeight} ${goals.weightUnit}
-        - Target Weight: ${goals.targetWeight} ${goals.weightUnit}
-        - Daily Protein Target: ${goals.dailyProteinTarget}g
-        - Daily Calorie Target: ${goals.dailyCalorieTarget} kcal
-        - Weekly Workout Days Goal: ${goals.weeklyWorkoutDaysTarget} days
+        - Current Weight: ${goals?.currentWeight || 75} ${goals?.weightUnit || 'kg'}
+        - Target Weight: ${goals?.targetWeight || 80} ${goals?.weightUnit || 'kg'}
+        - Daily Protein Target: ${goals?.dailyProteinTarget || 160}g
+        - Daily Calorie Target: ${goals?.dailyCalorieTarget || 2400} kcal
+        - Weekly Workout Days Goal: ${goals?.weeklyWorkoutDaysTarget || 4} days
         
-        RECENT LOGS (Last few days of meals and workouts):
+        RECENT LOGS (Recent workouts and meals):
         ${JSON.stringify(recentLogs || [], null, 2)}
 
         USER'S CONNECTED PLAN/GUIDELINES (extracted from their Google Docs):
         ${customPlanText ? customPlanText.slice(0, 4000) : "No custom Google Docs plans synced yet."}
         
-        QUERY FOCUS: ${queryType || "general"}
-        
-        Provide your expert coaching advice in a clean JSON format. Focus specifically on muscle hypertrophy, optimal protein distribution (aim for ~30-40g protein per meal to trigger muscle protein synthesis), and training volume/recovery. Be direct, encouraging, and action-oriented.
-        If the user has loaded custom plans (from Google Docs above), base your coaching recommendations specifically around those custom foods and workouts to help them follow their plans successfully!
-        Do not include verbose introductory text outside the JSON structure.
+        Provide your expert coaching advice formatted in a clean JSON structure. Focus specifically on hypertrophy, optimal protein synthesis distribution (~30-40g protein per meal), mechanical tension, and recovery.
+        ${isCustomQuestion ? "Ensure the 'summary' directly states the question/topic and 'text' directly and thoroughly answers the question with clear bullet points." : ""}
       `;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-        config: {
-          systemInstruction: `You are an elite Hypertrophy & Sports Nutrition Coach. Your clients are training for muscle growth (hypertrophy). You prioritize protein-to-bodyweight ratios (ideally 0.8g - 1.0g per lb of bodyweight for muscle growth), progressive overload, adequate training volume (10-20 working sets per muscle group per week), and calorie surpluses for muscle building.
-          You must respond ONLY with a JSON object matching this schema:
-          {
-            "summary": "Short 1-sentence headline summarizing the advice",
-            "text": "Detailed coaching insights with specific bullet points. Write in elegant markdown.",
-            "type": "hypertrophy" | "nutrition" | "recovery" | "general"
-          }`,
-          responseMimeType: "application/json",
-        },
-      });
+      try {
+        const rawText = await generateContentWithFallback(ai, {
+          contents: prompt,
+          config: {
+            systemInstruction: `You are an elite Hypertrophy & Sports Nutrition Coach. Your clients are training for muscle growth (hypertrophy). You prioritize protein-to-bodyweight ratios (0.8g - 1.0g per lb of bodyweight), progressive overload, adequate training volume, and recovery.
+            You must respond ONLY with a JSON object matching this schema:
+            {
+              "summary": "Short 1-sentence headline summarizing the advice or answered topic",
+              "text": "Detailed coaching insights with specific bullet points and actionable steps. Write in markdown.",
+              "type": "hypertrophy" | "nutrition" | "recovery" | "general"
+            }`,
+            responseMimeType: "application/json",
+          },
+        });
 
-      const responseText = response.text || "{}";
-      const parsed = JSON.parse(responseText.trim());
-      
-      res.json({
-        ...parsed,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      });
+        let parsed: { summary?: string; text?: string; type?: string } = {};
+
+        try {
+          const cleaned = rawText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+          parsed = JSON.parse(cleaned);
+        } catch (parseErr) {
+          console.warn("Could not parse JSON response directly, creating structured fallback:", parseErr);
+          parsed = {
+            summary: isCustomQuestion ? `Answer: ${queryType.slice(0, 45)}` : "Hypertrophy Coach Recommendation",
+            text: rawText,
+            type: "general"
+          };
+        }
+
+        return res.json({
+          summary: parsed.summary || (isCustomQuestion ? `Coach Answer: ${queryType.slice(0, 45)}` : "Hypertrophy Recommendation"),
+          text: parsed.text || rawText || "Keep consistent with your daily protein targets and progressive training.",
+          type: parsed.type || "hypertrophy",
+          timestamp: new Date().toISOString()
+        });
+      } catch (geminiError) {
+        console.error("Gemini API call failed, using intelligent coaching fallback:", geminiError);
+        const fallback = generateFallbackAdvice(isCustomQuestion ? queryType : "", goals);
+        return res.json({
+          ...fallback,
+          timestamp: new Date().toISOString()
+        });
+      }
     } catch (error) {
       console.error("Error generating insights:", error);
-      res.status(500).json({ error: "Failed to generate coaching insights" });
+      const fallback = generateFallbackAdvice(req.body?.queryType || "", req.body?.goals);
+      return res.json({
+        ...fallback,
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
+  // API Route: Chat with AI Coach regarding a specific recommendation
+  app.post("/api/coach/chat", async (req, res) => {
+    try {
+      const { insightSummary, insightText, insightType, chatHistory, userMessage, goals } = req.body;
+      const ai = getAiClient();
+
+      if (!userMessage || !userMessage.trim()) {
+        return res.status(400).json({ error: "Message is required" });
+      }
+
+      if (!ai) {
+        return res.json({
+          reply: "Focus on consistent progressive overload and hitting your daily protein target! Allow 48-72h recovery between heavy muscle groups.",
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      const formattedHistory = (chatHistory || []).map((msg: { sender: string; text: string }) =>
+        `${msg.sender === 'user' ? 'User' : 'Coach'}: ${msg.text}`
+      ).join('\n');
+
+      const prompt = `
+        The user is having a quick follow-up chat with you regarding a specific coaching recommendation they received.
+
+        RECOMMENDATION CONTEXT:
+        Summary: ${insightSummary || "Hypertrophy Guidance"}
+        Category: ${insightType || "general"}
+        Original Advice: ${insightText || ""}
+
+        USER GOALS:
+        ${goals ? `- Target Weight: ${goals.targetWeight} ${goals.weightUnit || 'kg'}, Daily Protein: ${goals.dailyProteinTarget || 160}g, Calories: ${goals.dailyCalorieTarget || 2400} kcal` : ""}
+
+        CONVERSATION SO FAR:
+        ${formattedHistory || "No previous messages."}
+
+        USER'S NEW MESSAGE:
+        "${userMessage.trim()}"
+
+        CRITICAL INSTRUCTION:
+        1. Answer directly and practically in context of this recommendation.
+        2. YOUR ENTIRE RESPONSE MUST NOT EXCEED 500 CHARACTERS. Keep it concise, punchy, actionable, and conversational.
+      `;
+
+      try {
+        const rawReply = await generateContentWithFallback(ai, {
+          contents: prompt,
+          config: {
+            systemInstruction: "You are an expert Hypertrophy Coach answering follow-up questions about a specific recommendation. Provide concise, highly actionable replies. STRICT LIMIT: Response must not exceed 500 characters.",
+          },
+        });
+
+        let reply = (rawReply || "").trim();
+        if (reply.length > 500) {
+          reply = reply.slice(0, 497) + "...";
+        }
+
+        return res.json({
+          reply,
+          timestamp: new Date().toISOString()
+        });
+      } catch (geminiError) {
+        console.error("Gemini chat failed, returning fallback:", geminiError);
+        return res.json({
+          reply: `Great question! Focus on progressive tension and maintain ${goals?.dailyProteinTarget || 160}g protein to support recovery.`,
+          timestamp: new Date().toISOString()
+        });
+      }
+    } catch (error) {
+      console.error("Error in coach chat:", error);
+      res.json({
+        reply: "Focus on consistent progressive overload and hitting your daily protein target!",
+        timestamp: new Date().toISOString()
+      });
     }
   });
 
@@ -112,12 +288,51 @@ async function startServer() {
       }
 
       if (!ai) {
+        const lowerHint = (hint || "").toLowerCase();
+        const isSingleItem = lowerHint.includes("yogurt") || lowerHint.includes("drink") || lowerHint.includes("shake") || lowerHint.includes("smoothie") || lowerHint.includes("bar") || lowerHint.includes("coffee") || lowerHint.includes("apple") || lowerHint.includes("snack") || !lowerHint.includes(" and ") && !lowerHint.includes(" with ");
+
+        if (isSingleItem) {
+          return res.json({
+            name: hasText ? hint.trim().slice(0, 40) : "Food Item",
+            protein: 25,
+            carbs: 15,
+            fiber: 2,
+            fat: 4,
+            calories: 200,
+            items: [],
+            note: "Single food item — no plate breakdown needed."
+          });
+        }
+
+        const fallbackMajorItems = [
+          {
+            name: "Main Protein",
+            portion: "180g",
+            protein: 32,
+            carbs: 0,
+            fiber: 0,
+            fat: 8,
+            calories: 210
+          },
+          {
+            name: "Plate Carbohydrate",
+            portion: "1 cup (160g)",
+            protein: 4,
+            carbs: 45,
+            fiber: 2,
+            fat: 1,
+            calories: 210
+          }
+        ];
+
         return res.json({
-          name: hasText ? hint.trim().slice(0, 40) : "Custom Meal Plate",
-          protein: 30 * Math.max(1, imageList.length),
-          carbs: 45 * Math.max(1, imageList.length),
-          fiber: 6 * Math.max(1, imageList.length),
-          calories: 450 * Math.max(1, imageList.length),
+          name: hasText ? hint.trim().slice(0, 40) : "Meal Plate",
+          protein: 36,
+          carbs: 45,
+          fiber: 2,
+          fat: 9,
+          calories: 420,
+          items: fallbackMajorItems,
           note: "GEMINI_API_KEY is not configured in Settings > Secrets. Provided default estimates."
         });
       }
@@ -147,71 +362,230 @@ async function startServer() {
       let promptText = "";
       if (imageList.length > 0) {
         promptText = `
-          Analyze the attached ${imageList.length} food plate / meal image(s) together as a single complete meal log entry.
-          ${hasText ? `User provided this additional hint or description: "${hint.trim()}". Use this to help accurately identify the ingredients or portion size.` : 'No text description was provided by the user, so rely purely on visual detection of the food across all photos.'}
+          Analyze the attached food image(s) to determine the meal components, portion estimates, and total nutrition including precise fat estimates.
+          ${hasText ? `User description or note: "${hint.trim()}".` : 'Rely on visual detection of the food.'}
 
-          Task:
-          1. Identify the name of the meal or primary food items across all attached photos.
-          2. Estimate the total combined protein content in grams (integer).
-          3. Estimate the total combined carbohydrates (carbs) content in grams (integer).
-          4. Estimate the total combined dietary fiber content in grams (integer).
-          5. Estimate the total combined calories in kcal (integer).
+          CRITICAL RULES FOR BREAKDOWN & PORTION ESTIMATION:
+          1. GRAMS / MILLILITERS REQUIREMENT:
+             - Every single food item or beverage MUST include an estimate in grams ("g") for solid foods or milliliters ("ml") for drinks/liquids.
+             - Examples: "180g", "250g", "120g", "330ml", "250ml", "500ml".
+             - Never output vague measurements like "1 cup" or "1 serving" without the metric equivalent; always specify the grams or ml (e.g. "180g" or "250ml").
+          2. IF THIS IS A SINGLE ITEM (e.g., yogurt, protein drink, shake, protein bar, fruit, a single bowl, or coffee):
+             - DO NOT break it down into ingredients!
+             - Set "items": [] (empty array).
+             - Set root "portion": estimated grams (e.g. "200g") or milliliters (e.g. "330ml").
+          3. IF THIS IS A MULTI-ITEM PLATE (e.g., Salmon and Rice, Chicken and Sweet Potato):
+             - ONLY give a count for each MAJOR food component on the plate (e.g. Salmon, Rice).
+             - DO NOT break down into seasonings, spices, or garnishes.
+             - For each major item in "items":
+               - "name": Clean name of the food (e.g. "Salmon Fillet", "White Rice").
+               - "portion": Estimated weight in grams (e.g. "200g") or volume in ml (e.g. "250ml").
+               - "carbs": Estimated grams of carbohydrates (integer).
+               - "protein": Estimated grams of protein (integer).
+               - "fiber": Estimated grams of dietary fiber (integer).
+               - "fat": Estimated grams of dietary fat (integer) based on food composition and preparation.
+               - "calories": Estimated calories in kcal (integer).
+             - Set root "portion": Total combined estimated weight or volume (e.g. "380g").
+          4. ACCURATE FAT ESTIMATION REQUIREMENT:
+             - You must provide an estimated number for fats ("fat" in grams as an integer) for the overall meal and for each major food item.
+             - Make this estimate as realistic and close as possible (e.g. salmon ~12-16g fat/200g, white rice ~0-1g fat, olive oil/butter cooking additions, chicken breast ~3-5g fat, ribeye steak ~20-30g fat, eggs ~5g fat per egg, avocado ~15g fat, etc.).
+          5. Total combined plate nutrition:
+             - "name": Clean meal title (e.g. "Salmon and White Rice", or "Greek Yogurt").
+             - "portion": Total estimated grams ("g") or milliliters ("ml") for the meal.
+             - "protein": Total protein in grams.
+             - "carbs": Total carbohydrates in grams.
+             - "fiber": Total dietary fiber in grams.
+             - "fat": Total fats in grams.
+             - "calories": Total calories in kcal.
 
-          Provide realistic, accurate nutrition estimates based on the visual portion sizes in all photos combined.
-          Respond ONLY with a JSON object matching this schema:
+          Respond ONLY with valid JSON:
+          Example for single item:
           {
-            "name": "Concise meal title (e.g. Grilled Chicken Breast with Rice, Salad & Protein Shake)",
-            "protein": 35,
+            "name": "Greek Yogurt",
+            "portion": "170g",
+            "protein": 18,
+            "carbs": 6,
+            "fiber": 0,
+            "fat": 2,
+            "calories": 110,
+            "items": []
+          }
+
+          Example for plate with major foods:
+          {
+            "name": "Salmon and White Rice",
+            "portion": "380g",
+            "protein": 40,
             "carbs": 45,
-            "fiber": 6,
-            "calories": 520
+            "fiber": 1,
+            "fat": 15,
+            "calories": 475,
+            "items": [
+              {
+                "name": "Salmon Fillet",
+                "portion": "200g",
+                "carbs": 0,
+                "protein": 36,
+                "fiber": 0,
+                "fat": 14,
+                "calories": 265
+              },
+              {
+                "name": "White Rice",
+                "portion": "180g",
+                "carbs": 45,
+                "protein": 4,
+                "fiber": 1,
+                "fat": 1,
+                "calories": 210
+              }
+            ]
           }
         `;
       } else {
         promptText = `
-          Analyze the following text description of a meal or food items:
+          Analyze the following food description to estimate macros and fats as accurately as possible:
           "${hint.trim()}"
 
-          Task:
-          1. Identify/Format a concise name for the meal or primary food items described.
-          2. Estimate the total combined protein content in grams (integer).
-          3. Estimate the total combined carbohydrates (carbs) content in grams (integer).
-          4. Estimate the total combined dietary fiber content in grams (integer).
-          5. Estimate the total combined calories in kcal (integer).
+          CRITICAL RULES FOR BREAKDOWN & PORTION ESTIMATION:
+          1. GRAMS / MILLILITERS REQUIREMENT:
+             - Every food item or beverage MUST include an estimate in grams ("g") for solid foods or milliliters ("ml") for drinks/liquids.
+             - Examples: "180g", "250g", "120g", "330ml", "250ml".
+          2. IF THIS IS A SINGLE ITEM (e.g., yogurt, protein drink, shake, smoothie, coffee, bar, snack):
+             - DO NOT break it down into ingredients!
+             - Set "items": [] (empty array).
+             - Set root "portion": estimated grams (e.g. "200g") or milliliters (e.g. "330ml").
+          3. IF THIS IS A MULTI-ITEM PLATE (e.g., Salmon and Rice, Steak and Potatoes):
+             - ONLY give a count for each MAJOR food component on the plate (e.g. Salmon, Rice).
+             - DO NOT break down into ingredients or spices! Only the primary foods.
+             - For each major food item:
+               - "name": Name of the food (e.g. "Salmon Fillet", "White Rice").
+               - "portion": Estimated weight in grams (e.g. "200g") or milliliters (e.g. "250ml").
+               - "carbs": Grams of carbohydrates (integer).
+               - "protein": Grams of protein (integer).
+               - "fiber": Grams of dietary fiber (integer).
+               - "fat": Grams of dietary fat (integer) as close and realistic as possible.
+               - "calories": Calories in kcal (integer).
+             - Set root "portion": Total combined estimated grams or ml (e.g. "380g").
+          4. ACCURATE FAT ESTIMATION:
+             - Provide an estimated integer for total fats ("fat") for the meal and each item, calibrated as close to real food nutrition data as possible.
+          5. Total overall nutrition (name, portion, protein, carbs, fiber, fat, calories).
 
-          Provide realistic, accurate nutrition estimates based on standard nutritional databases and typical portion sizes for these items.
-          Respond ONLY with a JSON object matching this schema:
-          {
-            "name": "Concise meal title (e.g. Scrambled Eggs with Avocado Toast & Orange Juice)",
-            "protein": 24,
-            "carbs": 32,
-            "fiber": 7,
-            "calories": 410
-          }
+          Respond ONLY with valid JSON matching the format described above.
         `;
       }
 
       parts.push({ text: promptText });
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.6-flash",
-        contents: { parts },
-        config: {
-          systemInstruction: "You are an expert nutritional analyst and food recognition AI. Analyze food images and/or text descriptions accurately and estimate total combined protein, carbohydrates (carbs), dietary fiber in grams and calories in kcal realistically.",
-          responseMimeType: "application/json",
-        },
-      });
+      try {
+        const rawText = await generateContentWithFallback(ai, {
+          contents: { parts },
+          config: {
+            systemInstruction: "You are an expert nutritional analyst. For any food or drink, always include realistic portion estimates in grams (g) for solid foods or milliliters (ml) for beverages. Provide realistic macro estimates including protein, carbs, dietary fiber, and especially total fats (g) based on the food's natural fat content and typical preparation methods. Return fat as an accurate integer.",
+            responseMimeType: "application/json",
+          },
+        });
 
-      const responseText = response.text || "{}";
-      const parsed = JSON.parse(responseText.trim());
+        const parsed = JSON.parse(rawText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim());
 
-      res.json({
-        name: parsed.name || (hasText ? hint.trim().slice(0, 40) : "Analyzed Meal"),
-        protein: Math.max(0, parseInt(parsed.protein) || 0),
-        carbs: Math.max(0, parseInt(parsed.carbs) || 0),
-        fiber: Math.max(0, parseInt(parsed.fiber) || 0),
-        calories: Math.max(0, parseInt(parsed.calories) || 0)
-      });
+        const rawItemsList = Array.isArray(parsed.items) ? parsed.items : [];
+        // Only keep breakdown if there are 2 or more major food items!
+        const items: Array<{ name: string; portion?: string; carbs: number; protein: number; fiber: number; fat: number; calories: number }> =
+          rawItemsList.length > 1
+            ? rawItemsList.map((it: any) => {
+                let portionStr = it.portion ? String(it.portion).trim() : undefined;
+                // If portion does not specify g or ml, check if we can format it
+                if (portionStr && !portionStr.toLowerCase().includes('g') && !portionStr.toLowerCase().includes('ml')) {
+                  portionStr = `${portionStr} (est. 150g)`;
+                }
+                return {
+                  name: String(it.name || "Food Item"),
+                  portion: portionStr,
+                  carbs: Math.max(0, Math.round(Number(it.carbs) || 0)),
+                  protein: Math.max(0, Math.round(Number(it.protein) || 0)),
+                  fiber: Math.max(0, Math.round(Number(it.fiber) || 0)),
+                  fat: Math.max(0, Math.round(Number(it.fat) || 0)),
+                  calories: Math.max(0, Math.round(Number(it.calories) || 0)),
+                };
+              })
+            : [];
+
+        const computedProtein = items.length > 0 ? items.reduce((s, i) => s + i.protein, 0) : 0;
+        const computedCarbs = items.length > 0 ? items.reduce((s, i) => s + i.carbs, 0) : 0;
+        const computedFiber = items.length > 0 ? items.reduce((s, i) => s + i.fiber, 0) : 0;
+        const computedFat = items.length > 0 ? items.reduce((s, i) => s + i.fat, 0) : 0;
+        const computedCalories = items.length > 0 ? items.reduce((s, i) => s + i.calories, 0) : 0;
+
+        const finalProtein = Math.max(0, parseInt(parsed.protein) || computedProtein);
+        const finalCarbs = Math.max(0, parseInt(parsed.carbs) || computedCarbs);
+        const finalFiber = Math.max(0, parseInt(parsed.fiber) || computedFiber);
+        const finalFat = Math.max(0, parseInt(parsed.fat) !== undefined && !isNaN(parseInt(parsed.fat)) ? parseInt(parsed.fat) : computedFat);
+        const finalCalories = Math.max(0, parseInt(parsed.calories) || computedCalories);
+
+        // Derive or format meal portion in grams or milliliters
+        let finalPortion = parsed.portion ? String(parsed.portion).trim() : undefined;
+        if (!finalPortion && items.length > 0) {
+          // Sum grams from items if available
+          let totalGrams = 0;
+          for (const it of items) {
+            const match = it.portion?.match(/(\d+)\s*g/i);
+            if (match) totalGrams += parseInt(match[1]);
+          }
+          if (totalGrams > 0) {
+            finalPortion = `${totalGrams}g`;
+          }
+        }
+        if (!finalPortion) {
+          const lowerName = (parsed.name || hint || "").toLowerCase();
+          const isDrink = lowerName.includes("drink") || lowerName.includes("water") || lowerName.includes("coffee") || lowerName.includes("juice") || lowerName.includes("shake") || lowerName.includes("smoothie") || lowerName.includes("tea") || lowerName.includes("soda");
+          finalPortion = isDrink ? "300ml" : "250g";
+        }
+
+        return res.json({
+          name: parsed.name || (hasText ? hint.trim().slice(0, 40) : "Analyzed Meal"),
+          portion: finalPortion,
+          protein: finalProtein,
+          carbs: finalCarbs,
+          fiber: finalFiber,
+          fat: finalFat,
+          calories: finalCalories,
+          items
+        });
+      } catch (geminiError) {
+        console.error("Gemini food analysis failed, returning heuristic estimates:", geminiError);
+        const lowerHint = (hint || "").toLowerCase();
+        const isDrink = lowerHint.includes("water") || lowerHint.includes("drink") || lowerHint.includes("shake") || lowerHint.includes("smoothie") || lowerHint.includes("coffee") || lowerHint.includes("tea") || lowerHint.includes("juice") || lowerHint.includes("soda");
+        const isSingle = isDrink || lowerHint.includes("yogurt") || lowerHint.includes("bar") || lowerHint.includes("apple") || lowerHint.includes("banana");
+
+        if (isSingle) {
+          return res.json({
+            name: hasText ? hint.trim().slice(0, 40) : (isDrink ? "Beverage" : "Food Item"),
+            portion: isDrink ? "330ml" : "180g",
+            protein: isDrink ? (lowerHint.includes("shake") ? 25 : 1) : 15,
+            carbs: 10,
+            fiber: 1,
+            fat: isDrink ? 1 : 4,
+            calories: isDrink ? (lowerHint.includes("shake") ? 180 : 45) : 150,
+            items: []
+          });
+        }
+
+        const fallbackMajorItems = [
+          { name: "Main Protein", portion: "180g", carbs: 0, protein: 30, fiber: 0, fat: 8, calories: 200 },
+          { name: "Side Starch / Grain", portion: "160g", carbs: 45, protein: 4, fiber: 2, fat: 1, calories: 210 }
+        ];
+
+        return res.json({
+          name: hasText ? hint.trim().slice(0, 40) : "Meal Plate",
+          portion: "340g",
+          protein: 34,
+          carbs: 45,
+          fiber: 2,
+          fat: 9,
+          calories: 410,
+          items: fallbackMajorItems
+        });
+      }
     } catch (error) {
       console.error("Error analyzing food with Gemini:", error);
       res.status(500).json({ error: "Failed to analyze food" });
