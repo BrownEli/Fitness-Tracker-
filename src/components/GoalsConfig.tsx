@@ -773,7 +773,7 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
               <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">kcal</span>
             </div>
             <p className="text-xs font-semibold text-slate-500 mt-1">
-              Red alert triggers when exceeding this target by 50 or more calories to keep your fat loss on track.
+              Red alert triggers when exceeding this target by 100 or more calories to keep your fat loss on track.
             </p>
           </div>
 
@@ -895,24 +895,31 @@ export default function GoalsConfig({ goals, onUpdateGoals, onLogWeight, onDelet
               {allWeightEntries.length > 0 ? (
                 <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
                   {allWeightEntries.map((entry) => (
-                    <div key={entry.date} className="flex items-center justify-between bg-white border border-slate-200 rounded-lg p-2.5 text-xs">
+                    <div key={entry.date} className="flex flex-col space-y-2 bg-white border border-slate-200 rounded-xl p-3 shadow-2xs">
+                      {/* Date Header */}
                       <div className="flex items-center gap-2">
-                        <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                        <span className="font-bold text-slate-700 font-mono">{formatDateDDMMYYYY(entry.date)}</span>
+                        <Calendar className="w-4 h-4 text-slate-400" />
+                        <span className="font-bold text-slate-700 font-mono text-sm">{formatDateDDMMYYYY(entry.date)}</span>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className="font-mono font-black text-purple-700">{entry.weight} {weightUnit}</span>
-                        {onDeleteWeight && (
+                      {/* Weight Value */}
+                      <div>
+                        <span className="font-mono font-black text-purple-700 text-base">{entry.weight} {weightUnit}</span>
+                      </div>
+                      {/* Delete Action */}
+                      {onDeleteWeight && (
+                        <div className="pt-1 border-t border-slate-100">
                           <button
                             type="button"
                             onClick={() => onDeleteWeight(entry.date)}
-                            className="text-slate-400 hover:text-red-600 p-1 rounded-md transition-colors cursor-pointer"
+                            className="w-full min-h-[48px] rounded-xl text-rose-600 bg-rose-50 hover:bg-rose-100 active:bg-rose-200 border border-rose-200 transition-colors cursor-pointer flex items-center justify-center gap-2 text-sm font-bold"
                             title="Delete weight entry for this date"
+                            aria-label="Delete weight entry"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 className="w-4 h-4" />
+                            <span>Delete Entry</span>
                           </button>
-                        )}
-                      </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

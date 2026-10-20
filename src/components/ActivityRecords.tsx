@@ -247,6 +247,15 @@ export default function ActivityRecords({ logs, weightUnit = 'kg', favoriteFoods
     return filteredJogs.reduce((acc, j) => acc + j.caloriesBurned, 0);
   }, [filteredJogs]);
 
+  // Unique active days where user completed a walk or jog
+  const jogActiveDaysCount = useMemo(() => {
+    const dates = new Set<string>();
+    filteredJogs.forEach((j) => {
+      if (j.date) dates.add(j.date);
+    });
+    return dates.size;
+  }, [filteredJogs]);
+
   // Aggregated Workout Stats for the Active Filter
   const workoutTotalSets = useMemo(() => {
     return filteredWorkouts.reduce((acc, w) => acc + w.sets.length, 0);
@@ -259,7 +268,8 @@ export default function ActivityRecords({ logs, weightUnit = 'kg', favoriteFoods
   // Extract all Logged Meals across all daily logs
   const allMeals = useMemo<FlatMealRecord[]>(() => {
     const list: FlatMealRecord[] = [];
-    const favSet = new Set((favoriteFoods || []).map((f) => f.toLowerCase().trim()));
+    const safeFavList = (favoriteFoods || []).map((f) => (typeof f === 'string' ? f : (f as any)?.name || '').trim()).filter(Boolean);
+    const favSet = new Set(safeFavList.map((f) => f.toLowerCase()));
 
     logs.forEach((log) => {
       if (log.meals && log.meals.length > 0) {
@@ -374,8 +384,8 @@ export default function ActivityRecords({ logs, weightUnit = 'kg', favoriteFoods
                 <h3 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight">
                   Outdoor Jogs & Fast Walks
                 </h3>
-                <span className="bg-indigo-50 text-indigo-700 font-bold px-3 py-1 rounded-xl text-sm border border-indigo-100">
-                  {filteredJogs.length} Sessions Logged
+                <span className="bg-emerald-50 text-emerald-800 font-bold px-3 py-1 rounded-xl text-sm border border-emerald-100">
+                  {jogActiveDaysCount} Active Days
                 </span>
               </div>
               <p className="text-slate-500 text-sm font-medium">
@@ -385,6 +395,10 @@ export default function ActivityRecords({ logs, weightUnit = 'kg', favoriteFoods
 
             {/* Aggregate Metrics Bar */}
             <div className="flex items-center gap-2.5 flex-wrap">
+              <div className="bg-slate-50 border border-slate-200/80 px-3.5 py-2 rounded-xl text-center">
+                <span className="text-sm text-slate-400 font-bold uppercase tracking-wider block">Active Days</span>
+                <span className="text-base font-black text-emerald-600 font-mono">{jogActiveDaysCount} Days</span>
+              </div>
               <div className="bg-slate-50 border border-slate-200/80 px-3.5 py-2 rounded-xl text-center">
                 <span className="text-sm text-slate-400 font-bold uppercase tracking-wider block">Total Distance</span>
                 <span className="text-base font-black text-slate-800 font-mono">{jogTotalKm.toFixed(2)} km</span>
@@ -514,7 +528,7 @@ export default function ActivityRecords({ logs, weightUnit = 'kg', favoriteFoods
                     <p className="text-sm text-slate-400 mt-1">
                       {allJogs.length === 0
                         ? 'Record an outdoor walk or jog to see it listed here.'
-                        : `No sessions recorded in the selected ${jogTimeRange === 'all' ? 'filters' : `${jogTimeRange}-day window`}.`}
+                        : `No sessions recorded in the selected ${jogTimeRange}-day window.`}
                     </p>
                   </td>
                 </tr>

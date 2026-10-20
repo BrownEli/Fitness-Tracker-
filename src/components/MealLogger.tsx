@@ -2,6 +2,11 @@ import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { Meal, DailyLog, MealItemBreakdown } from '../types';
 import { Plus, Clock, Check, Utensils, Camera, Sparkles, Loader2, X, Image as ImageIcon, Trash2, FolderPlus, History, Search, ArrowRight, Zap, Edit3, Flame, TrendingUp, Coffee, Layers, ChevronDown, ChevronUp, Star, AlertTriangle, StopCircle, RefreshCw } from 'lucide-react';
 import { formatDateDDMMYYYY } from '../dateUtils';
+import { ConfirmModal } from './ConfirmModal';
+import {
+  saveImageToDevice,
+  clearFoodPhotoDraft
+} from '../utils/photoStorage';
 
 interface MealLoggerProps {
   onAddMeal: (meal: Omit<Meal, 'id' | 'timestamp'> & { timestamp?: string }) => void;
@@ -54,8 +59,9 @@ export interface GroupingClassification {
 /**
  * Classifies a meal name into a smart canonical group.
  * Specifically groups common recurring foods like Pro yogurts, Pro drinks, and Pro smoothies,
- * or general yogurts, drinks, and smoothies regardless of changing flavors (e.g. Vanilla, Strawberry, Blueberry, Chocolate),
+ * regardless of changing flavors (e.g. Vanilla, Strawberry, Blueberry, Chocolate),
  * while preserving the specific protein rating (e.g., Pro 20 vs Pro 25).
+ * Standard cooked meals (e.g., "Salmon, Potatoes, and Carrots") are never merged into dairy/protein products.
  */
 export function classifyMealForGrouping(name: string): GroupingClassification {
   if (!name || !name.trim()) {
@@ -67,18 +73,16 @@ export function classifyMealForGrouping(name: string): GroupingClassification {
 
   // Check for PRO product keywords:
   // "pro", "yopro", "danone pro", "strauss pro", "muller pro", "tara pro", "arla pro", "go pro"
-  // or explicit keywords "pro drink", "pro yogurt", "pro smoothie"
+  // or explicit keywords "pro drink", "pro yogurt", "pro smoothie", "protein 20", "protein 25"
   const hasExplicitPro =
-    /\b(pro|yopro|danone\s*pro|strauss\s*pro|muller\s*pro|tara\s*pro|arla\s*pro|go\s*pro)\b/i.test(lower) ||
-    lower.includes('pro drink') ||
-    lower.includes('pro yogurt') ||
-    lower.includes('pro yoghurt') ||
-    lower.includes('pro smoothie') ||
-    lower.includes('pro shake');
+    /\b(pro|yopro|danone\s*pro|strauss\s*pro|muller\s*pro|müller\s*pro|tara\s*pro|arla\s*pro|go\s*pro)\b/i.test(lower) ||
+    /\bpro\s*(drink|beverage|yogurt|yoghurt|smoothie|shake|משקה|יוגורט)\b/i.test(lower) ||
+    /\bprotein\s*(15|20|25|30)\b/i.test(lower) ||
+    /חלבון\s*(15|20|25|30)/.test(lower);
 
-  // Extract any protein amount number: e.g. 20 from "pro 20", "20g", "25", "15", "30", etc.
+  // Extract protein amount number: e.g. 20 from "pro 20", "protein 25", "25g", etc.
   let proteinNumber: number | undefined;
-  const numberMatch = lower.match(/(?:pro\s*|yopro\s*)(\d{1,2})\b|\b(\d{1,2})\s*g\b|\b(10|12|14|15|16|18|20|22|24|25|26|28|30|32|35|40)\b/i);
+  const numberMatch = lower.match(/(?:pro\s*|yopro\s*|protein\s*)(\d{1,2})\b|\b(\d{1,2})\s*g\s*(?:protein|חלבון)?\b|\b(12|14|15|16|18|20|22|24|25|26|28|30|32|35|40)\b/i);
   if (numberMatch) {
     const numStr = numberMatch[1] || numberMatch[2] || numberMatch[3];
     if (numStr) {
@@ -89,22 +93,44 @@ export function classifyMealForGrouping(name: string): GroupingClassification {
     }
   }
 
-  const isSmoothie = lower.includes('smoothie') || lower.includes('shake');
-  const isDrink = lower.includes('drink') || lower.includes('beverage') || lower.includes('bottle') || lower.includes('משקה') || lower.includes('liquid');
-  const isYogurt = lower.includes('yogurt') || lower.includes('yoghurt') || lower.includes('cup') || lower.includes('pot') || lower.includes('pudding') || lower.includes('יוגורט') || lower.includes('מעדן');
+  // Strict word boundaries to avoid matching "potatoes" or "cupcakes"
+  const isSmoothie = /\b(smoothie|smoothies)\b/i.test(lower);
+  const isDrink = /\b(drink|beverage|משקה|shake|protein\s*drink|protein\s*shake)\b/i.test(lower);
+  const isYogurt = /\b(yogurt|yoghurt|יוגורט|מעדן|skyr|quark|pudding)\b/i.test(lower);
 
-  // Extract flavor if mentioned to combine flavor variations
-  const flavorKeywords = [
-    'vanilla', 'strawberry', 'blueberry', 'chocolate', 'coffee', 'banana', 'peach', 'mango',
-    'salted caramel', 'caramel', 'cookies', 'berries', 'forest fruits', 'cherry', 'raspberry',
-    'lemon', 'coconut', 'pineapple', 'apple', 'cinnamon', 'hazelnut', 'peanut butter', 'peanut',
-    'unflavored', 'plain', 'original'
-  ];
+  // Extract flavor only if this is an explicit protein product, shake, drink, or yogurt
   let extractedFlavor = '';
-  for (const f of flavorKeywords) {
-    if (lower.includes(f)) {
-      extractedFlavor = f.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-      break;
+  if (hasExplicitPro || isSmoothie || isDrink || isYogurt) {
+    const flavorMap: Array<{ key: RegExp; name: string }> = [
+      { key: /\b(vanilla|וניל)\b/i, name: 'Vanilla' },
+      { key: /\b(strawberry|תות)\b/i, name: 'Strawberry' },
+      { key: /\b(blueberry|אוכמניות)\b/i, name: 'Blueberry' },
+      { key: /\b(chocolate|שוקולד)\b/i, name: 'Chocolate' },
+      { key: /\b(coffee|קפה)\b/i, name: 'Coffee' },
+      { key: /\b(banana|בננה)\b/i, name: 'Banana' },
+      { key: /\b(peach|אפרסק)\b/i, name: 'Peach' },
+      { key: /\b(mango|מנגו)\b/i, name: 'Mango' },
+      { key: /\b(salted\s*caramel|קרמל\s*מלוח)\b/i, name: 'Salted Caramel' },
+      { key: /\b(caramel|קרמל)\b/i, name: 'Caramel' },
+      { key: /\b(cookies|עוגיות)\b/i, name: 'Cookies' },
+      { key: /\b(forest\s*fruits|berries|פירות\s*יער)\b/i, name: 'Berries' },
+      { key: /\b(cherry|דובדבן)\b/i, name: 'Cherry' },
+      { key: /\b(raspberry|פטל)\b/i, name: 'Raspberry' },
+      { key: /\b(lemon|לימון)\b/i, name: 'Lemon' },
+      { key: /\b(coconut|קוקוס)\b/i, name: 'Coconut' },
+      { key: /\b(pineapple|אננס)\b/i, name: 'Pineapple' },
+      { key: /\b(apple|תפוח)\b/i, name: 'Apple' },
+      { key: /\b(cinnamon|קינמון)\b/i, name: 'Cinnamon' },
+      { key: /\b(hazelnut|אגוזי\s*לוז)\b/i, name: 'Hazelnut' },
+      { key: /\b(peanut\s*butter|חמאת\s*בוטנים)\b/i, name: 'Peanut Butter' },
+      { key: /\b(unflavored|plain|original|טבעי|ללא\s*טעם)\b/i, name: 'Plain' },
+    ];
+
+    for (const item of flavorMap) {
+      if (item.key.test(lower)) {
+        extractedFlavor = item.name;
+        break;
+      }
     }
   }
 
@@ -149,7 +175,7 @@ export function classifyMealForGrouping(name: string): GroupingClassification {
     }
   }
 
-  // Non-pro general keywords: Smoothie, Drink, Yogurt with combined flavors
+  // Non-pro general items: keep clear separation
   if (isSmoothie) {
     const key = proteinNumber ? `smoothie_${proteinNumber}` : 'smoothie_general';
     const canonical = proteinNumber ? `${proteinNumber}g Protein Smoothie` : 'Smoothie';
@@ -163,7 +189,7 @@ export function classifyMealForGrouping(name: string): GroupingClassification {
     };
   }
 
-  if (isDrink) {
+  if (isDrink && (lower.includes('protein') || proteinNumber)) {
     const key = proteinNumber ? `drink_${proteinNumber}` : 'protein_drink_general';
     const canonical = proteinNumber ? `${proteinNumber}g Protein Drink` : 'Protein Drink';
     return {
@@ -193,8 +219,8 @@ export function classifyMealForGrouping(name: string): GroupingClassification {
     };
   }
 
-  // Non-pro standard meals: clean punctuation and normalize
-  const normalizedKey = lower.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  // Standard meals: clean punctuation and normalize into distinct unique meal key
+  const normalizedKey = lower.replace(/[^\w\s\u0590-\u05FF]/g, ' ').replace(/\s+/g, ' ').trim();
   return {
     groupKey: normalizedKey,
     canonicalName: raw,
@@ -221,6 +247,41 @@ export default function MealLogger({
   // Log Feedback Notice
   const [logNotice, setLogNotice] = useState<string | null>(null);
 
+  // Confirmation modal state
+  const [confirmConfig, setConfirmConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmText?: string;
+    variant?: 'danger' | 'warning' | 'info';
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {}
+  });
+
+  const requestConfirm = (
+    title: string,
+    message: string,
+    onConfirm: () => void,
+    confirmText = 'Confirm',
+    variant: 'danger' | 'warning' | 'info' = 'danger'
+  ) => {
+    setConfirmConfig({
+      isOpen: true,
+      title,
+      message,
+      confirmText,
+      variant,
+      onConfirm: () => {
+        onConfirm();
+        setConfirmConfig((prev) => ({ ...prev, isOpen: false }));
+      }
+    });
+  };
+
   // Compute daily calorie stats for selected date
   const currentDayCalories = useMemo(() => {
     const selectedLog = logs.find((l) => l.date === selectedDate);
@@ -236,7 +297,7 @@ export default function MealLogger({
   const buildCalorieNotice = (mealName: string, mealCal: number, mealProt: number, mealFat?: number) => {
     const nextTotalCal = currentDayCalories + (mealCal || 0);
     const nextTotalFat = currentDayFat + (mealFat || 0);
-    const isCalAlert = dailyCalorieTarget && nextTotalCal - dailyCalorieTarget >= 50;
+    const isCalAlert = dailyCalorieTarget && nextTotalCal - dailyCalorieTarget >= 100;
     const isFatAlert = dailyFatTarget && nextTotalFat > dailyFatTarget;
 
     if (isCalAlert && isFatAlert) {
@@ -276,6 +337,14 @@ export default function MealLogger({
   const abortControllerRef = useRef<AbortController | null>(null);
   const analysisTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
+  // Safe device saving and session state
+  const [savedDeviceToast, setSavedDeviceToast] = useState<string | null>(null);
+
+  // Clear any residual drafts on mount so modal always starts completely fresh
+  useEffect(() => {
+    clearFoodPhotoDraft();
+  }, []);
+
   // Editable fields for AI detected data
   const [editDetectedName, setEditDetectedName] = useState('');
   const [editDetectedPortion, setEditDetectedPortion] = useState('');
@@ -440,7 +509,7 @@ export default function MealLogger({
         const existing = map.get(classification.groupKey);
         if (existing) {
           existing.count += 1;
-          if (classification.extractedFlavor) {
+          if (classification.isProProduct && classification.extractedFlavor) {
             existing.flavorsSet.add(classification.extractedFlavor);
           }
           existing.rawNamesSet.add(meal.name.trim());
@@ -459,7 +528,7 @@ export default function MealLogger({
           }
         } else {
           const flavorsSet = new Set<string>();
-          if (classification.extractedFlavor) {
+          if (classification.isProProduct && classification.extractedFlavor) {
             flavorsSet.add(classification.extractedFlavor);
           }
           const rawNamesSet = new Set<string>([meal.name.trim()]);
@@ -518,7 +587,7 @@ export default function MealLogger({
         isProProduct: item.isProProduct,
         productType: item.productType,
         proteinAmount: item.proteinAmount,
-        flavors: Array.from(item.flavorsSet),
+        flavors: item.isProProduct ? Array.from(item.flavorsSet) : [],
         rawNames: Array.from(item.rawNamesSet)
       };
     });
@@ -551,7 +620,8 @@ export default function MealLogger({
 
   // Top 5 favorite foods filtered and ranked by the amount of times they were eaten
   const topFiveFavorites = useMemo<TopFavoriteFoodItem[]>(() => {
-    const favSet = new Set((favoriteFoods || []).map((f) => f.toLowerCase().trim()));
+    const safeFavList = (favoriteFoods || []).map((f) => (typeof f === 'string' ? f : (f as any)?.name || '').trim()).filter(Boolean);
+    const favSet = new Set(safeFavList.map((f) => f.toLowerCase()));
     const map = new Map<string, {
       name: string;
       count: number;
@@ -602,11 +672,11 @@ export default function MealLogger({
     });
 
     // Also include any favorite foods that haven't been logged in daily logs yet
-    (favoriteFoods || []).forEach((fav) => {
-      const norm = fav.trim().toLowerCase();
+    safeFavList.forEach((fav) => {
+      const norm = fav.toLowerCase();
       if (norm && !map.has(norm)) {
         map.set(norm, {
-          name: fav.trim(),
+          name: fav,
           count: 0,
           protein: 0,
           carbs: 0,
@@ -743,18 +813,32 @@ export default function MealLogger({
   const handleCloseAiModal = () => {
     handleStopAnalysis();
     setIsAiModalOpen(false);
+    setImagePreviews([]);
+    setFoodHint('');
+    setDetectedData(null);
+    setDetectedItems([]);
+    setEditDetectedName('');
+    setEditDetectedPortion('');
+    setEditDetectedProtein('');
+    setEditDetectedCarbs('');
+    setEditDetectedFat('');
+    setEditDetectedFiber('');
+    setEditDetectedCalories('');
     setAiError(null);
+    clearFoodPhotoDraft();
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
+    if (galleryInputRef.current) galleryInputRef.current.value = '';
   };
 
-  // Fast client-side image resize & compression (max 1200px, 0.82 quality)
-  // Drastically speeds up network upload from 15MB down to ~150KB and prevents mobile upload timeouts
+  // Fast client-side image resize & compression (max 960px, 0.78 quality)
+  // Drastically speeds up network upload down to ~70KB and prevents mobile upload timeouts
   const compressImageFile = (file: File): Promise<string> => {
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = (e) => {
         const img = new Image();
         img.onload = () => {
-          const maxDim = 1200;
+          const maxDim = 960;
           let { width, height } = img;
           if (width > maxDim || height > maxDim) {
             if (width > height) {
@@ -771,7 +855,7 @@ export default function MealLogger({
           const ctx = canvas.getContext('2d');
           if (ctx) {
             ctx.drawImage(img, 0, 0, width, height);
-            resolve(canvas.toDataURL('image/jpeg', 0.82));
+            resolve(canvas.toDataURL('image/jpeg', 0.78));
           } else {
             resolve((e.target?.result as string) || '');
           }
@@ -787,9 +871,18 @@ export default function MealLogger({
   };
 
   // Process files for AI analysis
-  const processFiles = async (files: FileList | File[]) => {
+  const processFiles = async (files: FileList | File[], isFromCamera = false) => {
     const fileArray = Array.from(files);
     if (fileArray.length === 0) return;
+
+    // Automatically save camera pictures to device upon capture (only for camera, never for gallery)
+    if (isFromCamera) {
+      fileArray.forEach((file) => {
+        saveImageToDevice(file);
+      });
+      setSavedDeviceToast('Captured photo saved to your device');
+      setTimeout(() => setSavedDeviceToast(null), 3500);
+    }
 
     try {
       const compressedPreviews = await Promise.all(fileArray.map(file => compressImageFile(file)));
@@ -823,28 +916,45 @@ export default function MealLogger({
 
   const handleCameraCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
-      processFiles(e.target.files);
+      processFiles(e.target.files, true);
     }
   };
 
   const handleGallerySelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
-      processFiles(e.target.files);
+      processFiles(e.target.files, false);
     }
   };
 
   const handleRemoveImage = (indexToRemove: number) => {
-    setImagePreviews(prev => prev.filter((_, idx) => idx !== indexToRemove));
-    setDetectedData(null);
+    requestConfirm(
+      'Remove Photo?',
+      'Are you sure you want to remove this attached food photo?',
+      () => {
+        setImagePreviews(prev => prev.filter((_, idx) => idx !== indexToRemove));
+        setDetectedData(null);
+      },
+      'Remove Photo',
+      'danger'
+    );
   };
 
   const handleResetModalImages = () => {
-    handleStopAnalysis();
-    setImagePreviews([]);
-    setDetectedData(null);
-    setAiError(null);
-    if (cameraInputRef.current) cameraInputRef.current.value = '';
-    if (galleryInputRef.current) galleryInputRef.current.value = '';
+    requestConfirm(
+      'Clear All Photos?',
+      'Are you sure you want to remove all attached photos for this meal?',
+      () => {
+        handleStopAnalysis();
+        setImagePreviews([]);
+        setDetectedData(null);
+        setAiError(null);
+        clearFoodPhotoDraft();
+        if (cameraInputRef.current) cameraInputRef.current.value = '';
+        if (galleryInputRef.current) galleryInputRef.current.value = '';
+      },
+      'Clear All',
+      'danger'
+    );
   };
 
   const runFoodAnalysis = async (images: string[], hintText: string) => {
@@ -865,12 +975,12 @@ export default function MealLogger({
     setDetectedData(null);
     setDetectedItems([]);
 
-    // 25s client-side safety timeout to prevent hanging forever
+    // 60s (1 minute) client-side safety timeout to prevent hanging forever
     analysisTimeoutRef.current = setTimeout(() => {
       if (abortControllerRef.current === controller) {
-        handleStopAnalysis('Analysis timed out after 25 seconds. Tap Scan Photos to try again.');
+        handleStopAnalysis('Analysis timed out after 1 minute. Tap Scan Photos to try again.');
       }
-    }, 25000);
+    }, 60000);
 
     try {
       const res = await fetch('/api/analyze-food', {
@@ -886,7 +996,12 @@ export default function MealLogger({
       }
 
       if (!res.ok) {
-        throw new Error('Failed to analyze food.');
+        let errMessage = 'Unable to analyze food photo right now.';
+        try {
+          const errData = await res.json();
+          if (errData && errData.error) errMessage = errData.error;
+        } catch {}
+        throw new Error(errMessage);
       }
 
       const data = await res.json();
@@ -968,20 +1083,30 @@ export default function MealLogger({
   };
 
   const handleRemoveDetectedItem = (index: number) => {
-    setDetectedItems((prev) => {
-      const next = prev.filter((_, i) => i !== index);
-      const totalP = next.reduce((sum, it) => sum + (Number(it.protein) || 0), 0);
-      const totalC = next.reduce((sum, it) => sum + (Number(it.carbs) || 0), 0);
-      const totalFat = next.reduce((sum, it) => sum + (Number(it.fat) || 0), 0);
-      const totalF = next.reduce((sum, it) => sum + (Number(it.fiber) || 0), 0);
-      const totalCal = next.reduce((sum, it) => sum + (Number(it.calories) || 0), 0);
-      setEditDetectedProtein(String(Math.round(totalP)));
-      setEditDetectedCarbs(String(Math.round(totalC)));
-      setEditDetectedFat(String(Math.round(totalFat)));
-      setEditDetectedFiber(String(Math.round(totalF)));
-      setEditDetectedCalories(String(Math.round(totalCal)));
-      return next;
-    });
+    const item = detectedItems[index];
+    const itemTitle = item?.name ? `"${item.name}"` : 'this food item';
+    requestConfirm(
+      'Remove Food Item?',
+      `Are you sure you want to remove ${itemTitle} from the meal breakdown?`,
+      () => {
+        setDetectedItems((prev) => {
+          const next = prev.filter((_, i) => i !== index);
+          const totalP = next.reduce((sum, it) => sum + (Number(it.protein) || 0), 0);
+          const totalC = next.reduce((sum, it) => sum + (Number(it.carbs) || 0), 0);
+          const totalFat = next.reduce((sum, it) => sum + (Number(it.fat) || 0), 0);
+          const totalF = next.reduce((sum, it) => sum + (Number(it.fiber) || 0), 0);
+          const totalCal = next.reduce((sum, it) => sum + (Number(it.calories) || 0), 0);
+          setEditDetectedProtein(String(Math.round(totalP)));
+          setEditDetectedCarbs(String(Math.round(totalC)));
+          setEditDetectedFat(String(Math.round(totalFat)));
+          setEditDetectedFiber(String(Math.round(totalF)));
+          setEditDetectedCalories(String(Math.round(totalCal)));
+          return next;
+        });
+      },
+      'Remove Item',
+      'danger'
+    );
   };
 
   const handleAddDetectedItem = () => {
@@ -1042,6 +1167,7 @@ export default function MealLogger({
     setDetectedData(null);
     setDetectedItems([]);
     setAiError(null);
+    clearFoodPhotoDraft();
     if (cameraInputRef.current) cameraInputRef.current.value = '';
     if (galleryInputRef.current) galleryInputRef.current.value = '';
 
@@ -1050,24 +1176,20 @@ export default function MealLogger({
   };
 
   // Handler for manual meal modal submission
-  const isManualFormValid =
-    manualName.trim().length > 0 &&
-    manualProtein.trim() !== '' && !isNaN(Number(manualProtein)) && Number(manualProtein) >= 0 &&
-    manualCarbs.trim() !== '' && !isNaN(Number(manualCarbs)) && Number(manualCarbs) >= 0 &&
-    (manualFat.trim() === '' || (!isNaN(Number(manualFat)) && Number(manualFat) >= 0)) &&
-    manualFiber.trim() !== '' && !isNaN(Number(manualFiber)) && Number(manualFiber) >= 0 &&
-    manualCalories.trim() !== '' && !isNaN(Number(manualCalories)) && Number(manualCalories) >= 0;
+  const isManualFormValid = manualName.trim().length > 0;
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isManualFormValid) return;
+    e.stopPropagation();
+    if (!manualName.trim()) return;
 
     const mealName = manualName.trim();
     const prot = Math.max(0, parseFloat(manualProtein) || 0);
     const cb = Math.max(0, parseFloat(manualCarbs) || 0);
     const ft = Math.max(0, parseFloat(manualFat) || 0);
     const fb = Math.max(0, parseFloat(manualFiber) || 0);
-    const cal = Math.max(0, parseInt(manualCalories) || 0);
+    const parsedCal = parseInt(manualCalories);
+    const cal = !isNaN(parsedCal) && parsedCal > 0 ? parsedCal : Math.round(prot * 4 + cb * 4 + ft * 9);
     const timeVal = manualTime || getNowTimeString();
 
     onAddMeal({
@@ -1106,16 +1228,16 @@ export default function MealLogger({
       <div className="bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-8 shadow-xs space-y-6">
         
         {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-start gap-3.5">
-            <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl shrink-0 mt-0.5">
+        <div className="flex flex-col space-y-2">
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl shrink-0">
               <Utensils className="w-6 h-6" />
             </div>
             <div>
               <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight leading-tight">
                 Log Food
               </h2>
-              <p className="text-slate-500 text-xs sm:text-sm mt-1 font-semibold">
+              <p className="text-slate-600 text-sm mt-0.5 font-semibold">
                 Quick nutrition tracking
               </p>
             </div>
@@ -1125,7 +1247,7 @@ export default function MealLogger({
         {/* Log Notice Banner (Normal Success or Red Alert) */}
         {logNotice && (
           <div
-            className={`p-4 rounded-2xl flex items-center justify-between text-sm font-black animate-fadeIn shadow-2xs ${
+            className={`p-4 rounded-2xl flex flex-col space-y-2 text-sm font-black animate-fadeIn shadow-2xs ${
               logNotice.includes('Red Alert')
                 ? 'bg-red-50 border-2 border-red-500 text-red-950 ring-2 ring-red-400/30'
                 : 'bg-emerald-50 border border-emerald-200 text-emerald-800'
@@ -1140,184 +1262,243 @@ export default function MealLogger({
               )}
               <span className="leading-snug">{logNotice}</span>
             </div>
-            <button
-              type="button"
-              onClick={() => setLogNotice(null)}
-              className="text-slate-400 hover:text-slate-700 p-1 cursor-pointer shrink-0 ml-2"
-              aria-label="Close notification"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        )}
-
-        {/* Quick Coffee One-Tap Card */}
-        <div
-          className="bg-gradient-to-r from-amber-50/90 via-orange-50/50 to-amber-50/80 border border-amber-200/90 rounded-2xl p-5 shadow-xs"
-          id="quick-coffee-card"
-        >
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            {/* Left: Coffee icon and title */}
-            <div className="flex items-center gap-3.5">
-              <div className="p-3 bg-amber-100 text-amber-900 rounded-xl shrink-0 shadow-2xs">
-                <Coffee className="w-6 h-6 text-amber-800" />
-              </div>
-              <div className="space-y-1">
-                <h3 className="text-base font-black text-slate-900 tracking-tight">
-                  Daily Coffee
-                </h3>
-                <p className="text-sm text-slate-600 font-medium">
-                  {coffeeMilk === 'with-milk'
-                    ? 'Double Espresso with Milk • 25 kcal • 1g protein'
-                    : 'Double Espresso No Milk • 5 kcal • 0g protein'}
-                </p>
-              </div>
-            </div>
-
-            {/* Right: Milk selector and Log Button */}
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Milk preference pills */}
-              <div className="inline-flex p-1 bg-white/90 border border-amber-200 rounded-xl shadow-2xs">
-                <button
-                  type="button"
-                  onClick={() => handleSelectCoffeeMilk('with-milk')}
-                  className={`px-3.5 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer min-h-[44px] flex items-center justify-center ${
-                    coffeeMilk === 'with-milk'
-                      ? 'bg-amber-800 text-white shadow-xs'
-                      : 'text-amber-900 hover:bg-amber-100/60'
-                  }`}
-                  id="coffee-with-milk-toggle"
-                >
-                  With Milk
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSelectCoffeeMilk('no-milk')}
-                  className={`px-3.5 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer min-h-[44px] flex items-center justify-center ${
-                    coffeeMilk === 'no-milk'
-                      ? 'bg-amber-800 text-white shadow-xs'
-                      : 'text-amber-900 hover:bg-amber-100/60'
-                  }`}
-                  id="coffee-no-milk-toggle"
-                >
-                  No Milk
-                </button>
-              </div>
-
-              {/* Main Log Coffee Button */}
+            <div className="pt-1 border-t border-slate-200/60">
               <button
                 type="button"
-                onClick={() => handleQuickLogCoffee()}
-                className="px-5 py-2.5 bg-amber-800 hover:bg-amber-900 active:scale-98 text-white rounded-xl font-black text-sm shadow-sm hover:shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 min-h-[48px]"
-                id="quick-log-coffee-btn"
+                onClick={() => setLogNotice(null)}
+                className="w-full py-2 min-h-[48px] text-slate-600 hover:text-slate-900 font-bold text-sm rounded-xl bg-white border border-slate-200 transition-colors cursor-pointer flex items-center justify-center"
+                aria-label="Close notification"
               >
-                <Coffee className="w-5 h-5 text-amber-200" />
-                <span>Log Coffee</span>
+                Dismiss Notice
               </button>
             </div>
           </div>
+        )}
+
+        {/* Quick Coffee One-Tap Card - Column First Alignment */}
+        <div
+          className="bg-gradient-to-r from-amber-50/90 via-orange-50/50 to-amber-50/80 border border-amber-200/90 rounded-2xl p-5 shadow-xs flex flex-col space-y-3"
+          id="quick-coffee-card"
+        >
+          {/* Top category metadata */}
+          <div className="flex items-center gap-2">
+            <span className="px-2.5 py-1 bg-amber-100 text-amber-900 rounded-lg text-sm font-black inline-flex items-center gap-1.5 border border-amber-200">
+              <Coffee className="w-4 h-4 text-amber-800" />
+              Daily Coffee Quick Log
+            </span>
+          </div>
+
+          {/* Full-width Title */}
+          <div className="w-full">
+            <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
+              Daily Coffee
+            </h3>
+          </div>
+
+          {/* Secondary Details */}
+          <div>
+            <p className="text-sm text-slate-600 font-semibold">
+              {coffeeMilk === 'with-milk'
+                ? 'Double Espresso with Milk'
+                : 'Double Espresso No Milk'}
+            </p>
+          </div>
+
+          {/* Macro Badges in Dedicated Section */}
+          <div className="flex flex-wrap items-center gap-2 pt-0.5">
+            <span className="px-2.5 py-1 bg-white border border-amber-200 rounded-lg text-sm font-bold text-amber-800 font-mono shadow-2xs">
+              {coffeeMilk === 'with-milk' ? '25 kcal' : '5 kcal'}
+            </span>
+            <span className="px-2.5 py-1 bg-white border border-amber-200 rounded-lg text-sm font-bold text-emerald-800 font-mono shadow-2xs">
+              {coffeeMilk === 'with-milk' ? '1g protein' : '0g protein'}
+            </span>
+          </div>
+
+          {/* Action and Selector Section */}
+          <div className="pt-2 border-t border-amber-200/70 flex flex-col space-y-2.5">
+            {/* Milk preference selector */}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleSelectCoffeeMilk('with-milk')}
+                className={`py-2.5 px-3 rounded-xl text-sm font-bold transition-all cursor-pointer min-h-[48px] flex items-center justify-center border ${
+                  coffeeMilk === 'with-milk'
+                    ? 'bg-amber-800 text-white border-amber-900 shadow-xs'
+                    : 'bg-white text-amber-900 border-amber-200 hover:bg-amber-100/60'
+                }`}
+                id="coffee-with-milk-toggle"
+              >
+                With Milk
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSelectCoffeeMilk('no-milk')}
+                className={`py-2.5 px-3 rounded-xl text-sm font-bold transition-all cursor-pointer min-h-[48px] flex items-center justify-center border ${
+                  coffeeMilk === 'no-milk'
+                    ? 'bg-amber-800 text-white border-amber-900 shadow-xs'
+                    : 'bg-white text-amber-900 border-amber-200 hover:bg-amber-100/60'
+                }`}
+                id="coffee-no-milk-toggle"
+              >
+                No Milk
+              </button>
+            </div>
+
+            {/* Main Log Coffee Button */}
+            <button
+              type="button"
+              onClick={() => handleQuickLogCoffee()}
+              className="w-full py-3 bg-amber-800 hover:bg-amber-900 active:scale-98 text-white rounded-xl font-black text-sm shadow-sm hover:shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 min-h-[48px]"
+              id="quick-log-coffee-btn"
+            >
+              <Coffee className="w-5 h-5 text-amber-200" />
+              <span>Log Daily Coffee</span>
+            </button>
+          </div>
         </div>
 
-        {/* 3 Main Action Buttons Grid */}
+        {/* 3 Main Action Cards Grid - Strict Vertical Column Alignment */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4" id="log-food-3-buttons-grid">
           
-          {/* Button 1: Recent Meals */}
-          <button
-            type="button"
-            onClick={() => {
-              setRecentMealSearch('');
-              setIsRecentMealsModalOpen(true);
-            }}
-            className="w-full text-left p-5 sm:p-6 bg-slate-50/80 hover:bg-indigo-50/50 active:scale-98 border border-slate-200/90 hover:border-indigo-300 rounded-2xl transition-all cursor-pointer group shadow-2xs hover:shadow-md flex flex-col justify-between min-h-[140px]"
-            id="recent-meals-btn"
+          {/* Card 1: Recent Meals */}
+          <div
+            className="w-full text-left p-5 sm:p-6 bg-slate-50/80 border border-slate-200/90 rounded-2xl shadow-2xs hover:shadow-md transition-all flex flex-col space-y-3"
+            id="recent-meals-card"
           >
-            <div className="flex items-start justify-between w-full">
-              <div className="p-3 bg-white group-hover:bg-indigo-600 group-hover:text-white text-indigo-600 rounded-xl border border-slate-200 group-hover:border-indigo-600 shadow-2xs transition-colors">
+            {/* Top metadata tag */}
+            <div className="flex items-center gap-2">
+              <span className="p-2 bg-indigo-50 text-indigo-700 rounded-xl border border-indigo-100">
                 <History className="w-5 h-5" />
-              </div>
-              <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700 bg-indigo-100/70 px-2.5 py-1 rounded-full font-mono">
+              </span>
+              <span className="text-sm font-black uppercase text-indigo-700 bg-indigo-100/70 px-2.5 py-1 rounded-lg font-mono">
                 {recentMeals.length} logged
               </span>
             </div>
 
-            <div className="mt-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-base font-black text-slate-900 group-hover:text-indigo-600 transition-colors">
-                  Recent Meals
-                </h3>
-                <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 group-hover:translate-x-1 transition-all" />
-              </div>
-              <p className="text-xs text-slate-500 font-semibold mt-1">
-                Past 5 days history
+            {/* Full-width Title */}
+            <div className="w-full">
+              <h3 className="text-base font-black text-slate-900">
+                Recent Meals
+              </h3>
+            </div>
+
+            {/* Secondary Description */}
+            <div>
+              <p className="text-sm text-slate-600 font-semibold">
+                Past 5 days food history
               </p>
             </div>
-          </button>
 
-          {/* Button 2: Scan with AI */}
-          <button
-            type="button"
-            onClick={() => {
-              handleStopAnalysis();
-              setIsAiModalOpen(true);
-              setAiError(null);
-            }}
-            className="w-full text-left p-5 sm:p-6 bg-gradient-to-br from-indigo-600 via-indigo-700 to-violet-700 hover:from-indigo-700 hover:to-violet-800 active:scale-98 text-white rounded-2xl shadow-md hover:shadow-xl hover:shadow-indigo-500/20 transition-all cursor-pointer group flex flex-col justify-between min-h-[140px]"
-            id="scan-with-ai-btn"
+            {/* Dedicated Action Button */}
+            <div className="pt-2 border-t border-slate-200/70 mt-auto">
+              <button
+                type="button"
+                onClick={() => {
+                  setRecentMealSearch('');
+                  setIsRecentMealsModalOpen(true);
+                }}
+                className="w-full py-2.5 px-4 min-h-[48px] bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
+                id="recent-meals-btn"
+              >
+                <span>View Recent Meals</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Card 2: Scan with AI */}
+          <div
+            className="w-full text-left p-5 sm:p-6 bg-gradient-to-br from-indigo-600 via-indigo-700 to-violet-700 text-white rounded-2xl shadow-md flex flex-col space-y-3"
+            id="scan-with-ai-card"
           >
-            <div className="flex items-start justify-between w-full">
-              <div className="p-3 bg-white/15 text-white rounded-xl backdrop-blur-xs border border-white/20 shadow-2xs group-hover:scale-105 transition-transform flex items-center gap-1">
+            {/* Top metadata tag */}
+            <div className="flex items-center gap-2">
+              <span className="p-2 bg-white/20 text-white rounded-xl border border-white/20 flex items-center gap-1">
                 <Camera className="w-5 h-5" />
                 <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-              </div>
-              <span className="text-[10px] font-black uppercase tracking-wider text-indigo-100 bg-white/20 px-2.5 py-1 rounded-full backdrop-blur-xs">
+              </span>
+              <span className="text-sm font-black uppercase text-white bg-white/20 px-2.5 py-1 rounded-lg">
                 Gemini AI
               </span>
             </div>
 
-            <div className="mt-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-base font-black text-white">
-                  Scan with AI
-                </h3>
-                <ArrowRight className="w-4 h-4 text-indigo-200 group-hover:translate-x-1 transition-all" />
-              </div>
-              <p className="text-xs text-indigo-100/90 font-semibold mt-1">
-                Photo or text description
+            {/* Full-width Title */}
+            <div className="w-full">
+              <h3 className="text-base font-black text-white">
+                Scan with AI
+              </h3>
+            </div>
+
+            {/* Secondary Description */}
+            <div>
+              <p className="text-sm text-indigo-100 font-semibold">
+                Photo or text description analysis
               </p>
             </div>
-          </button>
 
-          {/* Button 3: Log Entry Now */}
-          <button
-            type="button"
-            onClick={() => {
-              setManualTime(timestamp || getNowTimeString());
-              setIsManualModalOpen(true);
-            }}
-            className="w-full text-left p-5 sm:p-6 bg-slate-50/80 hover:bg-emerald-50/50 active:scale-98 border border-slate-200/90 hover:border-emerald-300 rounded-2xl transition-all cursor-pointer group shadow-2xs hover:shadow-md flex flex-col justify-between min-h-[140px]"
-            id="log-entry-now-btn"
+            {/* Dedicated Action Button */}
+            <div className="pt-2 border-t border-white/20 mt-auto">
+              <button
+                type="button"
+                onClick={() => {
+                  handleStopAnalysis();
+                  setIsAiModalOpen(true);
+                  setAiError(null);
+                }}
+                className="w-full py-2.5 px-4 min-h-[48px] bg-white hover:bg-indigo-50 text-indigo-900 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
+                id="scan-with-ai-btn"
+              >
+                <span>Open AI Scanner</span>
+                <ArrowRight className="w-4 h-4 text-indigo-700" />
+              </button>
+            </div>
+          </div>
+
+          {/* Card 3: Log Entry Now */}
+          <div
+            className="w-full text-left p-5 sm:p-6 bg-slate-50/80 border border-slate-200/90 rounded-2xl shadow-2xs hover:shadow-md transition-all flex flex-col space-y-3"
+            id="log-entry-now-card"
           >
-            <div className="flex items-start justify-between w-full">
-              <div className="p-3 bg-white group-hover:bg-emerald-600 group-hover:text-white text-emerald-600 rounded-xl border border-slate-200 group-hover:border-emerald-600 shadow-2xs transition-colors">
+            {/* Top metadata tag */}
+            <div className="flex items-center gap-2">
+              <span className="p-2 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-100">
                 <Plus className="w-5 h-5 stroke-[2.5]" />
-              </div>
-              <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-100/70 px-2.5 py-1 rounded-full font-mono">
-                Manual
+              </span>
+              <span className="text-sm font-black uppercase text-emerald-800 bg-emerald-100/70 px-2.5 py-1 rounded-lg font-mono">
+                Manual Entry
               </span>
             </div>
 
-            <div className="mt-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-base font-black text-slate-900 group-hover:text-emerald-700 transition-colors">
-                  Log Entry Now
-                </h3>
-                <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-emerald-600 group-hover:translate-x-1 transition-all" />
-              </div>
-              <p className="text-xs text-slate-500 font-semibold mt-1">
-                Manual macros entry
+            {/* Full-width Title */}
+            <div className="w-full">
+              <h3 className="text-base font-black text-slate-900">
+                Log Entry Now
+              </h3>
+            </div>
+
+            {/* Secondary Description */}
+            <div>
+              <p className="text-sm text-slate-600 font-semibold">
+                Manual macro and calorie input
               </p>
             </div>
-          </button>
+
+            {/* Dedicated Action Button */}
+            <div className="pt-2 border-t border-slate-200/70 mt-auto">
+              <button
+                type="button"
+                onClick={() => {
+                  setManualTime(timestamp || getNowTimeString());
+                  setIsManualModalOpen(true);
+                }}
+                className="w-full py-2.5 px-4 min-h-[48px] bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
+                id="log-entry-now-btn"
+              >
+                <span>Open Manual Form</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
 
         </div>
 
@@ -1366,56 +1547,65 @@ export default function MealLogger({
                   {topFiveFavorites.map((item) => (
                     <div
                       key={item.name}
-                      className="p-4 bg-amber-50/40 hover:bg-amber-50/70 border border-amber-200/90 rounded-2xl transition-all shadow-2xs hover:shadow-xs flex flex-col justify-between gap-3"
+                      className="p-4 bg-amber-50/40 hover:bg-amber-50/70 border border-amber-200/90 rounded-2xl transition-all shadow-2xs hover:shadow-xs flex flex-col space-y-3"
                     >
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5">
-                            <Star className="w-4 h-4 fill-amber-400 text-amber-500 shrink-0" />
-                            <span className="text-sm font-bold text-amber-800 bg-amber-100/90 px-2 py-0.5 rounded-md font-mono">
-                              Eaten {item.count} times
-                            </span>
-                          </div>
-                          {item.portion && (
-                            <span className="text-sm font-semibold text-slate-500 font-mono">
-                              {item.portion}
-                            </span>
-                          )}
-                        </div>
-
-                        <h4 className="text-sm font-black text-slate-900 line-clamp-2 leading-snug">
-                          {item.name}
-                        </h4>
-
-                        <div className="flex flex-wrap items-center gap-1.5 pt-1 text-sm">
-                          <span className="px-2 py-0.5 bg-white border border-slate-200/80 rounded-lg font-black text-emerald-700">
-                            {item.protein}g P
-                          </span>
-                          {item.carbs !== undefined && (
-                            <span className="px-2 py-0.5 bg-white border border-slate-200/80 rounded-lg font-black text-sky-700">
-                              {item.carbs}g C
-                            </span>
-                          )}
-                          {item.fiber !== undefined && (
-                            <span className="px-2 py-0.5 bg-white border border-slate-200/80 rounded-lg font-black text-teal-700">
-                              {item.fiber}g F
-                            </span>
-                          )}
-                          <span className="px-2 py-0.5 bg-white border border-slate-200/80 rounded-lg font-bold text-amber-800 font-mono">
-                            {item.calories} kcal
+                      {/* Top metadata tag */}
+                      <div className="flex flex-col space-y-1">
+                        <div className="inline-flex items-center gap-1.5 self-start">
+                          <Star className="w-4 h-4 fill-amber-400 text-amber-500 shrink-0" />
+                          <span className="text-sm font-bold text-amber-800 bg-amber-100/90 px-2.5 py-1 rounded-md font-mono">
+                            Eaten {item.count} times
                           </span>
                         </div>
                       </div>
 
-                      {/* One-action log button */}
-                      <button
-                        type="button"
-                        onClick={() => handleQuickLogFavorite(item)}
-                        className="w-full py-2.5 px-3.5 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 shadow-xs transition-all active:scale-95 cursor-pointer"
-                      >
-                        <Plus className="w-4 h-4 stroke-[3]" />
-                        <span>Quick Log</span>
-                      </button>
+                      {/* Full-width Title */}
+                      <div className="w-full">
+                        <h4 className="text-sm sm:text-base font-black text-slate-900 leading-snug break-words">
+                          {item.name}
+                        </h4>
+                      </div>
+
+                      {/* Secondary portion details if present */}
+                      {item.portion && (
+                        <div>
+                          <span className="text-sm font-semibold text-slate-500 font-mono">
+                            {item.portion}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Macro metrics badges in dedicated vertical section */}
+                      <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-sm">
+                        <span className="px-2 py-0.5 bg-white border border-slate-200/80 rounded-lg font-black text-emerald-700">
+                          {item.protein}g P
+                        </span>
+                        {item.carbs !== undefined && (
+                          <span className="px-2 py-0.5 bg-white border border-slate-200/80 rounded-lg font-black text-sky-700">
+                            {item.carbs}g C
+                          </span>
+                        )}
+                        {item.fiber !== undefined && (
+                          <span className="px-2 py-0.5 bg-white border border-slate-200/80 rounded-lg font-black text-teal-700">
+                            {item.fiber}g F
+                          </span>
+                        )}
+                        <span className="px-2 py-0.5 bg-white border border-slate-200/80 rounded-lg font-bold text-amber-800 font-mono">
+                          {item.calories} kcal
+                        </span>
+                      </div>
+
+                      {/* Dedicated Action Button in its own vertical section */}
+                      <div className="pt-2 border-t border-amber-200/60">
+                        <button
+                          type="button"
+                          onClick={() => handleQuickLogFavorite(item)}
+                          className="w-full py-2.5 px-3.5 min-h-[48px] bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 shadow-xs transition-all active:scale-95 cursor-pointer"
+                        >
+                          <Plus className="w-4 h-4 stroke-[3]" />
+                          <span>Quick Log</span>
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1504,63 +1694,64 @@ export default function MealLogger({
                     <div
                       key={item.name}
                       onClick={() => handleSelectAndLogFrequentMeal(item)}
-                      className="p-4 bg-slate-50 hover:bg-amber-50/60 border border-slate-200/80 hover:border-amber-300 rounded-2xl transition-all cursor-pointer group shadow-2xs hover:shadow-sm flex flex-col justify-between gap-3"
+                      className="p-4 bg-slate-50 hover:bg-amber-50/60 border border-slate-200/80 hover:border-amber-300 rounded-2xl transition-all cursor-pointer group shadow-2xs hover:shadow-sm flex flex-col space-y-3"
                     >
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <h4 className="text-sm font-black text-slate-900 group-hover:text-amber-900 truncate">
-                              {item.name}
-                            </h4>
-                            {item.isProProduct && (
-                              <span className="text-sm font-black uppercase text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-md shrink-0">
-                                PRO
-                              </span>
-                            )}
-                          </div>
-                          <span className="text-sm font-black font-mono text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-md shrink-0">
-                            {item.count}x
+                      {/* Top metadata tags */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-black font-mono text-amber-800 bg-amber-100/80 px-2.5 py-1 rounded-lg">
+                          Logged {item.count} times
+                        </span>
+                        {item.isProProduct && (
+                          <span className="text-sm font-black uppercase text-indigo-700 bg-indigo-100 px-2.5 py-1 rounded-lg">
+                            PRO Item
                           </span>
-                        </div>
-
-                        {item.flavors && item.flavors.length > 0 && (
-                          <p className="text-sm text-slate-500 font-semibold truncate">
-                            Flavors: {item.flavors.slice(0, 3).join(', ')}{item.flavors.length > 3 ? '...' : ''}
-                          </p>
                         )}
-
-                        <div className="flex items-center gap-1.5 text-sm font-mono font-bold flex-wrap">
-                          <span className="text-amber-700 bg-white px-2 py-0.5 rounded-lg border border-slate-200/80 shadow-2xs">
-                            {item.calories} kcal
-                          </span>
-                          <span className="text-indigo-600 bg-white px-2 py-0.5 rounded-lg border border-slate-200/80 shadow-2xs">
-                            {item.protein}g protein
-                          </span>
-                          <span className="text-sky-600 bg-white px-2 py-0.5 rounded-lg border border-slate-200/80 shadow-2xs">
-                            {item.carbs}g carbs
-                          </span>
-                          {item.fiber > 0 && (
-                            <span className="text-emerald-600 bg-white px-2 py-0.5 rounded-lg border border-slate-200/80 shadow-2xs">
-                              {item.fiber}g fiber
-                            </span>
-                          )}
-                        </div>
                       </div>
 
-                      <div className="pt-2 border-t border-slate-200/60 flex items-center justify-between">
-                        <span className="text-sm font-bold text-slate-400 group-hover:text-amber-700 transition-colors">
-                          Click to log now
+                      {/* Full-width Title */}
+                      <div className="w-full">
+                        <h4 className="text-sm sm:text-base font-black text-slate-900 group-hover:text-amber-900 leading-snug break-words">
+                          {item.name}
+                        </h4>
+                      </div>
+
+                      {/* Secondary description / flavors */}
+                      {item.isProProduct && item.flavors && item.flavors.length > 1 && (
+                        <p className="text-sm text-slate-600 font-semibold">
+                          Flavors: {item.flavors.slice(0, 3).join(', ')}{item.flavors.length > 3 ? '...' : ''}
+                        </p>
+                      )}
+
+                      {/* Macro metrics badges in dedicated vertical section */}
+                      <div className="flex items-center gap-1.5 text-sm font-mono font-bold flex-wrap">
+                        <span className="text-amber-800 bg-white px-2.5 py-1 rounded-lg border border-slate-200/80 shadow-2xs">
+                          {item.calories} kcal
                         </span>
+                        <span className="text-indigo-700 bg-white px-2.5 py-1 rounded-lg border border-slate-200/80 shadow-2xs">
+                          {item.protein}g protein
+                        </span>
+                        <span className="text-sky-700 bg-white px-2.5 py-1 rounded-lg border border-slate-200/80 shadow-2xs">
+                          {item.carbs}g carbs
+                        </span>
+                        {item.fiber > 0 && (
+                          <span className="text-emerald-700 bg-white px-2.5 py-1 rounded-lg border border-slate-200/80 shadow-2xs">
+                            {item.fiber}g fiber
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Action button in dedicated vertical section with 48px touch target */}
+                      <div className="pt-2 border-t border-slate-200/60 mt-auto">
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             handleSelectAndLogFrequentMeal(item);
                           }}
-                          className="px-3.5 py-2 bg-amber-500 group-hover:bg-amber-600 active:scale-95 text-white rounded-xl text-sm font-black transition-all flex items-center gap-1 shadow-2xs cursor-pointer"
+                          className="w-full py-2.5 px-3.5 min-h-[48px] bg-amber-500 hover:bg-amber-600 active:scale-95 text-white rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 shadow-2xs cursor-pointer"
                         >
                           <Plus className="w-4 h-4 stroke-[3]" />
-                          <span>Log</span>
+                          <span>Log Meal</span>
                         </button>
                       </div>
                     </div>
@@ -1673,48 +1864,54 @@ export default function MealLogger({
                   <div
                     key={item.id}
                     onClick={() => handleSelectAndLogRecentMeal(item.meal)}
-                    className="group p-4 bg-white hover:bg-indigo-50/50 border border-slate-200 hover:border-indigo-300 rounded-2xl transition-all cursor-pointer shadow-2xs hover:shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                    className="group p-4 bg-white hover:bg-indigo-50/50 border border-slate-200 hover:border-indigo-300 rounded-2xl transition-all cursor-pointer shadow-2xs hover:shadow-md flex flex-col space-y-3"
                   >
-                    <div className="space-y-1.5 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[11px] font-black font-mono text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
-                          {item.formattedDate}
+                    {/* Date & Time Badges */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-black font-mono text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100">
+                        {item.formattedDate}
+                      </span>
+                      {item.meal.timestamp && (
+                        <span className="text-sm font-mono text-slate-500 font-semibold flex items-center gap-1">
+                          <Clock className="w-3.5 h-3.5 text-slate-400" /> {item.meal.timestamp}
                         </span>
-                        {item.meal.timestamp && (
-                          <span className="text-[11px] font-mono text-slate-400 font-semibold flex items-center gap-1">
-                            <Clock className="w-3 h-3 text-slate-400" /> {item.meal.timestamp}
-                          </span>
-                        )}
-                      </div>
-                      <h4 className="text-sm font-black text-slate-900 group-hover:text-indigo-900 truncate">
-                        {item.meal.name}
-                      </h4>
-                      <div className="flex items-center gap-2 text-xs font-mono font-bold flex-wrap">
-                        <span className="text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-100/50">
-                          {item.meal.protein || 0}g protein
-                        </span>
-                        <span className="text-sky-600 bg-sky-50 px-2 py-0.5 rounded-lg border border-sky-100/50">
-                          {item.meal.carbs || 0}g carbs
-                        </span>
-                        <span className="text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100/50">
-                          {item.meal.fiber || 0}g fiber
-                        </span>
-                        <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-100/50">
-                          {item.meal.calories || 0} kcal
-                        </span>
-                      </div>
+                      )}
                     </div>
 
-                    <div className="shrink-0 w-full sm:w-auto">
+                    {/* Meal Name */}
+                    <div className="w-full">
+                      <h4 className="text-sm sm:text-base font-black text-slate-900 group-hover:text-indigo-900 leading-snug break-words">
+                        {item.meal.name}
+                      </h4>
+                    </div>
+
+                    {/* Nutritional Badges */}
+                    <div className="flex items-center gap-2 text-sm font-mono font-bold flex-wrap">
+                      <span className="text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100">
+                        {item.meal.protein || 0}g protein
+                      </span>
+                      <span className="text-sky-700 bg-sky-50 px-2.5 py-1 rounded-lg border border-sky-100">
+                        {item.meal.carbs || 0}g carbs
+                      </span>
+                      <span className="text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">
+                        {item.meal.fiber || 0}g fiber
+                      </span>
+                      <span className="text-amber-800 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-100">
+                        {item.meal.calories || 0} kcal
+                      </span>
+                    </div>
+
+                    {/* Action Button in Dedicated Bottom Row */}
+                    <div className="pt-2 border-t border-slate-100">
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           handleSelectAndLogRecentMeal(item.meal);
                         }}
-                        className="w-full sm:w-auto px-4 py-2.5 bg-indigo-600 group-hover:bg-indigo-700 active:scale-95 text-white rounded-xl text-xs font-black transition-all flex items-center justify-center text-center gap-1.5 shadow-2xs cursor-pointer"
+                        className="w-full py-2.5 min-h-[48px] bg-indigo-600 group-hover:bg-indigo-700 active:scale-95 text-white rounded-xl text-sm font-bold transition-all flex items-center justify-center text-center gap-2 shadow-2xs cursor-pointer"
                       >
-                        <Plus className="w-3.5 h-3.5" />
+                        <Plus className="w-4 h-4 stroke-[3]" />
                         <span>Log Meal</span>
                       </button>
                     </div>
@@ -1810,55 +2007,63 @@ export default function MealLogger({
                   <div
                     key={item.name}
                     onClick={() => handleSelectAndLogFrequentMeal(item)}
-                    className="group p-4 bg-white hover:bg-amber-50/50 border border-slate-200 hover:border-amber-300 rounded-2xl transition-all cursor-pointer shadow-2xs hover:shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                    className="group p-4 bg-white hover:bg-amber-50/50 border border-slate-200 hover:border-amber-300 rounded-2xl transition-all cursor-pointer shadow-2xs hover:shadow-md flex flex-col space-y-3"
                   >
-                    <div className="space-y-1.5 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[11px] font-black font-mono text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-md">
-                          Logged {item.count} times
+                    {/* Log Count & Product Tag */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-black font-mono text-amber-800 bg-amber-100/80 px-2.5 py-1 rounded-lg">
+                        Logged {item.count} times
+                      </span>
+                      {item.isProProduct && (
+                        <span className="text-sm font-black uppercase text-indigo-700 bg-indigo-100 px-2.5 py-1 rounded-lg">
+                          {item.productType || 'Pro Item'}
                         </span>
-                        {item.isProProduct && (
-                          <span className="text-[10px] font-black uppercase text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-md">
-                            {item.productType || 'Pro Item'}
-                          </span>
-                        )}
-                      </div>
-                      <h4 className="text-sm font-black text-slate-900 group-hover:text-amber-900 truncate">
-                        {item.name}
-                      </h4>
-                      {item.flavors && item.flavors.length > 0 && (
-                        <p className="text-[11px] text-slate-500 font-medium">
-                          Combined flavors: <span className="text-slate-700 font-semibold">{item.flavors.join(', ')}</span>
-                        </p>
                       )}
-                      <div className="flex items-center gap-2 text-xs font-mono font-bold flex-wrap">
-                        <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-100/50">
-                          {item.calories} kcal
-                        </span>
-                        <span className="text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-100/50">
-                          {item.protein}g protein
-                        </span>
-                        <span className="text-sky-600 bg-sky-50 px-2 py-0.5 rounded-lg border border-sky-100/50">
-                          {item.carbs}g carbs
-                        </span>
-                        {item.fiber > 0 && (
-                          <span className="text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100/50">
-                            {item.fiber}g fiber
-                          </span>
-                        )}
-                      </div>
                     </div>
 
-                    <div className="shrink-0 w-full sm:w-auto">
+                    {/* Meal Name */}
+                    <div className="w-full">
+                      <h4 className="text-sm sm:text-base font-black text-slate-900 group-hover:text-amber-900 leading-snug break-words">
+                        {item.name}
+                      </h4>
+                    </div>
+
+                    {/* Flavors if available */}
+                    {item.isProProduct && item.flavors && item.flavors.length > 1 && (
+                      <p className="text-sm text-slate-500 font-medium">
+                        Combined flavors: <span className="text-slate-700 font-semibold">{item.flavors.join(', ')}</span>
+                      </p>
+                    )}
+
+                    {/* Nutritional Badges */}
+                    <div className="flex items-center gap-2 text-sm font-mono font-bold flex-wrap">
+                      <span className="text-amber-800 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-100">
+                        {item.calories} kcal
+                      </span>
+                      <span className="text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100">
+                        {item.protein}g protein
+                      </span>
+                      <span className="text-sky-700 bg-sky-50 px-2.5 py-1 rounded-lg border border-sky-100">
+                        {item.carbs}g carbs
+                      </span>
+                      {item.fiber > 0 && (
+                        <span className="text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">
+                          {item.fiber}g fiber
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Action Button in Dedicated Bottom Row */}
+                    <div className="pt-2 border-t border-slate-100">
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           handleSelectAndLogFrequentMeal(item);
                         }}
-                        className="w-full sm:w-auto px-4 py-2.5 bg-amber-500 group-hover:bg-amber-600 active:scale-95 text-white rounded-xl text-xs font-black transition-all flex items-center justify-center text-center gap-1.5 shadow-2xs cursor-pointer"
+                        className="w-full py-2.5 min-h-[48px] bg-amber-500 group-hover:bg-amber-600 active:scale-95 text-white rounded-xl text-sm font-bold transition-all flex items-center justify-center text-center gap-2 shadow-2xs cursor-pointer"
                       >
-                        <Plus className="w-3.5 h-3.5" />
+                        <Plus className="w-4 h-4 stroke-[3]" />
                         <span>Log Meal</span>
                       </button>
                     </div>
@@ -1916,7 +2121,7 @@ export default function MealLogger({
               
               {/* Text Description Box */}
               <div>
-                <label className="block text-xs font-black uppercase tracking-wider text-slate-600 mb-2">
+                <label className="block text-sm font-bold uppercase tracking-wider text-slate-700 mb-2">
                   Food Description or Ingredients
                 </label>
                 <textarea
@@ -1929,6 +2134,23 @@ export default function MealLogger({
                 />
               </div>
 
+              {/* Toast Notification for Camera Device File Saving */}
+              {savedDeviceToast && (
+                <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-950 rounded-2xl flex items-center justify-between gap-2 shadow-xs animate-fadeIn">
+                  <div className="flex items-center gap-2">
+                    <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span className="text-sm font-semibold">{savedDeviceToast}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSavedDeviceToast(null)}
+                    className="p-1 text-emerald-700 hover:text-emerald-900 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
               {/* Photo Area */}
               {imagePreviews.length === 0 ? (
                 <div className="space-y-4">
@@ -1936,30 +2158,30 @@ export default function MealLogger({
                     <button
                       type="button"
                       onClick={() => cameraInputRef.current?.click()}
-                      className="w-full border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-indigo-50/40 hover:bg-indigo-50/80 rounded-2xl p-5 text-center cursor-pointer transition-all space-y-2 group flex flex-col items-center justify-center"
+                      className="w-full border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-indigo-50/40 hover:bg-indigo-50/80 rounded-2xl p-5 text-center cursor-pointer transition-all space-y-2 group flex flex-col items-center justify-center min-h-[120px]"
                       id="ai-open-camera-btn"
                     >
-                      <div className="w-11 h-11 bg-indigo-600 text-white rounded-2xl mx-auto flex items-center justify-center shadow-md group-hover:scale-105 transition-transform">
-                        <Camera className="w-5 h-5" />
+                      <div className="w-12 h-12 bg-indigo-600 text-white rounded-2xl mx-auto flex items-center justify-center shadow-md group-hover:scale-105 transition-transform">
+                        <Camera className="w-6 h-6" />
                       </div>
                       <div>
                         <p className="text-sm font-black text-slate-900">Take Live Photo</p>
-                        <p className="text-xs text-slate-500 font-medium mt-0.5">Launches camera directly</p>
+                        <p className="text-sm text-slate-500 font-medium mt-0.5">Captures and saves to device</p>
                       </div>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => galleryInputRef.current?.click()}
-                      className="w-full border-2 border-dashed border-purple-200 hover:border-purple-400 bg-purple-50/40 hover:bg-purple-50/80 rounded-2xl p-5 text-center cursor-pointer transition-all space-y-2 group flex flex-col items-center justify-center"
+                      className="w-full border-2 border-dashed border-purple-200 hover:border-purple-400 bg-purple-50/40 hover:bg-purple-50/80 rounded-2xl p-5 text-center cursor-pointer transition-all space-y-2 group flex flex-col items-center justify-center min-h-[120px]"
                       id="ai-open-gallery-btn"
                     >
-                      <div className="w-11 h-11 bg-purple-600 text-white rounded-2xl mx-auto flex items-center justify-center shadow-md group-hover:scale-105 transition-transform">
-                        <ImageIcon className="w-5 h-5" />
+                      <div className="w-12 h-12 bg-purple-600 text-white rounded-2xl mx-auto flex items-center justify-center shadow-md group-hover:scale-105 transition-transform">
+                        <ImageIcon className="w-6 h-6" />
                       </div>
                       <div>
                         <p className="text-sm font-black text-slate-900">Choose from Photos</p>
-                        <p className="text-xs text-slate-500 font-medium mt-0.5">Select saved photos</p>
+                        <p className="text-sm text-slate-500 font-medium mt-0.5">Select saved photos</p>
                       </div>
                     </button>
                   </div>
@@ -1974,12 +2196,12 @@ export default function MealLogger({
                         </span>
                       </div>
                       <p className="text-sm text-slate-400 font-medium">
-                        {analysisSeconds}s elapsed &bull; Maximum timeout 25s
+                        {analysisSeconds}s elapsed &bull; Maximum timeout 60s
                       </p>
                       <button
                         type="button"
                         onClick={() => handleStopAnalysis('Analysis stopped. Tap Analyze Text Description to restart.')}
-                        className="mt-1 px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-2"
+                        className="mt-1 px-5 py-3 bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-2 min-h-[48px]"
                         id="ai-stop-text-analysis-btn"
                       >
                         <StopCircle className="w-5 h-5" />
@@ -1991,7 +2213,7 @@ export default function MealLogger({
                       type="button"
                       onClick={() => runFoodAnalysis([], foodHint)}
                       disabled={!foodHint.trim()}
-                      className={`w-full py-3.5 rounded-2xl text-sm font-black shadow-lg transition-all flex items-center justify-center text-center gap-2 ${
+                      className={`w-full py-3.5 min-h-[48px] rounded-2xl text-sm font-black shadow-lg transition-all flex items-center justify-center text-center gap-2 ${
                         foodHint.trim()
                           ? 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white cursor-pointer active:scale-98'
                           : 'bg-slate-100 text-slate-400 cursor-not-allowed shadow-none border border-slate-200'
@@ -2009,17 +2231,18 @@ export default function MealLogger({
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-black uppercase text-slate-500 tracking-wider">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-black uppercase text-slate-700 tracking-wider">
                       Attached Photos: {imagePreviews.length}
                     </span>
                     {!isAnalyzing && (
                       <button
                         type="button"
                         onClick={handleResetModalImages}
-                        className="text-xs font-bold text-rose-600 hover:text-rose-700 hover:underline flex items-center gap-1 cursor-pointer"
+                        className="text-sm font-bold text-rose-600 hover:text-rose-700 flex items-center gap-2 px-3.5 py-2.5 hover:bg-rose-50 rounded-xl border border-rose-200/60 transition-colors cursor-pointer min-h-[48px]"
                       >
-                        <Trash2 className="w-3.5 h-3.5" /> Clear All
+                        <Trash2 className="w-4 h-4" />
+                        <span>Clear All</span>
                       </button>
                     )}
                   </div>
@@ -2029,18 +2252,20 @@ export default function MealLogger({
                     {imagePreviews.map((imgSrc, idx) => (
                       <div key={idx} className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-900 aspect-square group shadow-xs">
                         <img src={imgSrc} alt={`Meal photo ${idx + 1}`} className="w-full h-full object-cover" />
-                        <span className="absolute top-2 left-2 px-2 py-0.5 bg-slate-900/80 text-white rounded-md text-[10px] font-extrabold backdrop-blur-xs">
+                        <span className="absolute top-2 left-2 px-2.5 py-1 bg-slate-900/80 text-white rounded-lg text-sm font-bold backdrop-blur-xs">
                           #{idx + 1}
                         </span>
                         {!isAnalyzing && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveImage(idx)}
-                            className="absolute top-2 right-2 p-1.5 bg-rose-600/90 hover:bg-rose-600 text-white rounded-xl backdrop-blur-xs transition-colors cursor-pointer shadow-md opacity-90 hover:opacity-100"
-                            title="Remove photo"
-                          >
-                            <X className="w-3.5 h-3.5 stroke-[2.5]" />
-                          </button>
+                          <div className="absolute top-2 right-2">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveImage(idx)}
+                              className="p-2.5 min-h-[48px] min-w-[48px] flex items-center justify-center bg-rose-600/90 hover:bg-rose-600 text-white rounded-xl backdrop-blur-xs transition-colors cursor-pointer shadow-md"
+                              title="Remove photo"
+                            >
+                              <X className="w-5 h-5" />
+                            </button>
+                          </div>
                         )}
                       </div>
                     ))}
@@ -2048,20 +2273,22 @@ export default function MealLogger({
 
                   {/* Add More Photos Buttons */}
                   {!isAnalyzing && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 w-full">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 w-full">
                       <button
                         type="button"
                         onClick={() => cameraInputRef.current?.click()}
-                        className="w-full px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center text-center gap-1.5"
+                        className="w-full px-4 py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-sm font-bold transition-colors cursor-pointer flex items-center justify-center text-center gap-2 min-h-[48px]"
                       >
-                        <Camera className="w-3.5 h-3.5" /> + Add Another Photo
+                        <Camera className="w-4 h-4" />
+                        <span>Add Another Photo</span>
                       </button>
                       <button
                         type="button"
                         onClick={() => galleryInputRef.current?.click()}
-                        className="w-full px-3.5 py-2.5 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center text-center gap-1.5"
+                        className="w-full px-4 py-3 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-xl text-sm font-bold transition-colors cursor-pointer flex items-center justify-center text-center gap-2 min-h-[48px]"
                       >
-                        <FolderPlus className="w-3.5 h-3.5" /> + Add From Gallery
+                        <FolderPlus className="w-4 h-4" />
+                        <span>Add From Gallery</span>
                       </button>
                     </div>
                   )}
@@ -2076,12 +2303,12 @@ export default function MealLogger({
                         </span>
                       </div>
                       <p className="text-sm text-slate-400 font-medium">
-                        {analysisSeconds}s elapsed &bull; Maximum timeout 25s
+                        {analysisSeconds}s elapsed &bull; Maximum timeout 60s
                       </p>
                       <button
                         type="button"
                         onClick={() => handleStopAnalysis('Analysis stopped. Tap Scan Photos with AI to restart.')}
-                        className="mt-1 px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-2"
+                        className="mt-1 px-5 py-3 bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-2 min-h-[48px]"
                         id="ai-stop-photo-analysis-btn"
                       >
                         <StopCircle className="w-5 h-5" />
@@ -2092,14 +2319,14 @@ export default function MealLogger({
                     <button
                       type="button"
                       onClick={() => runFoodAnalysis(imagePreviews, foodHint)}
-                      className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 active:scale-98 text-white text-sm font-black rounded-2xl shadow-lg transition-all flex items-center justify-center text-center gap-2 cursor-pointer"
+                      className="w-full py-3.5 min-h-[48px] bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 active:scale-98 text-white text-sm font-black rounded-2xl shadow-lg transition-all flex items-center justify-center text-center gap-2 cursor-pointer"
                       id="ai-scan-photos-btn"
                     >
                       <Sparkles className="w-5 h-5" />
                       <span>
                         {detectedData
-                          ? `Re-Analyze Photos`
-                          : `Scan Photos with AI`}
+                          ? 'Re-Analyze Photos'
+                          : 'Scan Photos with AI'}
                       </span>
                     </button>
                   )}
@@ -2108,9 +2335,43 @@ export default function MealLogger({
 
               {/* Error Display */}
               {aiError && (
-                <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-xs sm:text-sm font-bold text-red-700 flex items-center gap-2">
-                  <X className="w-5 h-5 text-red-500 shrink-0" />
-                  <span>{aiError}</span>
+                <div className="p-4 bg-red-50 border-2 border-red-300 rounded-2xl space-y-3 animate-fadeIn">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2 text-sm font-bold text-red-800">
+                      <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
+                      <span>{aiError}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setAiError(null)}
+                      className="p-1 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
+                      aria-label="Dismiss error"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => runFoodAnalysis(imagePreviews, foodHint)}
+                      className="px-3.5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-bold flex items-center gap-1.5 transition-colors cursor-pointer min-h-[44px]"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      <span>Try Again</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAiModalOpen(false);
+                        setIsManualModalOpen(true);
+                        if (foodHint.trim()) setManualName(foodHint.trim());
+                      }}
+                      className="px-3.5 py-2.5 bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 rounded-xl text-sm font-bold transition-colors cursor-pointer min-h-[44px]"
+                    >
+                      Enter Macros
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -2175,31 +2436,26 @@ export default function MealLogger({
                         {detectedItems.map((item, idx) => (
                           <div
                             key={idx}
-                            className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2"
+                            className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex flex-col space-y-2.5"
                           >
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="font-bold text-slate-900 text-sm flex items-center gap-2 flex-1 flex-wrap">
-                                <span>{item.name}</span>
-                                <input
-                                  type="text"
-                                  value={item.portion || ''}
-                                  onChange={(e) => handleUpdateDetectedItem(idx, { portion: e.target.value })}
-                                  placeholder="e.g. 180g or 250ml"
-                                  className="px-2 py-0.5 bg-white border border-slate-200 focus:border-indigo-500 rounded-md text-sm font-mono font-bold text-slate-700 w-32 focus:outline-none"
-                                />
-                              </div>
-                              {detectedItems.length > 1 && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveDetectedItem(idx)}
-                                  className="p-1 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
-                                  title="Remove item"
-                                  aria-label="Remove item"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              )}
+                            {/* Food Name */}
+                            <div className="w-full">
+                              <span className="font-bold text-slate-900 text-sm block">{item.name}</span>
                             </div>
+
+                            {/* Portion Input */}
+                            <div className="flex items-center gap-2">
+                              <label className="text-sm font-semibold text-slate-600 shrink-0">Portion:</label>
+                              <input
+                                type="text"
+                                value={item.portion || ''}
+                                onChange={(e) => handleUpdateDetectedItem(idx, { portion: e.target.value })}
+                                placeholder="e.g. 180g or 250ml"
+                                className="px-3 py-1.5 bg-white border border-slate-200 focus:border-indigo-500 rounded-lg text-sm font-mono font-bold text-slate-700 w-full focus:outline-none"
+                              />
+                            </div>
+
+                            {/* Macros Badges */}
                             <div className="flex flex-wrap items-center gap-1.5 text-sm font-bold">
                               <span className="px-2 py-0.5 rounded-md bg-sky-50 text-sky-800 border border-sky-200">
                                 {item.carbs}g carbs
@@ -2219,6 +2475,22 @@ export default function MealLogger({
                                 {item.calories} kcal
                               </span>
                             </div>
+
+                            {/* Remove Item Button in Dedicated Row */}
+                            {detectedItems.length > 1 && (
+                              <div className="pt-1 border-t border-slate-200/60">
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveDetectedItem(idx)}
+                                  className="w-full py-2.5 min-h-[48px] flex items-center justify-center gap-2 text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-colors cursor-pointer text-sm font-bold"
+                                  title="Remove item"
+                                  aria-label="Remove item"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                  <span>Remove Food</span>
+                                </button>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -2305,12 +2577,12 @@ export default function MealLogger({
                     const aiFat = Math.max(0, parseFloat(editDetectedFat) || 0);
                     const projectedCalTotal = currentDayCalories + aiCal;
                     const projectedFatTotal = currentDayFat + aiFat;
-                    const isCalOver = dailyCalorieTarget && projectedCalTotal - dailyCalorieTarget >= 50;
+                    const isCalOver = dailyCalorieTarget && projectedCalTotal - dailyCalorieTarget >= 100;
                     const isFatOver = dailyFatTarget && projectedFatTotal > dailyFatTarget;
 
                     if (isCalOver || isFatOver) {
                       return (
-                        <div className="p-3.5 bg-red-50 border-2 border-red-500 rounded-2xl flex items-start gap-3 text-xs font-bold text-red-950 shadow-2xs animate-fadeIn">
+                        <div className="p-3.5 bg-red-50 border-2 border-red-500 rounded-2xl flex items-start gap-3 text-sm font-bold text-red-950 shadow-2xs animate-fadeIn">
                           <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5 animate-pulse" />
                           <div className="space-y-1">
                             <span className="block font-black uppercase tracking-wide text-red-700">
@@ -2431,12 +2703,11 @@ export default function MealLogger({
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                 <div>
                   <label className="block text-[11px] font-black uppercase tracking-wider text-slate-500 mb-1">
-                    Protein *
+                    Protein (g)
                   </label>
                   <div className="relative">
                     <input
                       type="number"
-                      required
                       step="any"
                       min="0"
                       max="300"
@@ -2452,12 +2723,11 @@ export default function MealLogger({
 
                 <div>
                   <label className="block text-[11px] font-black uppercase tracking-wider text-slate-500 mb-1">
-                    Carbs *
+                    Carbs (g)
                   </label>
                   <div className="relative">
                     <input
                       type="number"
-                      required
                       step="any"
                       min="0"
                       max="500"
@@ -2493,7 +2763,7 @@ export default function MealLogger({
 
                 <div>
                   <label className="block text-[11px] font-black uppercase tracking-wider text-slate-500 mb-1">
-                    Fiber
+                    Fiber (g)
                   </label>
                   <div className="relative">
                     <input
@@ -2513,16 +2783,15 @@ export default function MealLogger({
 
                 <div className="col-span-2 sm:col-span-1">
                   <label className="block text-[11px] font-black uppercase tracking-wider text-slate-500 mb-1">
-                    Calories *
+                    Calories
                   </label>
                   <div className="relative">
                     <input
                       type="number"
-                      required
                       step="any"
                       min="0"
                       max="4000"
-                      placeholder="450"
+                      placeholder="auto"
                       value={manualCalories}
                       onChange={(e) => setManualCalories(e.target.value)}
                       className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl pl-3 pr-10 py-2.5 text-xs sm:text-sm font-mono font-bold text-slate-900 focus:outline-none transition-all"
@@ -2539,12 +2808,12 @@ export default function MealLogger({
                 const addedFat = Math.max(0, parseFloat(manualFat) || 0);
                 const projectedCalTotal = currentDayCalories + addedCal;
                 const projectedFatTotal = currentDayFat + addedFat;
-                const isCalOver = Boolean(dailyCalorieTarget && manualCalories && projectedCalTotal - dailyCalorieTarget >= 50);
+                const isCalOver = Boolean(dailyCalorieTarget && manualCalories && projectedCalTotal - dailyCalorieTarget >= 100);
                 const isFatOver = Boolean(dailyFatTarget && manualFat && projectedFatTotal > dailyFatTarget);
 
                 if (isCalOver || isFatOver) {
                   return (
-                    <div className="p-3.5 bg-red-50 border-2 border-red-500 rounded-2xl flex items-start gap-3 text-xs font-bold text-red-950 shadow-2xs animate-fadeIn">
+                    <div className="p-3.5 bg-red-50 border-2 border-red-500 rounded-2xl flex items-start gap-3 text-sm font-bold text-red-950 shadow-2xs animate-fadeIn">
                       <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5 animate-pulse" />
                       <div className="space-y-1">
                         <span className="block font-black uppercase tracking-wide text-red-700">
@@ -2620,6 +2889,17 @@ export default function MealLogger({
         </div>
       )}
 
+      {/* Custom Confirmation Modal */}
+      <ConfirmModal
+        isOpen={confirmConfig.isOpen}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+        confirmText={confirmConfig.confirmText}
+        variant={confirmConfig.variant}
+        zIndex="z-[100]"
+        onConfirm={confirmConfig.onConfirm}
+        onCancel={() => setConfirmConfig((prev) => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 }

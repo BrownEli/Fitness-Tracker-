@@ -79,18 +79,21 @@ export default function CalendarView({ logs, goals, selectedDate, onSelectDate, 
           const isSelected = selectedDate === dateString;
           const isToday = today.toISOString().split('T')[0] === dateString;
 
-          // Compute stats for the day
-          const totalProtein = log?.meals.reduce((sum, meal) => sum + (meal.protein || 0), 0) || 0;
-          const totalCarbs = log?.meals.reduce((sum, meal) => sum + (meal.carbs || 0), 0) || 0;
-          const totalFiber = log?.meals.reduce((sum, meal) => sum + (meal.fiber || 0), 0) || 0;
-          const totalCalories = log?.meals.reduce((sum, meal) => sum + (meal.calories || 0), 0) || 0;
+          // Compute stats for the day with guaranteed array fallbacks
+          const safeMeals = Array.isArray(log?.meals) ? log.meals : [];
+          const totalProtein = safeMeals.reduce((sum, meal) => sum + (meal.protein || 0), 0);
+          const totalCarbs = safeMeals.reduce((sum, meal) => sum + (meal.carbs || 0), 0);
+          const totalFiber = safeMeals.reduce((sum, meal) => sum + (meal.fiber || 0), 0);
+          const totalCalories = safeMeals.reduce((sum, meal) => sum + (meal.calories || 0), 0);
 
           const targetCarbs = goals.dailyCarbsTarget || 250;
           const targetFiber = goals.dailyFiberTarget || 30;
 
-          const hasWorkout = Boolean(log?.workouts && log.workouts.some(w => w.category !== 'Rest' && !w.name?.toLowerCase().includes('rest') && w.category !== 'Cardio' && !w.id?.startsWith('jog-') && !w.name?.toLowerCase().includes('jog') && !w.name?.toLowerCase().includes('walk')));
-          const workoutCompleted = Boolean(log?.workouts && log.workouts.some(w => w.completed && w.category !== 'Rest' && !w.name?.toLowerCase().includes('rest') && w.category !== 'Cardio' && !w.id?.startsWith('jog-') && !w.name?.toLowerCase().includes('jog') && !w.name?.toLowerCase().includes('walk')));
-          const hasJog = Boolean((log?.jogs && log.jogs.length > 0) || (log?.workouts && log.workouts.some(w => w.category === 'Cardio' || w.id?.startsWith('jog-') || w.name?.toLowerCase().includes('jog') || w.name?.toLowerCase().includes('walk'))));
+          const safeWorkouts = Array.isArray(log?.workouts) ? log.workouts : [];
+          const safeJogs = Array.isArray(log?.jogs) ? log.jogs : [];
+          const hasWorkout = Boolean(safeWorkouts.some(w => w.category !== 'Rest' && !w.name?.toLowerCase().includes('rest') && w.category !== 'Cardio' && !w.id?.startsWith('jog-') && !w.name?.toLowerCase().includes('jog') && !w.name?.toLowerCase().includes('walk')));
+          const workoutCompleted = Boolean(safeWorkouts.some(w => w.completed && w.category !== 'Rest' && !w.name?.toLowerCase().includes('rest') && w.category !== 'Cardio' && !w.id?.startsWith('jog-') && !w.name?.toLowerCase().includes('jog') && !w.name?.toLowerCase().includes('walk')));
+          const hasJog = Boolean(safeJogs.length > 0 || safeWorkouts.some(w => w.category === 'Cardio' || w.id?.startsWith('jog-') || w.name?.toLowerCase().includes('jog') || w.name?.toLowerCase().includes('walk')));
 
           const DAYS_ORDER = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
           const dateObj = new Date(dateString + 'T12:00:00');
@@ -109,7 +112,7 @@ export default function CalendarView({ logs, goals, selectedDate, onSelectDate, 
           const carbsGoalMet = totalCarbs >= targetCarbs;
           const fiberGoalMet = totalFiber >= targetFiber;
           const calorieOverTarget = totalCalories - goals.dailyCalorieTarget;
-          const isCalorieRedAlert = calorieOverTarget >= 50;
+          const isCalorieRedAlert = calorieOverTarget >= 100;
           const isCalorieSoftOver = calorieOverTarget > 0 && !isCalorieRedAlert;
 
           return (
@@ -199,33 +202,36 @@ export default function CalendarView({ logs, goals, selectedDate, onSelectDate, 
 
                 {/* Workout / Rest / Jog Indicator */}
                 {workoutCompleted || (hasWorkout && !isRestDay) ? (
-                  <Dumbbell
-                    className={`w-3 h-3 ${
-                      isSelected
-                        ? 'text-white'
-                        : workoutCompleted
-                        ? 'text-violet-600'
-                        : 'text-slate-400'
-                    }`}
-                    title="Hypertrophy Lifting Logged"
-                  />
+                  <span title="Hypertrophy Lifting Logged">
+                    <Dumbbell
+                      className={`w-3 h-3 ${
+                        isSelected
+                          ? 'text-white'
+                          : workoutCompleted
+                          ? 'text-violet-600'
+                          : 'text-slate-400'
+                      }`}
+                    />
+                  </span>
                 ) : isRestDay ? (
-                  <Coffee
-                    className={`w-3 h-3 ${
-                      isSelected ? 'text-white' : 'text-amber-600'
-                    }`}
-                    title="Rest & Recovery Day (Automatically Logged)"
-                  />
+                  <span title="Rest & Recovery Day (Automatically Logged)">
+                    <Coffee
+                      className={`w-3 h-3 ${
+                        isSelected ? 'text-white' : 'text-amber-600'
+                      }`}
+                    />
+                  </span>
                 ) : null}
 
                 {/* Jog / Cardio Indicator */}
                 {hasJog && (
-                  <Footprints
-                    className={`w-3 h-3 ${
-                      isSelected ? 'text-emerald-200' : 'text-emerald-600'
-                    }`}
-                    title="Jog / Cardio Session Logged"
-                  />
+                  <span title="Jog / Cardio Session Logged">
+                    <Footprints
+                      className={`w-3 h-3 ${
+                        isSelected ? 'text-emerald-200' : 'text-emerald-600'
+                      }`}
+                    />
+                  </span>
                 )}
               </div>
             </button>

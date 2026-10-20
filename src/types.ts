@@ -65,6 +65,7 @@ export interface JogSession {
   caloriesBurned: number; // in kcal
   avgPaceMinPerKm?: number; // minutes per km
   route?: JogPoint[];
+  rawRoute?: JogPoint[];
   completed: boolean;
 }
 
@@ -117,6 +118,20 @@ export interface ParsedWorkoutExercise {
   isBodyweight?: boolean;
 }
 
+export interface ConfiguredExercise {
+  id: string;
+  name: string;
+  category: string;
+  categories?: string[];
+  sets: number;
+  reps: number;
+  weight: number;
+  isBodyweight?: boolean;
+  youtubeUrl?: string;
+  notes?: string;
+  updatedAt?: string;
+}
+
 export interface ParsedWorkoutDay {
   day: string; // e.g. "Day 1" or "Monday"
   focusArea: string; // e.g. "Core & Chest" or "Rest & Recovery"
@@ -130,6 +145,7 @@ export interface CoachingChatMessage {
   sender: 'user' | 'ai';
   text: string;
   timestamp: string;
+  imageUrl?: string;
 }
 
 export interface CoachingInsight {
@@ -138,5 +154,6 @@ export interface CoachingInsight {
   summary: string;
   text: string;
   type: 'hypertrophy' | 'nutrition' | 'recovery' | 'general';
+  imageUrl?: string;
   chatMessages?: CoachingChatMessage[];
 }

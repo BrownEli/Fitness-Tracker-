@@ -71,8 +71,8 @@ export default function WorkspaceHub({
   // Folder link state
   const [folderLinkInput, setFolderLinkInput] = useState(goals.driveFolderLink || '');
   const [isSavingFolder, setIsSavingFolder] = useState(false);
-  const [docError, setDocError] = useState<string | null>(null);
-  const [docSuccess, setDocSuccess] = useState<string | null>(null);
+  const [storageActionError, setStorageActionError] = useState<string | null>(null);
+  const [storageActionSuccess, setStorageActionSuccess] = useState<string | null>(null);
 
   // Sync state
   const [isSyncing, setIsSyncing] = useState(false);
@@ -317,8 +317,8 @@ export default function WorkspaceHub({
     }));
 
     setIsSavingFolder(false);
-    setDocSuccess('Google Drive storage location saved successfully!');
-    setTimeout(() => setDocSuccess(null), 4000);
+    setStorageActionSuccess('Google Drive storage location saved successfully!');
+    setTimeout(() => setStorageActionSuccess(null), 4000);
   };
 
   // Export JSON backup payload to Google Drive (creates new timestamped file every time)
@@ -417,8 +417,8 @@ export default function WorkspaceHub({
   // Log parsed meal
   const handleLogParsedMeal = (meal: Omit<Meal, 'id' | 'timestamp'>) => {
     onLogMeal(meal);
-    setDocSuccess(`Added "${meal.name}" to your daily logs!`);
-    setTimeout(() => setDocSuccess(null), 3000);
+    setStorageActionSuccess(`Added "${meal.name}" to your daily logs!`);
+    setTimeout(() => setStorageActionSuccess(null), 3000);
   };
 
   return (
@@ -632,17 +632,17 @@ export default function WorkspaceHub({
           </div>
         </form>
 
-        {docSuccess && (
+        {storageActionSuccess && (
           <div className="p-4 bg-emerald-50 border border-emerald-150 text-emerald-800 rounded-xl flex items-center gap-3 text-sm">
             <CheckCircle className="w-5 h-5 text-emerald-600" />
-            <span>{docSuccess}</span>
+            <span>{storageActionSuccess}</span>
           </div>
         )}
 
-        {docError && (
+        {storageActionError && (
           <div className="p-4 bg-rose-50 border border-rose-150 text-rose-800 rounded-xl flex items-center gap-3 text-sm">
             <AlertCircle className="w-5 h-5 text-rose-600" />
-            <span>{docError}</span>
+            <span>{storageActionError}</span>
           </div>
         )}
 
@@ -656,12 +656,20 @@ export default function WorkspaceHub({
               </h4>
               <button
                 type="button"
-                onClick={() => onUpdateParsedFoods([])}
-                className="px-2 py-0.5 text-[10px] font-bold text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md border border-slate-200 hover:border-rose-200 transition-colors flex items-center justify-center text-center gap-1 cursor-pointer"
+                onClick={() => {
+                  requestConfirm(
+                    'Clear Custom Foods?',
+                    'Are you sure you want to remove all imported custom JSON foods from this list?',
+                    () => onUpdateParsedFoods([]),
+                    'Clear Foods',
+                    'danger'
+                  );
+                }}
+                className="px-3.5 py-2.5 min-h-[48px] text-sm font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-xl border border-rose-200 transition-colors flex items-center justify-center text-center gap-1.5 cursor-pointer"
                 title="Clear custom foods list"
               >
-                <Trash2 className="w-3.5 h-3.5" />
-                Clear
+                <Trash2 className="w-4 h-4 text-rose-600" />
+                <span>Clear</span>
               </button>
             </div>
 
@@ -670,17 +678,27 @@ export default function WorkspaceHub({
                 <div
                   key={`parsed-food-${idx}`}
                   onClick={() => handleLogParsedMeal(food)}
-                  className="flex justify-between items-center p-3.5 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 rounded-xl cursor-pointer transition-all group"
+                  className="flex flex-col space-y-2.5 p-3.5 bg-slate-50 hover:bg-indigo-50/70 border border-slate-200 hover:border-indigo-300 rounded-xl cursor-pointer transition-all group shadow-2xs"
                 >
-                  <div>
-                    <h5 className="text-xs font-bold text-slate-800 group-hover:text-indigo-900">{food.name}</h5>
-                    <p className="text-[11px] text-slate-500 mt-1">
+                  <div className="w-full">
+                    <h5 className="text-sm font-bold text-slate-800 group-hover:text-indigo-900 leading-snug">{food.name}</h5>
+                    <p className="text-sm text-slate-500 font-medium mt-0.5">
                       {food.protein}g protein • {food.calories} kcal
                     </p>
                   </div>
-                  <button className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-400 group-hover:text-indigo-600 group-hover:border-indigo-300 transition-colors">
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="pt-1 border-t border-slate-200/60">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleLogParsedMeal(food);
+                      }}
+                      className="w-full py-2.5 min-h-[48px] rounded-xl bg-white group-hover:bg-indigo-600 group-hover:text-white border border-slate-200 group-hover:border-indigo-600 text-slate-700 font-bold text-sm transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Log Custom Food</span>
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

@@ -1,6 +1,6 @@
 import express from "express";
 import path from "path";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import dotenv from "dotenv";
 import fs from "fs";
 
@@ -29,12 +29,59 @@ async function startServer() {
     return aiClient;
   }
 
+  // Helper to extract JSON from Gemini output safely even with backticks, preamble, or loose formatting
+  function extractJsonFromText(rawText: string): any {
+    if (!rawText || !rawText.trim()) return null;
+    const trimmed = rawText.trim();
+    try {
+      return JSON.parse(trimmed);
+    } catch {}
+
+    const codeBlockMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    if (codeBlockMatch && codeBlockMatch[1]) {
+      try {
+        return JSON.parse(codeBlockMatch[1].trim());
+      } catch {}
+    }
+
+    const firstBrace = trimmed.indexOf('{');
+    const lastBrace = trimmed.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      const candidate = trimmed.substring(firstBrace, lastBrace + 1);
+      try {
+        return JSON.parse(candidate);
+      } catch {
+        const cleaned = candidate
+          .replace(/,\s*([}\]])/g, '$1')
+          .replace(/[\u201C\u201D]/g, '"');
+        try {
+          return JSON.parse(cleaned);
+        } catch {}
+      }
+    }
+    return null;
+  }
+
+  // Safe integer/float macro parser helper
+  function parseMacroNumber(val: any, fallback = 0): number {
+    if (typeof val === 'number' && !isNaN(val)) return Math.max(0, Math.round(val));
+    if (typeof val === 'string') {
+      const num = parseFloat(val.replace(/[^0-9.]/g, ''));
+      if (!isNaN(num)) return Math.max(0, Math.round(num));
+    }
+    return fallback;
+  }
+
   // Multi-model fallback execution helper for high availability & low latency with timeout protection
-  async function generateContentWithFallback(ai: GoogleGenAI, requestPayload: any, timeoutMs = 16000): Promise<string> {
+  async function generateContentWithFallback(ai: GoogleGenAI, requestPayload: any, timeoutMs = 15000): Promise<string> {
+    // gemini-3.1-flash-lite-preview and gemini-3.1-flash-lite provide blazing-fast, active quota multimodal vision
+    // gemini-3.5-flash-lite, gemini-flash-latest, and gemini-3.8-flash act as resilient fallbacks
     const candidateModels = [
-      "gemini-3.8-flash",      // latest high-performance model from gemini-api skill
-      "gemini-flash-latest",   // general flash alias
-      "gemini-3.1-flash-lite"  // fast, efficient fallback
+      "gemini-3.1-flash-lite-preview",
+      "gemini-3.1-flash-lite",
+      "gemini-3.5-flash-lite",
+      "gemini-flash-latest",
+      "gemini-3.8-flash"
     ];
 
     let lastError: any = null;
@@ -47,9 +94,17 @@ async function startServer() {
           }, timeoutMs);
         });
 
+        const mergedConfig = {
+          ...requestPayload.config,
+          ...(modelName.includes("3.8-flash") && !requestPayload.config?.thinkingConfig
+            ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+            : {})
+        };
+
         const callPromise = ai.models.generateContent({
           ...requestPayload,
-          model: modelName
+          model: modelName,
+          config: mergedConfig
         });
 
         const response: any = await Promise.race([callPromise, timeoutPromise]);
@@ -61,6 +116,7 @@ async function startServer() {
       } catch (err: any) {
         console.warn(`Model ${modelName} encountered error:`, err?.status || err?.message || err);
         lastError = err;
+        // Skip immediately to the next candidate model on rate limit (429) or high demand (503)
       }
     }
     throw lastError || new Error("All AI models are currently unavailable.");
@@ -106,10 +162,11 @@ async function startServer() {
   // API Route: Get AI Coach insights
   app.post("/api/coach/insights", async (req, res) => {
     try {
-      const { goals, recentLogs, queryType, customPlanText } = req.body;
+      const { goals, recentLogs, queryType, customPlanText, image } = req.body;
       const ai = getAiClient();
 
       const isCustomQuestion = queryType && queryType !== "general_assessment" && queryType !== "general";
+      const hasImage = Boolean(image && typeof image === "string" && image.trim().length > 10);
 
       if (!ai) {
         const fallback = generateFallbackAdvice(isCustomQuestion ? queryType : "", goals);
@@ -124,6 +181,7 @@ async function startServer() {
           ? `The user is asking a direct question to their Hypertrophy & Nutrition AI Coach:\nQUESTION: "${queryType}"\n\nProvide a comprehensive, expert answer tailored to their fitness profile below.`
           : `Analyze the user's hypertrophy goals, recent tracking logs, and workout history to provide a high-impact coaching recommendation.`
         }
+        ${hasImage ? `\nATTACHED IMAGE:\nThe user has attached a single photo for this question (e.g. physique progress, exercise execution/form, gym equipment, nutrition label, or meal plate). Thoroughly examine this image and provide concrete, expert coaching feedback based on what you see in the photo.` : ''}
         
         USER GOALS:
         - Current Weight: ${goals?.currentWeight || 75} ${goals?.weightUnit || 'kg'}
@@ -143,10 +201,31 @@ async function startServer() {
       `;
 
       try {
+        const parts: any[] = [];
+        if (hasImage) {
+          let base64Data = image;
+          let mimeType = "image/jpeg";
+          if (image.includes(";base64,")) {
+            const splitParts = image.split(";base64,");
+            const mimeMatch = splitParts[0].match(/data:(.*?);/);
+            if (mimeMatch) {
+              mimeType = mimeMatch[1];
+            }
+            base64Data = splitParts[1];
+          }
+          parts.push({
+            inlineData: {
+              mimeType,
+              data: base64Data,
+            },
+          });
+        }
+        parts.push({ text: prompt });
+
         const rawText = await generateContentWithFallback(ai, {
-          contents: prompt,
+          contents: parts,
           config: {
-            systemInstruction: `You are an elite Hypertrophy & Sports Nutrition Coach. Your clients are training for muscle growth (hypertrophy). You prioritize protein-to-bodyweight ratios (0.8g - 1.0g per lb of bodyweight), progressive overload, adequate training volume, and recovery.
+            systemInstruction: `You are an elite Hypertrophy & Sports Nutrition Coach. Your clients are training for muscle growth (hypertrophy). You prioritize protein-to-bodyweight ratios (0.8g - 1.0g per lb of bodyweight), progressive overload, adequate training volume, and recovery.${hasImage ? ' You can see and visually evaluate client photos (physique, food, workout equipment, form, labels).' : ''}
             You must respond ONLY with a JSON object matching this schema:
             {
               "summary": "Short 1-sentence headline summarizing the advice or answered topic",
@@ -198,8 +277,9 @@ async function startServer() {
   // API Route: Chat with AI Coach regarding a specific recommendation
   app.post("/api/coach/chat", async (req, res) => {
     try {
-      const { insightSummary, insightText, insightType, chatHistory, userMessage, goals } = req.body;
+      const { insightSummary, insightText, insightType, chatHistory, userMessage, goals, image } = req.body;
       const ai = getAiClient();
+      const hasImage = Boolean(image && typeof image === "string" && image.trim().length > 10);
 
       if (!userMessage || !userMessage.trim()) {
         return res.status(400).json({ error: "Message is required" });
@@ -232,15 +312,37 @@ async function startServer() {
 
         USER'S NEW MESSAGE:
         "${userMessage.trim()}"
+        ${hasImage ? `\nATTACHED IMAGE:\nThe user has attached a single follow-up photo to this message. Visually analyze the image and directly address it in your answer.` : ''}
 
         CRITICAL INSTRUCTION:
-        1. Answer directly and practically in context of this recommendation.
+        1. Answer directly and practically in context of this recommendation and any attached image.
         2. YOUR ENTIRE RESPONSE MUST NOT EXCEED 500 CHARACTERS. Keep it concise, punchy, actionable, and conversational.
       `;
 
       try {
+        const chatParts: any[] = [];
+        if (hasImage) {
+          let base64Data = image;
+          let mimeType = "image/jpeg";
+          if (image.includes(";base64,")) {
+            const splitParts = image.split(";base64,");
+            const mimeMatch = splitParts[0].match(/data:(.*?);/);
+            if (mimeMatch) {
+              mimeType = mimeMatch[1];
+            }
+            base64Data = splitParts[1];
+          }
+          chatParts.push({
+            inlineData: {
+              mimeType,
+              data: base64Data,
+            },
+          });
+        }
+        chatParts.push({ text: prompt });
+
         const rawReply = await generateContentWithFallback(ai, {
-          contents: prompt,
+          contents: chatParts,
           config: {
             systemInstruction: "You are an expert Hypertrophy Coach answering follow-up questions about a specific recommendation. Provide concise, highly actionable replies. STRICT LIMIT: Response must not exceed 500 characters.",
           },
@@ -366,20 +468,22 @@ async function startServer() {
           ${hasText ? `User description or note: "${hint.trim()}".` : 'Rely on visual detection of the food.'}
 
           CRITICAL RULES FOR BREAKDOWN & PORTION ESTIMATION:
-          1. GRAMS / MILLILITERS REQUIREMENT:
+          1. PACKAGED ITEMS, BOTTLES, YOGURTS, CANS, PROTEIN SHAKES, PROTEIN BARS:
+             - Carefully read all visible text, branding, flavors, and nutrition tables in any language (English, Hebrew, etc., e.g., "משקה בטעם וניל 0% שומן", "25 גרם חלבון").
+             - If a nutrition facts table is present (e.g., per 100ml or per 100g), calculate the total macros for the full container volume/weight (e.g., a 350ml bottle at 40 kcal/100ml and 7.15g protein/100ml = 140 kcal, 25g protein, 0g fat).
+             - Name: Output the specific product title with flavor (e.g., "Müller Protein 25 Vanilla Drink", "Danone Pro 20 Strawberry Yogurt").
+             - Set "items": [] (EMPTY ARRAY). NEVER invent or fabricate plate components like "Main Protein" or "Side Starch / Grain" for packaged items, single drinks, or yogurts!
+             - Set root "portion": Exact or estimated net volume/weight (e.g. "350ml", "200g").
+          2. GRAMS / MILLILITERS REQUIREMENT:
              - Every single food item or beverage MUST include an estimate in grams ("g") for solid foods or milliliters ("ml") for drinks/liquids.
              - Examples: "180g", "250g", "120g", "330ml", "250ml", "500ml".
-             - Never output vague measurements like "1 cup" or "1 serving" without the metric equivalent; always specify the grams or ml (e.g. "180g" or "250ml").
-          2. IF THIS IS A SINGLE ITEM (e.g., yogurt, protein drink, shake, protein bar, fruit, a single bowl, or coffee):
-             - DO NOT break it down into ingredients!
-             - Set "items": [] (empty array).
-             - Set root "portion": estimated grams (e.g. "200g") or milliliters (e.g. "330ml").
-          3. IF THIS IS A MULTI-ITEM PLATE (e.g., Salmon and Rice, Chicken and Sweet Potato):
-             - ONLY give a count for each MAJOR food component on the plate (e.g. Salmon, Rice).
-             - DO NOT break down into seasonings, spices, or garnishes.
-             - For each major item in "items":
-               - "name": Clean name of the food (e.g. "Salmon Fillet", "White Rice").
-               - "portion": Estimated weight in grams (e.g. "200g") or volume in ml (e.g. "250ml").
+             - Never output vague measurements like "1 cup" or "1 serving" without metric units.
+          3. MULTI-ITEM PLATES (e.g., Salmon with Potatoes and Carrots, Chicken and Rice):
+             - ONLY if the image actually shows a meal plate with multiple separate foods:
+             - Give a realistic name (e.g. "Salmon with Potatoes and Carrots").
+             - Provide each major food item in "items":
+               - "name": Clean name of the food (e.g. "Salmon Fillet", "Boiled Potatoes").
+               - "portion": Estimated weight in grams (e.g. "200g") or ml (e.g. "250ml").
                - "carbs": Estimated grams of carbohydrates (integer).
                - "protein": Estimated grams of protein (integer).
                - "fiber": Estimated grams of dietary fiber (integer).
@@ -387,10 +491,10 @@ async function startServer() {
                - "calories": Estimated calories in kcal (integer).
              - Set root "portion": Total combined estimated weight or volume (e.g. "380g").
           4. ACCURATE FAT ESTIMATION REQUIREMENT:
-             - You must provide an estimated number for fats ("fat" in grams as an integer) for the overall meal and for each major food item.
-             - Make this estimate as realistic and close as possible (e.g. salmon ~12-16g fat/200g, white rice ~0-1g fat, olive oil/butter cooking additions, chicken breast ~3-5g fat, ribeye steak ~20-30g fat, eggs ~5g fat per egg, avocado ~15g fat, etc.).
-          5. Total combined plate nutrition:
-             - "name": Clean meal title (e.g. "Salmon and White Rice", or "Greek Yogurt").
+             - Provide an estimated integer for fats ("fat" in grams) for the overall meal and each major food item.
+             - Make this estimate realistic (e.g. salmon ~12-16g fat/200g, 0% fat protein shake = 0g fat, white rice ~0-1g fat, olive oil/butter cooking additions, chicken breast ~3-5g fat, ribeye steak ~20-30g fat, eggs ~5g fat per egg, avocado ~15g fat).
+          5. Total combined nutrition:
+             - "name": Clean meal title (e.g. "Salmon with Potatoes and Carrots", or "Müller Protein 25 Vanilla Drink").
              - "portion": Total estimated grams ("g") or milliliters ("ml") for the meal.
              - "protein": Total protein in grams.
              - "carbs": Total carbohydrates in grams.
@@ -479,14 +583,17 @@ async function startServer() {
 
       try {
         const rawText = await generateContentWithFallback(ai, {
-          contents: { parts },
+          contents: parts,
           config: {
             systemInstruction: "You are an expert nutritional analyst. For any food or drink, always include realistic portion estimates in grams (g) for solid foods or milliliters (ml) for beverages. Provide realistic macro estimates including protein, carbs, dietary fiber, and especially total fats (g) based on the food's natural fat content and typical preparation methods. Return fat as an accurate integer.",
             responseMimeType: "application/json",
           },
         });
 
-        const parsed = JSON.parse(rawText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim());
+        const parsed = extractJsonFromText(rawText);
+        if (!parsed) {
+          throw new Error("Unable to parse structured JSON from vision response");
+        }
 
         const rawItemsList = Array.isArray(parsed.items) ? parsed.items : [];
         // Only keep breakdown if there are 2 or more major food items!
@@ -494,18 +601,17 @@ async function startServer() {
           rawItemsList.length > 1
             ? rawItemsList.map((it: any) => {
                 let portionStr = it.portion ? String(it.portion).trim() : undefined;
-                // If portion does not specify g or ml, check if we can format it
                 if (portionStr && !portionStr.toLowerCase().includes('g') && !portionStr.toLowerCase().includes('ml')) {
                   portionStr = `${portionStr} (est. 150g)`;
                 }
                 return {
                   name: String(it.name || "Food Item"),
                   portion: portionStr,
-                  carbs: Math.max(0, Math.round(Number(it.carbs) || 0)),
-                  protein: Math.max(0, Math.round(Number(it.protein) || 0)),
-                  fiber: Math.max(0, Math.round(Number(it.fiber) || 0)),
-                  fat: Math.max(0, Math.round(Number(it.fat) || 0)),
-                  calories: Math.max(0, Math.round(Number(it.calories) || 0)),
+                  carbs: parseMacroNumber(it.carbs),
+                  protein: parseMacroNumber(it.protein),
+                  fiber: parseMacroNumber(it.fiber),
+                  fat: parseMacroNumber(it.fat),
+                  calories: parseMacroNumber(it.calories),
                 };
               })
             : [];
@@ -516,16 +622,15 @@ async function startServer() {
         const computedFat = items.length > 0 ? items.reduce((s, i) => s + i.fat, 0) : 0;
         const computedCalories = items.length > 0 ? items.reduce((s, i) => s + i.calories, 0) : 0;
 
-        const finalProtein = Math.max(0, parseInt(parsed.protein) || computedProtein);
-        const finalCarbs = Math.max(0, parseInt(parsed.carbs) || computedCarbs);
-        const finalFiber = Math.max(0, parseInt(parsed.fiber) || computedFiber);
-        const finalFat = Math.max(0, parseInt(parsed.fat) !== undefined && !isNaN(parseInt(parsed.fat)) ? parseInt(parsed.fat) : computedFat);
-        const finalCalories = Math.max(0, parseInt(parsed.calories) || computedCalories);
+        const finalProtein = parseMacroNumber(parsed.protein, computedProtein);
+        const finalCarbs = parseMacroNumber(parsed.carbs, computedCarbs);
+        const finalFiber = parseMacroNumber(parsed.fiber, computedFiber);
+        const finalFat = parseMacroNumber(parsed.fat, computedFat);
+        const finalCalories = parseMacroNumber(parsed.calories, computedCalories || (finalProtein * 4 + finalCarbs * 4 + finalFat * 9));
 
         // Derive or format meal portion in grams or milliliters
         let finalPortion = parsed.portion ? String(parsed.portion).trim() : undefined;
         if (!finalPortion && items.length > 0) {
-          // Sum grams from items if available
           let totalGrams = 0;
           for (const it of items) {
             const match = it.portion?.match(/(\d+)\s*g/i);
@@ -538,7 +643,7 @@ async function startServer() {
         if (!finalPortion) {
           const lowerName = (parsed.name || hint || "").toLowerCase();
           const isDrink = lowerName.includes("drink") || lowerName.includes("water") || lowerName.includes("coffee") || lowerName.includes("juice") || lowerName.includes("shake") || lowerName.includes("smoothie") || lowerName.includes("tea") || lowerName.includes("soda");
-          finalPortion = isDrink ? "300ml" : "250g";
+          finalPortion = isDrink ? "340ml" : "200g";
         }
 
         return res.json({
@@ -551,44 +656,62 @@ async function startServer() {
           calories: finalCalories,
           items
         });
-      } catch (geminiError) {
-        console.error("Gemini food analysis failed, returning heuristic estimates:", geminiError);
-        const lowerHint = (hint || "").toLowerCase();
-        const isDrink = lowerHint.includes("water") || lowerHint.includes("drink") || lowerHint.includes("shake") || lowerHint.includes("smoothie") || lowerHint.includes("coffee") || lowerHint.includes("tea") || lowerHint.includes("juice") || lowerHint.includes("soda");
-        const isSingle = isDrink || lowerHint.includes("yogurt") || lowerHint.includes("bar") || lowerHint.includes("apple") || lowerHint.includes("banana");
+      } catch (geminiError: any) {
+        console.error("Gemini food analysis failed:", geminiError?.status || geminiError?.message || geminiError);
+        
+        // If user provided a text hint, provide a text-based nutritional estimate
+        if (hasText) {
+          const lowerHint = hint.trim().toLowerCase();
+          const isDrink = lowerHint.includes("water") || lowerHint.includes("drink") || lowerHint.includes("shake") || lowerHint.includes("smoothie") || lowerHint.includes("coffee") || lowerHint.includes("tea") || lowerHint.includes("juice") || lowerHint.includes("soda");
+          const isYogurtOrProtein = lowerHint.includes("yoplait") || lowerHint.includes("go 42") || lowerHint.includes("yogurt") || lowerHint.includes("pro") || lowerHint.includes("protein");
+          const isSingle = isDrink || isYogurtOrProtein || lowerHint.includes("bar") || lowerHint.includes("apple") || lowerHint.includes("banana");
 
-        if (isSingle) {
+          if (isYogurtOrProtein && lowerHint.includes("42")) {
+            return res.json({
+              name: hint.trim().slice(0, 40) || "Yoplait GO 42 Protein",
+              portion: "340ml",
+              protein: 42,
+              carbs: 12,
+              fiber: 0,
+              fat: 0,
+              calories: 215,
+              items: [],
+              notice: "High-protein dairy detected. Macros pre-filled."
+            });
+          }
+
+          if (isSingle) {
+            return res.json({
+              name: hint.trim().slice(0, 40),
+              portion: isDrink ? "330ml" : "180g",
+              protein: isDrink ? (lowerHint.includes("shake") ? 25 : 1) : (isYogurtOrProtein ? 20 : 15),
+              carbs: 10,
+              fiber: 1,
+              fat: isDrink ? 1 : 2,
+              calories: isDrink ? (lowerHint.includes("shake") ? 180 : 45) : 130,
+              items: []
+            });
+          }
+
           return res.json({
-            name: hasText ? hint.trim().slice(0, 40) : (isDrink ? "Beverage" : "Food Item"),
-            portion: isDrink ? "330ml" : "180g",
-            protein: isDrink ? (lowerHint.includes("shake") ? 25 : 1) : 15,
-            carbs: 10,
-            fiber: 1,
-            fat: isDrink ? 1 : 4,
-            calories: isDrink ? (lowerHint.includes("shake") ? 180 : 45) : 150,
+            name: hint.trim().slice(0, 40),
+            portion: "300g",
+            protein: 28,
+            carbs: 35,
+            fiber: 3,
+            fat: 8,
+            calories: 330,
             items: []
           });
         }
 
-        const fallbackMajorItems = [
-          { name: "Main Protein", portion: "180g", carbs: 0, protein: 30, fiber: 0, fat: 8, calories: 200 },
-          { name: "Side Starch / Grain", portion: "160g", carbs: 45, protein: 4, fiber: 2, fat: 1, calories: 210 }
-        ];
-
-        return res.json({
-          name: hasText ? hint.trim().slice(0, 40) : "Meal Plate",
-          portion: "340g",
-          protein: 34,
-          carbs: 45,
-          fiber: 2,
-          fat: 9,
-          calories: 410,
-          items: fallbackMajorItems
+        return res.status(503).json({
+          error: "AI food analysis is temporarily busy. Please tap Try Again or enter macros manually."
         });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error analyzing food with Gemini:", error);
-      res.status(500).json({ error: "Failed to analyze food" });
+      res.status(500).json({ error: error?.message || "Failed to analyze food" });
     }
   });
 

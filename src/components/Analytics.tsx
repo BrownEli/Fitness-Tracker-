@@ -134,11 +134,12 @@ export default function Analytics({ logs, goals, onLogWeight, onDeleteWeight, on
   // Helper to format chart X-axis label
   const formatChartData = (filteredLogs: DailyLog[]) => {
     return filteredLogs.map((log) => {
-      const totalProtein = log.meals.reduce((sum, meal) => sum + (meal.protein || 0), 0);
-      const totalCarbs = log.meals.reduce((sum, meal) => sum + (meal.carbs || 0), 0);
-      const totalFat = log.meals.reduce((sum, meal) => sum + (meal.fat || 0), 0);
-      const totalFiber = log.meals.reduce((sum, meal) => sum + (meal.fiber || 0), 0);
-      const totalCalories = log.meals.reduce((sum, meal) => sum + (meal.calories || 0), 0);
+      const safeMeals = Array.isArray(log?.meals) ? log.meals : [];
+      const totalProtein = safeMeals.reduce((sum, meal) => sum + (meal.protein || 0), 0);
+      const totalCarbs = safeMeals.reduce((sum, meal) => sum + (meal.carbs || 0), 0);
+      const totalFat = safeMeals.reduce((sum, meal) => sum + (meal.fat || 0), 0);
+      const totalFiber = safeMeals.reduce((sum, meal) => sum + (meal.fiber || 0), 0);
+      const totalCalories = safeMeals.reduce((sum, meal) => sum + (meal.calories || 0), 0);
 
       const parts = log.date.split('-');
       const ddmm = parts.length === 3 ? `${parts[2]}/${parts[1]}` : log.date;
@@ -315,7 +316,11 @@ export default function Analytics({ logs, goals, onLogWeight, onDeleteWeight, on
 
   const totalWeeklySets = useMemo(() => {
     return default7dLogs.reduce((acc, log) => {
-      return acc + log.workouts.reduce((wAcc, w) => wAcc + w.sets.filter((s) => s.completed !== false).length, 0);
+      const safeWorkouts = Array.isArray(log?.workouts) ? log.workouts : [];
+      return acc + safeWorkouts.reduce((wAcc, w) => {
+        const safeSets = Array.isArray(w?.sets) ? w.sets : [];
+        return wAcc + safeSets.filter((s) => s.completed !== false).length;
+      }, 0);
     }, 0);
   }, [default7dLogs]);
 

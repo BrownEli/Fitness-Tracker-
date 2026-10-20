@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { DailyLog, UserGoals, CoachingInsight, Meal, Workout, SetLog, ParsedWorkoutDay } from './types';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { DailyLog, UserGoals, CoachingInsight, Meal, Workout, SetLog, ParsedWorkoutDay, ConfiguredExercise } from './types';
 import { INITIAL_GOALS, INITIAL_LOGS, INITIAL_INSIGHTS } from './data';
+import { DEFAULT_CONFIGURED_EXERCISES, LEGACY_DEFAULT_EXERCISE_IDS } from './data/defaultConfiguredExercises';
 import MealLogger from './components/MealLogger';
 import WorkoutLogger from './components/WorkoutLogger';
 import Analytics from './components/Analytics';
@@ -60,7 +61,9 @@ import {
   ChevronUp,
   Layers,
   Star,
-  AlertTriangle
+  AlertTriangle,
+  Settings,
+  Clock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -137,14 +140,20 @@ export default function App() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
+        if (!Array.isArray(parsed)) return INITIAL_LOGS;
         const containsMockData = parsed.some((log: any) => 
-          log.meals?.some((meal: any) => meal.id === 'm1')
+          Array.isArray(log?.meals) && log.meals.some((meal: any) => meal.id === 'm1')
         );
         if (containsMockData) {
           localStorage.removeItem('hypertrophy_logs');
           return INITIAL_LOGS;
         }
-        return parsed;
+        return parsed.map((l: any) => ({
+          ...l,
+          meals: Array.isArray(l.meals) ? l.meals : [],
+          workouts: Array.isArray(l.workouts) ? l.workouts : [],
+          jogs: Array.isArray(l.jogs) ? l.jogs : []
+        }));
       } catch (e) {
         return INITIAL_LOGS;
       }
@@ -152,14 +161,50 @@ export default function App() {
     return INITIAL_LOGS;
   });
 
+  // All-time workout days counter from the 1st workout log ever recorded up until now
+  const { totalWorkoutDaysCount, firstWorkoutDateFormatted, activeWalkJogDaysCount } = useMemo(() => {
+    const datesWithWorkouts = new Set<string>();
+    const datesWithCardio = new Set<string>();
+
+    if (Array.isArray(logs)) {
+      logs.forEach((log) => {
+        if (!log || !log.date) return;
+        const hasWorkouts = Array.isArray(log.workouts) && log.workouts.some((w: any) => {
+          const isRest = w.category === 'Rest' || w.name?.toLowerCase().includes('rest & recovery') || w.name?.toLowerCase().includes('rest day');
+          if (isRest) return false;
+          return Boolean(w.completed || (w.exercises && w.exercises.length > 0) || (w.sets && w.sets.some((s: any) => s.completed || s.weight > 0 || s.reps > 0)) || w.name);
+        });
+        const hasJogs = Array.isArray(log.jogs) && log.jogs.some((j: any) => j.completed || (j.distanceKm && j.distanceKm > 0));
+
+        if (hasWorkouts || hasJogs) {
+          datesWithWorkouts.add(log.date);
+        }
+        if (hasJogs || (Array.isArray(log.workouts) && log.workouts.some((w: any) => w.category === 'Cardio' || w.id?.startsWith('jog-') || w.name?.toLowerCase().includes('jog') || w.name?.toLowerCase().includes('walk')))) {
+          datesWithCardio.add(log.date);
+        }
+      });
+    }
+
+    const sortedDates = Array.from(datesWithWorkouts).sort();
+    const count = sortedDates.length;
+    const earliestDate = sortedDates.length > 0 ? sortedDates[0] : null;
+
+    return {
+      totalWorkoutDaysCount: count,
+      firstWorkoutDateFormatted: earliestDate ? formatDateDDMMYYYY(earliestDate) : null,
+      activeWalkJogDaysCount: datesWithCardio.size
+    };
+  }, [logs]);
+
   // Load coaching insights from LocalStorage, fallback to Initial (with auto-purge for legacy mock insights)
   const [insights, setInsights] = useState<CoachingInsight[]>(() => {
     const saved = localStorage.getItem('hypertrophy_insights');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
+        if (!Array.isArray(parsed)) return INITIAL_INSIGHTS;
         const containsMockInsights = parsed.some((insight: any) => 
-          insight.summary === 'Optimizing Protein Timing for Anabolism'
+          insight?.summary === 'Optimizing Protein Timing for Anabolism'
         );
         if (containsMockInsights) {
           localStorage.removeItem('hypertrophy_insights');
@@ -177,10 +222,12 @@ export default function App() {
   const [parsedFoods, setParsedFoods] = useState<Omit<Meal, 'id' | 'timestamp'>[]>(() => {
     try {
       const saved = localStorage.getItem('hypertrophy_parsed_foods');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) {
-      return [];
-    }
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {}
+    return [];
   });
   const [parsedWorkouts, setParsedWorkouts] = useState<ParsedWorkoutDay[]>(() => {
     try {
@@ -194,6 +241,49 @@ export default function App() {
     } catch (e) {}
     return [];
   });
+  const [configuredExercises, setConfiguredExercises] = useState<ConfiguredExercise[]>(() => {
+    try {
+      const saved = localStorage.getItem('hypertrophy_configured_exercises');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          const defaultIds = new Set(LEGACY_DEFAULT_EXERCISE_IDS);
+          const filtered = parsed.filter(
+            (item: any) =>
+              item &&
+              item.id &&
+              !defaultIds.has(item.id) &&
+              !item.id.startsWith('cfg-bench') &&
+              !item.id.startsWith('cfg-incline') &&
+              !item.id.startsWith('cfg-overhead') &&
+              !item.id.startsWith('cfg-barbell') &&
+              !item.id.startsWith('cfg-lateral') &&
+              !item.id.startsWith('cfg-romanian') &&
+              !item.id.startsWith('cfg-leg') &&
+              !item.id.startsWith('cfg-pullup') &&
+              !item.id.startsWith('cfg-lat-') &&
+              !item.id.startsWith('cfg-bicep') &&
+              !item.id.startsWith('cfg-hammer') &&
+              !item.id.startsWith('cfg-tricep') &&
+              !item.id.startsWith('cfg-skull') &&
+              !item.id.startsWith('cfg-hanging') &&
+              !item.id.startsWith('cfg-plank') &&
+              !item.id.startsWith('cfg-pushup') &&
+              !item.id.startsWith('cfg-lunge')
+          );
+          return filtered;
+        }
+      }
+    } catch (e) {}
+    return [];
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('hypertrophy_configured_exercises', JSON.stringify(configuredExercises));
+    } catch (e) {}
+  }, [configuredExercises]);
+
   const [rawPlanText, setRawPlanText] = useState('');
 
   const getNowTimeString = () => {
@@ -231,7 +321,7 @@ export default function App() {
   const [isAddingWorkoutModal, setIsAddingWorkoutModal] = useState(false);
   const [editingWorkoutId, setEditingWorkoutId] = useState<string | null>(null);
   const [workoutFormName, setWorkoutFormName] = useState('');
-  const [workoutFormCategory, setWorkoutFormCategory] = useState<'Chest' | 'Back' | 'Legs' | 'Shoulders' | 'Arms' | 'Core' | 'Cardio'>('Chest');
+  const [workoutFormCategory, setWorkoutFormCategory] = useState<'Chest' | 'Back' | 'Legs' | 'Shoulders' | 'Arms' | 'Core' | 'Cardio' | 'Rest'>('Chest');
   const [workoutFormSets, setWorkoutFormSets] = useState<Array<{ reps: number; weight: number; completed: boolean }>>([
     { reps: 10, weight: 30, completed: true },
     { reps: 10, weight: 30, completed: true },
@@ -491,19 +581,6 @@ export default function App() {
     });
   };
 
-  // Delete weight entry for specific date
-  const handleDeleteWeight = (date: string) => {
-    setLogs((prevLogs) => {
-      return prevLogs.map((l) => {
-        if (l.date === date) {
-          const { weight, ...rest } = l;
-          return rest;
-        }
-        return l;
-      });
-    });
-  };
-
   // Custom confirmation modal state
   const [confirmConfig, setConfirmConfig] = useState<{
     isOpen: boolean;
@@ -537,6 +614,27 @@ export default function App() {
         setConfirmConfig((prev) => ({ ...prev, isOpen: false }));
       }
     });
+  };
+
+  // Delete weight entry for specific date
+  const handleDeleteWeight = (date: string) => {
+    requestConfirm(
+      'Delete Weight Entry?',
+      `Are you sure you want to delete the recorded weight entry for ${formatDateDDMMYYYY(date)}?`,
+      () => {
+        setLogs((prevLogs) => {
+          return prevLogs.map((l) => {
+            if (l.date === date) {
+              const { weight, ...rest } = l;
+              return rest;
+            }
+            return l;
+          });
+        });
+      },
+      'Delete Weight',
+      'danger'
+    );
   };
 
   // Sync to LocalStorage whenever state changes
@@ -927,14 +1025,17 @@ export default function App() {
     }
   };
 
-  // Retrieve log for currently selected date
-  const currentLog = logs.find((l) => l.date === selectedDate) || {
+  // Retrieve log for currently selected date with guaranteed arrays
+  const safeLogsList = Array.isArray(logs) ? logs : [];
+  const rawLog = safeLogsList.find((l) => l.date === selectedDate);
+  const currentLog = useMemo(() => ({
     date: selectedDate,
-    meals: [],
-    workouts: [],
-    weight: undefined,
-    notes: ''
-  };
+    meals: Array.isArray(rawLog?.meals) ? rawLog.meals : [],
+    workouts: Array.isArray(rawLog?.workouts) ? rawLog.workouts : [],
+    jogs: Array.isArray(rawLog?.jogs) ? rawLog.jogs : [],
+    weight: rawLog?.weight,
+    notes: rawLog?.notes || ''
+  }), [logs, selectedDate]);
 
   // Setup current bodyweight and height inputs
   useEffect(() => {
@@ -949,17 +1050,30 @@ export default function App() {
   // Helper to update log for a specific date safely with functional state updates
   const updateDailyLog = (date: string, updateFn: (log: DailyLog) => DailyLog) => {
     setLogs((prevLogs) => {
-      const existingLogIndex = prevLogs.findIndex((l) => l.date === date);
-      const existingLog = existingLogIndex >= 0 ? prevLogs[existingLogIndex] : {
+      const safePrev = Array.isArray(prevLogs) ? prevLogs : [];
+      const existingLogIndex = safePrev.findIndex((l) => l.date === date);
+      const existingLog: DailyLog = existingLogIndex >= 0 ? {
+        ...safePrev[existingLogIndex],
+        meals: Array.isArray(safePrev[existingLogIndex].meals) ? safePrev[existingLogIndex].meals : [],
+        workouts: Array.isArray(safePrev[existingLogIndex].workouts) ? safePrev[existingLogIndex].workouts : [],
+        jogs: Array.isArray(safePrev[existingLogIndex].jogs) ? safePrev[existingLogIndex].jogs : []
+      } : {
         date,
         meals: [],
         workouts: [],
+        jogs: [],
         weight: undefined,
         notes: ''
       };
       const updatedLog = updateFn(existingLog);
-      const filtered = prevLogs.filter((l) => l.date !== date);
-      return [...filtered, updatedLog];
+      const cleanUpdated: DailyLog = {
+        ...updatedLog,
+        meals: Array.isArray(updatedLog.meals) ? updatedLog.meals : [],
+        workouts: Array.isArray(updatedLog.workouts) ? updatedLog.workouts : [],
+        jogs: Array.isArray(updatedLog.jogs) ? updatedLog.jogs : []
+      };
+      const filtered = safePrev.filter((l) => l.date !== date);
+      return [...filtered, cleanUpdated];
     });
   };
 
@@ -975,68 +1089,89 @@ export default function App() {
 
     updateDailyLog(selectedDate, (log) => ({
       ...log,
-      meals: [...log.meals, mealWithMeta]
+      meals: [...(Array.isArray(log.meals) ? log.meals : []), mealWithMeta]
     }));
 
     // Reset clock input to current live time for the next meal
     setMealTimeInput(getNowTimeString());
   };
 
-  // Remove meal from selected date
+  // Remove meal from selected date with confirmation
   const handleRemoveMeal = (mealId: string) => {
-    updateDailyLog(selectedDate, (log) => ({
-      ...log,
-      meals: log.meals.filter((m) => m.id !== mealId)
-    }));
-    if (editingMealId === mealId) {
-      setEditingMealId(null);
-    }
-  };
-
-  // Remove single item from a logged meal's plate breakdown and recalculate totals
-  const handleRemoveItemFromMealBreakdown = (mealId: string, itemIndex: number) => {
-    updateDailyLog(selectedDate, (log) => {
-      const targetMeal = log.meals.find((m) => m.id === mealId);
-      if (!targetMeal || !targetMeal.items || targetMeal.items.length === 0) {
-        return log;
-      }
-
-      const updatedItems = targetMeal.items.filter((_, idx) => idx !== itemIndex);
-
-      // If all items are removed, delete the meal
-      if (updatedItems.length === 0) {
-        return {
+    const targetMeal = currentLog.meals.find((m) => m.id === mealId) || logs.find((l) => l.date === selectedDate)?.meals.find((m) => m.id === mealId);
+    const mealTitle = targetMeal?.name ? `"${targetMeal.name}"` : 'this logged meal';
+    requestConfirm(
+      'Delete Logged Meal?',
+      `Are you sure you want to delete ${mealTitle}? This meal and its nutrition values will be removed from your daily log.`,
+      () => {
+        updateDailyLog(selectedDate, (log) => ({
           ...log,
           meals: log.meals.filter((m) => m.id !== mealId)
-        };
-      }
+        }));
+        if (editingMealId === mealId) {
+          setEditingMealId(null);
+        }
+      },
+      'Delete Meal',
+      'danger'
+    );
+  };
 
-      // Recalculate macro and calorie totals based on remaining items
-      const newProtein = Math.round(updatedItems.reduce((acc, it) => acc + (Number(it.protein) || 0), 0));
-      const newCarbs = Math.round(updatedItems.reduce((acc, it) => acc + (Number(it.carbs) || 0), 0));
-      const newFat = Math.round(updatedItems.reduce((acc, it) => acc + (Number(it.fat) || 0), 0));
-      const newFiber = Math.round(updatedItems.reduce((acc, it) => acc + (Number(it.fiber) || 0), 0));
-      const newCalories = Math.round(updatedItems.reduce((acc, it) => acc + (Number(it.calories) || 0), 0));
+  // Remove single item from a logged meal's plate breakdown and recalculate totals with confirmation
+  const handleRemoveItemFromMealBreakdown = (mealId: string, itemIndex: number) => {
+    const targetMeal = currentLog.meals.find((m) => m.id === mealId);
+    const item = targetMeal?.items?.[itemIndex];
+    const itemTitle = item?.name ? `"${item.name}"` : 'this food item';
+    requestConfirm(
+      'Remove Food Item?',
+      `Are you sure you want to remove ${itemTitle} from this plate breakdown?`,
+      () => {
+        updateDailyLog(selectedDate, (log) => {
+          const mTarget = log.meals.find((m) => m.id === mealId);
+          if (!mTarget || !mTarget.items || mTarget.items.length === 0) {
+            return log;
+          }
 
-      const updatedMeal: Meal = {
-        ...targetMeal,
-        name: updatedItems.length === 1 && targetMeal.name.includes('+')
-          ? updatedItems[0].name
-          : targetMeal.name,
-        portion: updatedItems.length === 1 ? (updatedItems[0].portion || targetMeal.portion) : targetMeal.portion,
-        protein: newProtein,
-        carbs: newCarbs,
-        fat: newFat,
-        fiber: newFiber,
-        calories: newCalories,
-        items: updatedItems
-      };
+          const updatedItems = mTarget.items.filter((_, idx) => idx !== itemIndex);
 
-      return {
-        ...log,
-        meals: log.meals.map((m) => (m.id === mealId ? updatedMeal : m))
-      };
-    });
+          // If all items are removed, delete the meal
+          if (updatedItems.length === 0) {
+            return {
+              ...log,
+              meals: log.meals.filter((m) => m.id !== mealId)
+            };
+          }
+
+          // Recalculate macro and calorie totals based on remaining items
+          const newProtein = Math.round(updatedItems.reduce((acc, it) => acc + (Number(it.protein) || 0), 0));
+          const newCarbs = Math.round(updatedItems.reduce((acc, it) => acc + (Number(it.carbs) || 0), 0));
+          const newFat = Math.round(updatedItems.reduce((acc, it) => acc + (Number(it.fat) || 0), 0));
+          const newFiber = Math.round(updatedItems.reduce((acc, it) => acc + (Number(it.fiber) || 0), 0));
+          const newCalories = Math.round(updatedItems.reduce((acc, it) => acc + (Number(it.calories) || 0), 0));
+
+          const updatedMeal: Meal = {
+            ...mTarget,
+            name: updatedItems.length === 1 && mTarget.name.includes('+')
+              ? updatedItems[0].name
+              : mTarget.name,
+            portion: updatedItems.length === 1 ? (updatedItems[0].portion || mTarget.portion) : mTarget.portion,
+            protein: newProtein,
+            carbs: newCarbs,
+            fat: newFat,
+            fiber: newFiber,
+            calories: newCalories,
+            items: updatedItems
+          };
+
+          return {
+            ...log,
+            meals: log.meals.map((m) => (m.id === mealId ? updatedMeal : m))
+          };
+        });
+      },
+      'Remove Item',
+      'danger'
+    );
   };
 
   // Star / Favorite food handler (persisted in user goals and synchronized across logs)
@@ -1044,11 +1179,11 @@ export default function App() {
     const trimmed = (foodName || '').trim();
     if (!trimmed) return;
     const lower = trimmed.toLowerCase();
-    const currentFavs = goals.favoriteFoods || [];
-    const exists = currentFavs.some((f) => f.trim().toLowerCase() === lower);
+    const currentFavs = (goals.favoriteFoods || []).map((f) => (typeof f === 'string' ? f : (f as any)?.name || '').trim()).filter(Boolean);
+    const exists = currentFavs.some((f) => f.toLowerCase() === lower);
 
     const updatedFavs = exists
-      ? currentFavs.filter((f) => f.trim().toLowerCase() !== lower)
+      ? currentFavs.filter((f) => f.toLowerCase() !== lower)
       : [...currentFavs, trimmed];
 
     const updatedGoals: UserGoals = {
@@ -1132,7 +1267,7 @@ export default function App() {
 
     updateDailyLog(selectedDate, (log) => ({
       ...log,
-      workouts: [...log.workouts, ...workoutsWithIds]
+      workouts: [...(Array.isArray(log.workouts) ? log.workouts : []), ...workoutsWithIds]
     }));
   };
 
@@ -1190,12 +1325,22 @@ export default function App() {
     });
   };
 
-  // Remove full workout
+  // Remove full workout with confirmation
   const handleRemoveWorkout = (workoutId: string) => {
-    updateDailyLog(selectedDate, (log) => ({
-      ...log,
-      workouts: log.workouts.filter((w) => w.id !== workoutId)
-    }));
+    const targetWorkout = currentLog.workouts.find((w) => w.id === workoutId);
+    const workoutTitle = targetWorkout?.name ? `"${targetWorkout.name}"` : 'this exercise';
+    requestConfirm(
+      'Delete Logged Exercise?',
+      `Are you sure you want to delete ${workoutTitle} from your logged exercises for ${formatDateDDMMYYYY(selectedDate)}?`,
+      () => {
+        updateDailyLog(selectedDate, (log) => ({
+          ...log,
+          workouts: log.workouts.filter((w) => w.id !== workoutId)
+        }));
+      },
+      'Delete Exercise',
+      'danger'
+    );
   };
 
   // Update existing workout on selected date
@@ -1301,7 +1446,7 @@ export default function App() {
         setLogs(INITIAL_LOGS);
         setInsights(INITIAL_INSIGHTS);
         setSelectedDate(new Date().toISOString().split('T')[0]);
-        setActiveTab('dashboard');
+        setActiveTab('nutrition');
       },
       'Reset All Data',
       'danger'
@@ -1318,9 +1463,19 @@ export default function App() {
     setInsights((prev) => prev.map((item, i) => (i === index ? updatedInsight : item)));
   };
 
-  // Delete coaching insight recommendation
+  // Delete coaching insight recommendation with confirmation
   const handleDeleteInsight = (index: number) => {
-    setInsights((prev) => prev.filter((_, i) => i !== index));
+    const target = insights[index];
+    const title = target?.summary ? `"${target.summary}"` : 'this coaching recommendation';
+    requestConfirm(
+      'Delete Coaching Advice?',
+      `Are you sure you want to delete ${title}? This advice record and its chat discussion will be permanently removed.`,
+      () => {
+        setInsights((prev) => prev.filter((_, i) => i !== index));
+      },
+      'Delete Advice',
+      'danger'
+    );
   };
 
   // Compute stats for current selected date
@@ -1342,8 +1497,8 @@ export default function App() {
   const caloriePercentage = Math.min(100, Math.round((todayCalories / goals.dailyCalorieTarget) * 100));
 
   const calorieSurplus = todayCalories - goals.dailyCalorieTarget;
-  const isCalorieRedAlert = calorieSurplus >= 50;
-  const isCalorieSoftOver = calorieSurplus > 0 && calorieSurplus < 50;
+  const isCalorieRedAlert = calorieSurplus >= 100;
+  const isCalorieSoftOver = calorieSurplus > 0 && calorieSurplus < 100;
 
   const fatSurplus = todayFat - targetFat;
   const isFatRedAlert = Boolean(goals.dailyFatTarget && todayFat > goals.dailyFatTarget);
@@ -1674,12 +1829,12 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="text-xs text-slate-500 font-semibold flex items-center justify-between border-t border-slate-100 pt-3">
+                <div className="text-sm text-slate-600 font-semibold flex items-center justify-between border-t border-slate-100 pt-3">
                   <span>Firestore Sync</span>
                   <span className="font-bold text-amber-600 font-mono">{firebaseUser ? 'Online' : 'Local Cache'}</span>
                 </div>
 
-                <div className="text-xs text-slate-500 font-semibold flex items-center justify-between border-t border-slate-100 pt-3">
+                <div className="text-sm text-slate-600 font-semibold flex items-center justify-between border-t border-slate-100 pt-3">
                   <span>App Version</span>
                   <span className="font-black text-indigo-600 font-mono bg-indigo-50 px-2 py-0.5 rounded-md">{APP_VERSION}</span>
                 </div>
@@ -1692,6 +1847,26 @@ export default function App() {
       {/* Main Spacious Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
         
+        {/* All-Time Workout Days Counter (Top of every page, wrap content height, purple like workout active streak) */}
+        <div
+          className="w-full bg-linear-to-r from-indigo-500 to-violet-600 rounded-3xl p-5 sm:p-6 md:p-7 text-white shadow-lg shadow-indigo-100 h-auto"
+          id="global-workout-days-counter-hero"
+        >
+          <div className="space-y-2">
+            <span className="text-sm font-bold uppercase tracking-wider bg-white/20 text-white px-3.5 py-1 rounded-full border border-white/10 inline-block">
+              All-Time Workout Consistency
+            </span>
+            <h2 className="text-2xl sm:text-3xl font-black tracking-tight">
+              Day {totalWorkoutDaysCount} Active
+            </h2>
+            <p className="text-indigo-100 text-sm font-semibold">
+              {firstWorkoutDateFormatted
+                ? `Counted from your 1st workout log on ${firstWorkoutDateFormatted} to now`
+                : 'Start logging workouts to begin your all-time counter'}
+            </p>
+          </div>
+        </div>
+
         {/* Unified Active Day Context & Date Picker (Visible only in Log Area) */}
         {(activeTab === 'nutrition' || activeTab === 'workouts') && (
           <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-xs flex items-center justify-between gap-4 flex-wrap" id="global-metrics-bar">
@@ -1750,9 +1925,26 @@ export default function App() {
 
                 {/* Right Panel: Daily Logs History List */}
                 <div className="xl:col-span-4 bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 shadow-xs space-y-4">
-                  <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-                    <h3 className="text-sm font-black text-slate-800">Eaten Today</h3>
-                    <span className="text-xs font-mono font-bold text-slate-400">{currentLog.meals.length} items logged</span>
+                  <div className="flex justify-between items-center border-b border-slate-100 pb-3 gap-2">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-black text-slate-800">Eaten Today</h3>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('settings');
+                          setTimeout(() => {
+                            const el = document.getElementById('card-macro-targets');
+                            if (el) el.scrollIntoView({ behavior: 'smooth' });
+                          }, 150);
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-sm font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 active:bg-indigo-200 rounded-lg transition-colors cursor-pointer"
+                        title="Adjust Daily Calorie and Fat Targets"
+                      >
+                        <Settings className="w-3.5 h-3.5" />
+                        <span>Edit Targets</span>
+                      </button>
+                    </div>
+                    <span className="text-sm font-mono font-bold text-slate-400">{currentLog.meals.length} items logged</span>
                   </div>
 
                   {/* Calorie Intake Status Bar with Red Alert in Eaten Today Panel */}
@@ -1803,7 +1995,7 @@ export default function App() {
 
                     {isCalorieRedAlert && (
                       <p className="text-xs font-bold text-red-900 leading-snug">
-                        You have exceeded your target by {calorieSurplus} calories (past the 50 kcal limit). Back off from more food today to stay on track for fat loss.
+                        You have exceeded your target by {calorieSurplus} calories, passing the 100 kcal over-target limit. Back off from more food today to stay on track for fat loss.
                       </p>
                     )}
 
@@ -1886,104 +2078,114 @@ export default function App() {
                       {currentLog.meals.map((meal) => {
                         if (editingMealId === meal.id) {
                           return (
-                            <div key={meal.id} className="p-3.5 bg-indigo-50/70 border border-indigo-200 rounded-2xl space-y-3 shadow-xs">
-                              <div className="flex items-center justify-between border-b border-indigo-100 pb-2">
-                                <span className="text-[10px] font-black uppercase text-indigo-700 tracking-wider">Edit Food Item</span>
+                            <div key={meal.id} className="p-4 bg-indigo-50/70 border border-indigo-200 rounded-2xl space-y-4 shadow-xs">
+                              <div className="flex items-center justify-between border-b border-indigo-100 pb-2.5">
+                                <span className="text-sm font-bold uppercase text-indigo-700 tracking-wider">Edit Food Item</span>
                                 <button
                                   type="button"
                                   onClick={cancelEditingMeal}
-                                  className="p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-white transition-colors cursor-pointer"
+                                  className="p-2 min-h-[44px] min-w-[44px] rounded-xl text-slate-400 hover:text-slate-600 hover:bg-white flex items-center justify-center transition-colors cursor-pointer"
                                   title="Cancel"
                                 >
-                                  <X className="w-3.5 h-3.5" />
+                                  <X className="w-5 h-5" />
                                 </button>
                               </div>
-                              <div className="space-y-2">
+                              <div className="space-y-3">
                                 <div>
-                                  <label className="text-[9px] font-black text-slate-500 block mb-0.5">Name</label>
+                                  <label className="text-sm font-bold text-slate-700 block mb-1">Name</label>
                                   <input
                                     type="text"
                                     value={editMealName}
                                     onChange={(e) => setEditMealName(e.target.value)}
                                     placeholder="Food Name"
-                                    className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
+                                    className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                                   />
                                 </div>
-                                <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
+                                <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5">
                                   <div>
-                                    <label className="text-[9px] font-black text-slate-500 block mb-0.5">Protein (g)</label>
+                                    <label className="text-sm font-bold text-slate-700 block mb-1">Protein (g)</label>
                                     <input
                                       type="number"
                                       value={editMealProtein}
                                       onChange={(e) => setEditMealProtein(e.target.value)}
-                                      className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
+                                      className="w-full px-2.5 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                                     />
                                   </div>
                                   <div>
-                                    <label className="text-[9px] font-black text-slate-500 block mb-0.5">Carbs (g)</label>
+                                    <label className="text-sm font-bold text-slate-700 block mb-1">Carbs (g)</label>
                                     <input
                                       type="number"
                                       value={editMealCarbs}
                                       onChange={(e) => setEditMealCarbs(e.target.value)}
-                                      className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
+                                      className="w-full px-2.5 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                                     />
                                   </div>
                                   <div>
-                                    <label className="text-[9px] font-black text-amber-700 block mb-0.5">Fat (g)</label>
+                                    <label className="text-sm font-bold text-amber-800 block mb-1">Fat (g)</label>
                                     <input
                                       type="number"
                                       value={editMealFat}
                                       onChange={(e) => setEditMealFat(e.target.value)}
-                                      className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
+                                      className="w-full px-2.5 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                                     />
                                   </div>
                                   <div>
-                                    <label className="text-[9px] font-black text-slate-500 block mb-0.5">Fiber (g)</label>
+                                    <label className="text-sm font-bold text-slate-700 block mb-1">Fiber (g)</label>
                                     <input
                                       type="number"
                                       value={editMealFiber}
                                       onChange={(e) => setEditMealFiber(e.target.value)}
-                                      className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
+                                      className="w-full px-2.5 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                                     />
                                   </div>
                                   <div>
-                                    <label className="text-[9px] font-black text-slate-500 block mb-0.5">Calories (kcal)</label>
+                                    <label className="text-sm font-bold text-slate-700 block mb-1">Calories</label>
                                     <input
                                       type="number"
                                       value={editMealCalories}
                                       onChange={(e) => setEditMealCalories(e.target.value)}
-                                      className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
+                                      className="w-full px-2.5 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                                     />
                                   </div>
                                   <div className="col-span-2 sm:col-span-1">
-                                    <label className="text-[9px] font-black text-slate-500 block mb-0.5">Time</label>
+                                    <label className="text-sm font-bold text-slate-700 block mb-1">Time</label>
                                     <input
                                       type="text"
                                       value={editMealTime}
                                       onChange={(e) => setEditMealTime(e.target.value)}
                                       placeholder="e.g. 08:30"
-                                      className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
+                                      className="w-full px-2.5 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                                     />
                                   </div>
                                 </div>
                               </div>
-                              <div className="flex flex-col sm:flex-row justify-end gap-2 pt-1 border-t border-indigo-100">
+                              <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 pt-3 mt-1 border-t border-indigo-100">
                                 <button
                                   type="button"
                                   onClick={() => handleRemoveMeal(meal.id)}
-                                  className="w-full sm:w-auto px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 font-black text-[10px] rounded-lg border border-rose-200 transition-colors flex items-center justify-center text-center gap-1 cursor-pointer"
+                                  className="w-full sm:w-auto min-h-[48px] px-5 py-3 bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-rose-600 hover:text-rose-700 font-bold text-sm rounded-xl border border-rose-200 transition-colors flex items-center justify-center text-center gap-2 cursor-pointer touch-manipulation"
                                 >
-                                  <Trash2 className="w-3 h-3" />
-                                  Delete
+                                  <Trash2 className="w-4 h-4 text-rose-500" />
+                                  <span>Delete</span>
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={() => saveEditingMeal(meal.id)}
-                                  className="w-full sm:w-auto px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] rounded-lg transition-colors flex items-center justify-center text-center gap-1 cursor-pointer shadow-xs"
-                                >
-                                  <Check className="w-3 h-3" />
-                                  Save
-                                </button>
+                                <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+                                  <button
+                                    type="button"
+                                    onClick={cancelEditingMeal}
+                                    className="w-full sm:w-auto min-h-[48px] px-5 py-3 bg-white hover:bg-slate-100 active:bg-slate-200 text-slate-700 font-bold text-sm rounded-xl border border-slate-200 transition-colors flex items-center justify-center text-center gap-2 cursor-pointer touch-manipulation"
+                                  >
+                                    <X className="w-4 h-4" />
+                                    <span>Cancel</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => saveEditingMeal(meal.id)}
+                                    className="w-full sm:w-auto min-h-[48px] px-6 py-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold text-sm rounded-xl shadow-xs transition-colors flex items-center justify-center text-center gap-2 cursor-pointer touch-manipulation"
+                                  >
+                                    <Check className="w-4 h-4" />
+                                    <span>Save</span>
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           );
@@ -1992,66 +2194,92 @@ export default function App() {
                         return (
                           <div
                             key={meal.id}
-                            className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl hover:border-slate-300 transition-colors"
+                            className="p-4 bg-slate-50 border border-slate-200 rounded-2xl hover:border-slate-300 transition-colors flex flex-col space-y-3 shadow-2xs"
                           >
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-3">
-                                <span className="text-sm text-slate-500 font-bold font-mono bg-white px-2.5 py-1 rounded-lg border border-slate-200">
-                                  {meal.timestamp}
-                                </span>
-                                <div>
-                                  <h4 className="text-sm font-bold text-slate-900 leading-tight">{meal.name}</h4>
-                                  <div className="flex flex-wrap items-center gap-2 mt-1">
-                                    <span className="text-sm text-emerald-600 font-black">{meal.protein}g protein</span>
-                                    {meal.carbs !== undefined && (
-                                      <span className="text-sm text-sky-600 font-black">• {meal.carbs}g carbs</span>
-                                    )}
-                                    {meal.fat !== undefined && (
-                                      <span className="text-sm text-amber-700 font-black">• {meal.fat}g fat</span>
-                                    )}
-                                    {meal.fiber !== undefined && (
-                                      <span className="text-sm text-teal-600 font-black">• {meal.fiber}g fiber</span>
-                                    )}
-                                    <span className="text-sm text-slate-500 font-bold font-mono">• {meal.calories} kcal</span>
-                                  </div>
-                                </div>
-                              </div>
+                            {/* Timestamp Tag */}
+                            <div>
+                              <span className="inline-flex items-center gap-2 text-sm text-slate-600 font-bold font-mono bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
+                                <Clock className="w-4 h-4 text-slate-400" />
+                                {meal.timestamp}
+                              </span>
+                            </div>
 
-                              <div className="flex items-center gap-1">
-                                {(() => {
-                                  const isFav = (goals.favoriteFoods || []).some(
-                                    (f) => f.toLowerCase() === (meal.name || '').trim().toLowerCase()
-                                  ) || meal.isFavorite;
-                                  return (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleToggleFavoriteFood(meal.name)}
-                                      className="p-2 rounded-lg text-slate-400 hover:text-amber-500 hover:bg-amber-50 transition-colors cursor-pointer"
-                                      title={isFav ? "Remove from favorites" : "Add to favorites"}
-                                    >
-                                      {isFav ? (
-                                        <Star className="w-4 h-4 text-amber-500 fill-amber-400" />
-                                      ) : (
-                                        <Star className="w-4 h-4 text-slate-300 hover:text-amber-500" />
-                                      )}
-                                    </button>
-                                  );
-                                })()}
-                                <button
-                                  onClick={() => startEditingMeal(meal)}
-                                  className="p-2 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer"
-                                  title="Edit Meal"
-                                >
-                                  <Pencil className="w-4 h-4" />
-                                </button>
-                                <button
-                                  onClick={() => handleRemoveMeal(meal.id)}
-                                  className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-                                  title="Delete Meal"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              </div>
+                            {/* Full-width Meal Title */}
+                            <div className="w-full">
+                              <h4 className="text-base font-black text-slate-900 leading-snug break-words">
+                                {meal.name}
+                              </h4>
+                            </div>
+
+                            {/* Nutritional Badges in Dedicated Row */}
+                            <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                              <span className="text-sm font-black text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                                {meal.protein}g protein
+                              </span>
+                              {meal.carbs !== undefined && (
+                                <span className="text-sm font-black text-sky-700 bg-sky-50 px-2.5 py-1 rounded-lg border border-sky-200">
+                                  {meal.carbs}g carbs
+                                </span>
+                              )}
+                              {meal.fat !== undefined && (
+                                <span className="text-sm font-black text-amber-900 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-300">
+                                  {meal.fat}g fat
+                                </span>
+                              )}
+                              {meal.fiber !== undefined && (
+                                <span className="text-sm font-black text-teal-800 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200">
+                                  {meal.fiber}g fiber
+                                </span>
+                              )}
+                              <span className="text-sm font-bold font-mono text-slate-700 bg-white px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs">
+                                {meal.calories} kcal
+                              </span>
+                            </div>
+
+                            {/* Action Buttons in Dedicated Section */}
+                            <div className="pt-2 border-t border-slate-200/70 flex flex-wrap items-center gap-2">
+                              {(() => {
+                                const cleanMealName = (meal.name || '').trim().toLowerCase();
+                                const isFav = (goals.favoriteFoods || []).some(
+                                  (f) => (typeof f === 'string' ? f : (f as any)?.name || '').trim().toLowerCase() === cleanMealName
+                                ) || Boolean(meal.isFavorite);
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleFavoriteFood(meal.name)}
+                                    className="flex-1 sm:flex-initial px-4 py-2.5 min-h-[48px] rounded-xl text-slate-700 bg-white hover:text-amber-600 hover:bg-amber-50 border border-slate-200 shadow-2xs flex items-center justify-center gap-2 transition-colors cursor-pointer text-sm font-bold"
+                                    title={isFav ? "Remove from favorites" : "Add to favorites"}
+                                    aria-label={isFav ? "Remove from favorites" : "Add to favorites"}
+                                  >
+                                    {isFav ? (
+                                      <Star className="w-4 h-4 text-amber-500 fill-amber-400" />
+                                    ) : (
+                                      <Star className="w-4 h-4 text-slate-400" />
+                                    )}
+                                    <span>{isFav ? "Favorited" : "Favorite"}</span>
+                                  </button>
+                                );
+                              })()}
+                              <button
+                                type="button"
+                                onClick={() => startEditingMeal(meal)}
+                                className="flex-1 sm:flex-initial px-4 py-2.5 min-h-[48px] flex items-center justify-center gap-2 rounded-xl text-slate-700 bg-white hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 shadow-2xs transition-colors cursor-pointer text-sm font-bold"
+                                title="Edit Meal"
+                                aria-label={`Edit ${meal.name}`}
+                              >
+                                <Pencil className="w-4 h-4" />
+                                <span>Edit</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveMeal(meal.id)}
+                                className="flex-1 sm:flex-initial px-4 py-2.5 min-h-[48px] flex items-center justify-center gap-2 rounded-xl text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 shadow-2xs transition-colors cursor-pointer text-sm font-bold"
+                                title="Delete Meal"
+                                aria-label={`Delete ${meal.name}`}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                                <span>Delete</span>
+                              </button>
                             </div>
 
                             {/* Expandable Plate Breakdown If Available */}
@@ -2078,26 +2306,16 @@ export default function App() {
                                       {meal.items.map((it, itIdx) => (
                                         <div
                                           key={itIdx}
-                                          className="p-2.5 bg-white rounded-xl border border-emerald-100/90 shadow-2xs space-y-1.5"
+                                          className="p-3 bg-white rounded-xl border border-emerald-100/90 shadow-2xs flex flex-col space-y-2"
                                         >
-                                          <div className="flex items-center justify-between gap-2 text-sm">
-                                            <div className="flex items-center gap-2 min-w-0 flex-1">
-                                              <span className="font-bold text-slate-800 truncate">{it.name}</span>
-                                              {it.portion && (
-                                                <span className="text-slate-500 font-medium shrink-0">• {it.portion}</span>
-                                              )}
-                                            </div>
-                                            <button
-                                              type="button"
-                                              onClick={() => handleRemoveItemFromMealBreakdown(meal.id, itIdx)}
-                                              className="px-2 py-1 text-rose-600 hover:text-rose-700 hover:bg-rose-50 border border-rose-200/80 rounded-lg transition-colors cursor-pointer shrink-0 flex items-center gap-1 text-sm font-semibold"
-                                              title="Remove item from plate breakdown"
-                                              aria-label={`Remove ${it.name} from plate`}
-                                            >
-                                              <Trash2 className="w-3.5 h-3.5" />
-                                              <span>Remove</span>
-                                            </button>
+                                          {/* Item Name & Portion */}
+                                          <div className="w-full">
+                                            <span className="font-bold text-slate-800 text-sm block">{it.name}</span>
+                                            {it.portion && (
+                                              <span className="text-slate-500 font-medium text-sm block mt-0.5">• {it.portion}</span>
+                                            )}
                                           </div>
+                                          {/* Macros */}
                                           <div className="flex flex-wrap items-center gap-1.5 text-sm font-bold">
                                             <span className="px-2 py-0.5 rounded-md bg-sky-50 text-sky-800 border border-sky-200">
                                               {it.carbs}g carbs
@@ -2116,6 +2334,19 @@ export default function App() {
                                             <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 font-mono">
                                               {it.calories} kcal
                                             </span>
+                                          </div>
+                                          {/* Action */}
+                                          <div className="pt-1 border-t border-slate-100">
+                                            <button
+                                              type="button"
+                                              onClick={() => handleRemoveItemFromMealBreakdown(meal.id, itIdx)}
+                                              className="w-full py-2.5 min-h-[48px] text-rose-600 hover:text-rose-700 hover:bg-rose-50 border border-rose-200/80 rounded-xl transition-colors cursor-pointer flex items-center justify-center text-center gap-1.5 text-sm font-bold"
+                                              title="Remove item from plate breakdown"
+                                              aria-label={`Remove ${it.name} from plate`}
+                                            >
+                                              <Trash2 className="w-4 h-4" />
+                                              <span>Remove Item</span>
+                                            </button>
                                           </div>
                                         </div>
                                       ))}
@@ -2151,6 +2382,7 @@ export default function App() {
                   <WorkoutLogger
                     onAddWorkout={handleAddWorkout}
                     onAddWorkouts={handleAddWorkouts}
+                    onOpenAddWorkoutForm={handleOpenAddWorkoutForm}
                     weightUnit={goals.weightUnit}
                     selectedDate={selectedDate}
                     logs={logs}
@@ -2158,49 +2390,60 @@ export default function App() {
                     onUpdateParsedWorkouts={setParsedWorkouts}
                     onUpdateDailyLog={updateDailyLog}
                     goals={goals}
+                    configuredExercises={configuredExercises}
+                    onUpdateConfiguredExercises={setConfiguredExercises}
                   />
                 </div>
 
                 {/* Workout Logs List panel */}
                 <div className="xl:col-span-4 bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 shadow-xs space-y-4">
-                  <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-                    <div>
-                      <h3 className="text-sm font-black text-slate-800">
-                        {selectedDate === new Date().toISOString().split('T')[0] ? 'Exercises Today' : `Exercises (${formatDateDDMMYYYY(selectedDate)})`}
+                  <div className="flex flex-col space-y-2.5 border-b border-slate-100 pb-4">
+                    <div className="w-full">
+                      <h3 className="text-base font-black text-slate-900">
+                        {selectedDate === new Date().toISOString().split('T')[0] ? 'Exercises Today' : `Exercises for ${formatDateDDMMYYYY(selectedDate)}`}
                       </h3>
-                      <span className="text-[10px] text-slate-400 font-bold font-mono">{currentLog.workouts.length} logged</span>
+                      <span className="text-sm text-slate-500 font-bold font-mono block mt-0.5">
+                        {currentLog.workouts.length} {currentLog.workouts.length === 1 ? 'exercise logged' : 'exercises logged'}
+                      </span>
                     </div>
-                    <button
-                      onClick={handleOpenAddWorkoutForm}
-                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer shadow-xs"
-                      title="Add Lift for selected date"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      Add Lift
-                    </button>
+                    <div>
+                      <button
+                        type="button"
+                        onClick={handleOpenAddWorkoutForm}
+                        className="w-full min-h-[48px] px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                        title="Add Lift for selected date"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Add Lift</span>
+                      </button>
+                    </div>
                   </div>
 
                   {/* Manual Workout Form (Add or Edit) */}
                   {isAddingWorkoutModal && (
-                    <div className="p-4 bg-indigo-50/80 border border-indigo-200 rounded-2xl space-y-3.5">
-                      <div className="flex justify-between items-center">
-                        <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wider">
-                          {editingWorkoutId ? 'Edit Logged Exercise' : `Add Exercise for ${formatDateDDMMYYYY(selectedDate)}`}
-                        </h4>
-                        <button
-                          onClick={() => {
-                            setIsAddingWorkoutModal(false);
-                            setEditingWorkoutId(null);
-                          }}
-                          className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
+                    <div className="p-4 sm:p-5 bg-indigo-50/80 border border-indigo-200 rounded-2xl space-y-4">
+                      <div className="flex flex-col space-y-2">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-sm font-black text-indigo-950 uppercase tracking-wider">
+                            {editingWorkoutId ? 'Edit Logged Exercise' : `Add Exercise for ${formatDateDDMMYYYY(selectedDate)}`}
+                          </h4>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsAddingWorkoutModal(false);
+                              setEditingWorkoutId(null);
+                            }}
+                            className="text-slate-400 hover:text-slate-600 p-2 min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer rounded-lg"
+                            aria-label="Close form"
+                          >
+                            <X className="w-5 h-5" />
+                          </button>
+                        </div>
                       </div>
 
-                      <div className="space-y-2.5">
+                      <div className="space-y-3">
                         <div>
-                          <label className="block text-[10px] font-black text-slate-600 uppercase mb-1">
+                          <label className="block text-sm font-black text-slate-700 uppercase mb-1">
                             Exercise Name
                           </label>
                           <input
@@ -2208,19 +2451,19 @@ export default function App() {
                             value={workoutFormName}
                             onChange={(e) => setWorkoutFormName(e.target.value)}
                             placeholder="e.g. Incline Dumbbell Press"
-                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
                             autoFocus
                           />
                         </div>
 
                         <div>
-                          <label className="block text-[10px] font-black text-slate-600 uppercase mb-1">
+                          <label className="block text-sm font-black text-slate-700 uppercase mb-1">
                             Category
                           </label>
                           <select
                             value={workoutFormCategory}
                             onChange={(e) => setWorkoutFormCategory(e.target.value as any)}
-                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                            className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer min-h-[44px]"
                           >
                             {['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio'].map((cat) => (
                               <option key={cat} value={cat}>
@@ -2231,58 +2474,75 @@ export default function App() {
                         </div>
 
                         {/* Sets Editor */}
-                        <div className="space-y-2 pt-1">
-                          <div className="flex justify-between items-center">
-                            <label className="block text-[10px] font-black text-slate-600 uppercase">
-                              Working Sets ({workoutFormSets.length})
+                        <div className="space-y-2.5 pt-1">
+                          <div className="flex flex-col space-y-2">
+                            <label className="block text-sm font-black text-slate-700 uppercase">
+                              Working Sets
                             </label>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setWorkoutFormSets((prev) => [
-                                  ...prev,
-                                  { reps: 10, weight: prev[prev.length - 1]?.weight || 30, completed: true }
-                                ])
-                              }
-                              className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer"
-                            >
-                              <Plus className="w-3 h-3" /> Add Set
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <span className="px-2.5 py-1 bg-indigo-100 text-indigo-800 rounded-lg text-sm font-bold font-mono">
+                                Set Count: {workoutFormSets.length}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setWorkoutFormSets((prev) => [
+                                    ...prev,
+                                    { reps: 10, weight: prev[prev.length - 1]?.weight || 30, completed: true }
+                                  ])
+                                }
+                                className="px-3 py-1.5 min-h-[44px] text-sm font-bold text-indigo-700 bg-white border border-indigo-200 hover:bg-indigo-50 rounded-xl flex items-center gap-1.5 cursor-pointer ml-auto"
+                              >
+                                <Plus className="w-4 h-4" /> Add Set
+                              </button>
+                            </div>
                           </div>
 
-                          <div className="space-y-1.5 max-h-[180px] overflow-y-auto pr-1">
+                          <div className="space-y-2.5 max-h-[240px] overflow-y-auto pr-1">
                             {workoutFormSets.map((set, sIdx) => (
-                              <div key={sIdx} className="flex items-center gap-2 bg-white p-2 rounded-xl border border-slate-200">
-                                <span className="text-[10px] font-mono font-bold text-slate-400 w-10">Set {sIdx + 1}</span>
-                                <div className="flex-1 grid grid-cols-2 gap-2">
-                                  <div className="flex items-center gap-1 bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">
+                              <div key={sIdx} className="flex flex-col space-y-2 bg-white p-3.5 rounded-xl border border-slate-200">
+                                <span className="text-sm font-mono font-bold text-slate-600">Set {sIdx + 1}</span>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div className="flex items-center gap-1.5 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200 min-h-[44px]">
                                     <input
                                       type="number"
                                       value={set.weight}
                                       onChange={(e) => handleUpdateFormSetField(sIdx, 'weight', parseFloat(e.target.value) || 0)}
-                                      className="w-full text-xs font-bold text-slate-800 focus:outline-none"
+                                      className="w-full text-sm font-bold text-slate-800 focus:outline-none"
                                     />
-                                    <span className="text-[9px] font-bold text-slate-400 uppercase">{goals.weightUnit}</span>
+                                    <span className="text-sm font-bold text-slate-500 uppercase">{goals.weightUnit}</span>
                                   </div>
-                                  <div className="flex items-center gap-1 bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">
+                                  <div className="flex items-center gap-1.5 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200 min-h-[44px]">
                                     <input
                                       type="number"
                                       value={set.reps}
                                       onChange={(e) => handleUpdateFormSetField(sIdx, 'reps', parseInt(e.target.value, 10) || 0)}
-                                      className="w-full text-xs font-bold text-slate-800 focus:outline-none"
+                                      className="w-full text-sm font-bold text-slate-800 focus:outline-none"
                                     />
-                                    <span className="text-[9px] font-bold text-slate-400 uppercase">reps</span>
+                                    <span className="text-sm font-bold text-slate-500 uppercase">reps</span>
                                   </div>
                                 </div>
                                 {workoutFormSets.length > 1 && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setWorkoutFormSets((prev) => prev.filter((_, i) => i !== sIdx))}
-                                    className="p-1 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
-                                    title="Remove Set"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
+                                  <div className="pt-1.5 border-t border-slate-100">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        requestConfirm(
+                                          'Remove Set?',
+                                          `Are you sure you want to remove Set ${sIdx + 1}?`,
+                                          () => setWorkoutFormSets((prev) => prev.filter((_, i) => i !== sIdx)),
+                                          'Remove Set',
+                                          'danger'
+                                        );
+                                      }}
+                                      className="w-full py-2.5 min-h-[48px] flex items-center justify-center gap-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50 border border-rose-200 rounded-xl transition-colors cursor-pointer text-sm font-bold"
+                                      title="Remove Set"
+                                      aria-label={`Remove Set ${sIdx + 1}`}
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                      <span>Remove Set</span>
+                                    </button>
+                                  </div>
                                 )}
                               </div>
                             ))}
@@ -2290,14 +2550,14 @@ export default function App() {
                         </div>
                       </div>
 
-                      <div className="flex flex-col sm:flex-row justify-end gap-2 pt-1">
+                      <div className="flex flex-col sm:flex-row justify-end gap-2.5 pt-2">
                         <button
                           type="button"
                           onClick={() => {
                             setIsAddingWorkoutModal(false);
                             setEditingWorkoutId(null);
                           }}
-                          className="w-full sm:w-auto px-3 py-1.5 bg-white border border-slate-200 text-slate-600 font-bold text-xs rounded-xl cursor-pointer flex items-center justify-center text-center"
+                          className="w-full sm:w-auto px-4 py-2.5 min-h-[48px] bg-white border border-slate-200 text-slate-700 font-bold text-sm rounded-xl cursor-pointer flex items-center justify-center text-center"
                         >
                           Cancel
                         </button>
@@ -2305,7 +2565,7 @@ export default function App() {
                           type="button"
                           onClick={handleSaveWorkoutForm}
                           disabled={!workoutFormName.trim()}
-                          className="w-full sm:w-auto px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center text-center"
+                          className="w-full sm:w-auto px-5 py-2.5 min-h-[48px] bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-bold text-sm rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center text-center"
                         >
                           {editingWorkoutId ? 'Save Changes' : 'Add Exercise'}
                         </button>
@@ -2318,57 +2578,69 @@ export default function App() {
                       {currentLog.workouts.map((workout) => (
                         <div
                           key={workout.id}
-                          className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl hover:border-slate-300 transition-colors space-y-2"
+                          className="p-4 bg-slate-50 border border-slate-200 rounded-2xl hover:border-slate-300 transition-colors flex flex-col space-y-3 shadow-2xs"
                         >
-                          <div className="flex justify-between items-start">
-                            <div>
-                              <span className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-150">
-                                {workout.category}
-                              </span>
-                              <h4 className="text-xs font-bold text-slate-800 mt-1 leading-snug">{workout.name}</h4>
-                            </div>
-
-                            <div className="flex items-center gap-1">
-                              <button
-                                onClick={() => handleOpenEditWorkoutForm(workout)}
-                                className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer"
-                                title="Edit Exercise"
-                              >
-                                <Pencil className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => handleRemoveWorkout(workout.id)}
-                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-                                title="Delete Lift"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
+                          {/* Category Tag */}
+                          <div>
+                            <span className="text-sm uppercase font-black px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 inline-block">
+                              {workout.category}
+                            </span>
                           </div>
 
-                          {/* Sets summary */}
-                          <div className="grid grid-cols-3 gap-1 pt-1.5 border-t border-slate-200/50">
+                          {/* Exercise Title */}
+                          <div className="w-full">
+                            <h4 className="text-sm sm:text-base font-bold text-slate-900 leading-snug break-words">
+                              {workout.name}
+                            </h4>
+                          </div>
+
+                          {/* Sets Summary */}
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2 border-t border-slate-200/70">
                             {workout.sets.map((set, setIdx) => (
-                              <div key={set.id} className="text-center bg-white border border-slate-150 py-1.5 px-1 rounded-lg">
-                                <span className="text-[8px] text-slate-400 font-black uppercase font-mono block">Set {setIdx + 1}</span>
-                                <span className="text-[10px] font-bold font-mono text-slate-700">
-                                  {set.weight > 0 ? `${set.weight}${goals.weightUnit}` : 'BW'} × {set.reps}
+                              <div key={set.id || setIdx} className="text-center bg-white border border-slate-200 p-2 rounded-xl">
+                                <span className="text-sm text-slate-400 font-bold uppercase font-mono block">Set {setIdx + 1}</span>
+                                <span className="text-sm font-black font-mono text-slate-800 block mt-0.5">
+                                  {set.weight > 0 ? `${set.weight} ${goals.weightUnit}` : 'BW'} × {set.reps}
                                 </span>
                               </div>
                             ))}
+                          </div>
+
+                          {/* Action Buttons in Dedicated Bottom Row */}
+                          <div className="pt-2 border-t border-slate-200/70 flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditWorkoutForm(workout)}
+                              className="flex-1 sm:flex-initial px-4 py-2.5 min-h-[48px] flex items-center justify-center gap-2 rounded-xl text-slate-700 bg-white hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 shadow-2xs transition-colors cursor-pointer text-sm font-bold"
+                              title="Edit Exercise"
+                              aria-label={`Edit ${workout.name}`}
+                            >
+                              <Pencil className="w-4 h-4" />
+                              <span>Edit Exercise</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveWorkout(workout.id)}
+                              className="flex-1 sm:flex-initial px-4 py-2.5 min-h-[48px] flex items-center justify-center gap-2 rounded-xl text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 shadow-2xs transition-colors cursor-pointer text-sm font-bold"
+                              title="Delete Exercise"
+                              aria-label={`Delete ${workout.name}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                              <span>Delete Exercise</span>
+                            </button>
                           </div>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <div className="py-12 text-center text-slate-400">
-                      <Dumbbell className="w-8 h-8 mx-auto text-slate-300 mb-2" />
-                      <p className="text-xs font-bold">
+                    <div className="py-12 text-center text-slate-400 space-y-2">
+                      <Dumbbell className="w-8 h-8 mx-auto text-slate-300 mb-1" />
+                      <p className="text-sm font-bold text-slate-600">
                         {selectedDate === new Date().toISOString().split('T')[0]
                           ? 'No exercises recorded today.'
                           : `No exercises recorded for ${formatDateDDMMYYYY(selectedDate)}.`}
                       </p>
-                      <p className="text-[10px] text-slate-400 mt-1">
+                      <p className="text-sm text-slate-500 font-medium">
                         Click "+ Add Lift" above to manually log exercises for this date.
                       </p>
                     </div>
@@ -2692,7 +2964,7 @@ export default function App() {
                   <Sparkles className="w-5 h-5 text-indigo-500" />
                   AI Coach Advice Insights
                 </h3>
-                <p className="text-slate-400 text-xs mt-1">Generates hypertrophy and caloric timing summaries from your daily metrics</p>
+                <p className="text-slate-500 text-sm font-medium mt-1">Generates hypertrophy and caloric timing summaries from your daily metrics and uploaded photos</p>
               </div>
               <CoachInsights
                 insights={insights}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import L from 'leaflet';
 import {
   Play,
@@ -18,16 +18,20 @@ import {
   Pencil,
   X,
   Clock,
-  Route
+  Route,
+  Plus
 } from 'lucide-react';
 import { JogSession, JogPoint, UserGoals } from '../types';
 import { formatDateDDMMYYYY } from '../dateUtils';
 import { ConfirmModal } from './ConfirmModal';
 import {
   calculateHaversineDistanceKm,
+  calculateRouteDistanceKm,
   fetchPedestrianRoute,
   snapRouteToPedestrianStreets,
-  detectStraightLineGaps
+  detectStraightLineGaps,
+  cleanAndRecalculateGpsRoute,
+  hasRouteCirclingArtifacts
 } from '../utils/geoRouting';
 import { backgroundKeepAlive } from '../utils/backgroundKeepAlive';
 
@@ -41,6 +45,7 @@ interface JogTrackerProps {
   onSaveJog: (session: JogSession) => void;
   onUpdateJog?: (session: JogSession) => void;
   existingJogs?: JogSession[];
+  allLogs?: any[];
   onDeleteJog?: (jogId: string) => void;
 }
 
@@ -65,12 +70,38 @@ export default function JogTracker({
   onSaveJog,
   onUpdateJog,
   existingJogs = [],
+  allLogs = [],
   onDeleteJog
 }: JogTrackerProps) {
   // Activity mode: 'fast_walk' or 'jog', defaulted to saved preference or 'fast_walk'
   const [activityType, setActivityType] = useState<'fast_walk' | 'jog'>(() => {
     return (localStorage.getItem('preferred_cardio_activity') as 'fast_walk' | 'jog') || 'fast_walk';
   });
+
+  // Calculate unique active days where user completed a walk or jog
+  const { activeDaysCount, firstJogDateFormatted } = useMemo(() => {
+    const activeDates = new Set<string>();
+    if (Array.isArray(allLogs)) {
+      allLogs.forEach((log) => {
+        const hasDirectJogs = Array.isArray(log.jogs) && log.jogs.length > 0;
+        const hasCardioWorkout = Array.isArray(log.workouts) && log.workouts.some(
+          (w: any) => w.category === 'Cardio' || w.id?.startsWith('jog-') || w.name?.toLowerCase().includes('jog') || w.name?.toLowerCase().includes('walk')
+        );
+        if ((hasDirectJogs || hasCardioWorkout) && log.date) {
+          activeDates.add(log.date);
+        }
+      });
+    }
+    if (existingJogs && existingJogs.length > 0 && selectedDate) {
+      activeDates.add(selectedDate);
+    }
+    const sorted = Array.from(activeDates).sort();
+    const earliest = sorted.length > 0 ? sorted[0] : null;
+    return {
+      activeDaysCount: sorted.length,
+      firstJogDateFormatted: earliest ? formatDateDDMMYYYY(earliest) : null
+    };
+  }, [allLogs, existingJogs, selectedDate]);
 
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -84,12 +115,24 @@ export default function JogTracker({
   const [showSummaryModal, setShowSummaryModal] = useState(false);
   const [completedSession, setCompletedSession] = useState<JogSession | null>(null);
   const [showDiscardConfirmModal, setShowDiscardConfirmModal] = useState(false);
+  const [deleteJogConfirmId, setDeleteJogConfirmId] = useState<string | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
 
   // Manual duration editing in completion modal
   const [manualDurationMins, setManualDurationMins] = useState<number>(0);
   const [manualDurationSecs, setManualDurationSecs] = useState<number>(0);
   const [isAdjustingSummaryTime, setIsAdjustingSummaryTime] = useState<boolean>(false);
+
+  // Manual log walk/jog modal state
+  const [showManualLogModal, setShowManualLogModal] = useState<boolean>(false);
+  const [manualLogActivityType, setManualLogActivityType] = useState<'fast_walk' | 'jog'>('fast_walk');
+  const [manualLogDate, setManualLogDate] = useState<string>(selectedDate);
+  const [manualLogDistKm, setManualLogDistKm] = useState<string>('1.50');
+  const [manualLogMins, setManualLogMins] = useState<string>('20');
+  const [manualLogSecs, setManualLogSecs] = useState<string>('00');
+  const [manualLogCalories, setManualLogCalories] = useState<string>('');
+  const [manualLogTime, setManualLogTime] = useState<string>('12:00');
+  const [manualLogError, setManualLogError] = useState<string>('');
 
   // Edit past recorded session modal state
   const [editingJog, setEditingJog] = useState<JogSession | null>(null);
@@ -98,11 +141,9 @@ export default function JogTracker({
   const [editDistanceKm, setEditDistanceKm] = useState<number>(0);
   const [editActivityType, setEditActivityType] = useState<'fast_walk' | 'jog'>('fast_walk');
 
-  const [isSnappingStreets, setIsSnappingStreets] = useState(false);
-  const [snapNotification, setSnapNotification] = useState<string | null>(null);
   const gpsPollIntervalRef = useRef<any>(null);
-
-  const hasStraightGaps = detectStraightLineGaps(routePoints, 0.04);
+  const lastProcessedTimestampRef = useRef<number>(0);
+  const lastProcessedPointRef = useRef<{ lat: number; lng: number } | null>(null);
 
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -248,7 +289,7 @@ export default function JogTracker({
     }
   }, [selectedDate]);
 
-  // Handle visibility changes and window focus: immediately recalculate from wall-clock
+  // Handle visibility changes and window focus: immediately recalculate from wall-clock and wake GPS accurately
   useEffect(() => {
     const handleSyncOnForeground = () => {
       if (isRunning && !isPaused) {
@@ -256,6 +297,18 @@ export default function JogTracker({
         setDurationSeconds(exact);
         if (document.visibilityState === 'visible') {
           requestWakeLock();
+          // Prompt GPS to refresh accurately without accepting coarse fix
+          if ('geolocation' in navigator && !isSimulating) {
+            navigator.geolocation.getCurrentPosition(
+              (pos) => {
+                if (pos.coords.accuracy !== null && pos.coords.accuracy !== undefined && pos.coords.accuracy <= 25) {
+                  processIncomingLocation(pos.coords, pos.timestamp);
+                }
+              },
+              () => {},
+              { enableHighAccuracy: true, maximumAge: 0, timeout: 8000 }
+            );
+          }
         }
       }
     };
@@ -386,13 +439,43 @@ export default function JogTracker({
   }, [isRunning, isPaused]);
 
   // Core location processor shared by continuous watchPosition & periodic hardware wake polling
-  const processIncomingLocation = (coords: {
-    latitude: number;
-    longitude: number;
-    speed?: number | null;
-  }) => {
-    const { latitude, longitude, speed } = coords;
+  const processIncomingLocation = (
+    coords: {
+      latitude: number;
+      longitude: number;
+      speed?: number | null;
+      accuracy?: number | null;
+    },
+    sampleTimestamp?: number
+  ) => {
+    const { latitude, longitude, speed, accuracy } = coords;
     const now = Date.now();
+
+    // 1. Accuracy Filter: Reject coarse cell-tower / Wi-Fi triangulation (> 30 meters)
+    // High-precision GPS is 3m - 15m. Points > 30m cause ghost distance jumps upon unlocking the phone.
+    if (accuracy !== null && accuracy !== undefined && accuracy > 30) {
+      setCurrentLocation({ lat: latitude, lng: longitude });
+      return;
+    }
+
+    // 2. Stale cache rejection: Discard cached location older than 20 seconds
+    if (sampleTimestamp && sampleTimestamp < now - 20000 && lastProcessedTimestampRef.current > 0) {
+      return;
+    }
+
+    // 3. Duplicate debounce: Ignore incoming duplicate fixes within 1.2s if coordinates haven't moved meaningfully
+    if (lastProcessedPointRef.current && now - lastProcessedTimestampRef.current < 1200) {
+      const quickDelta = calculateHaversineDistanceKm(
+        lastProcessedPointRef.current.lat,
+        lastProcessedPointRef.current.lng,
+        latitude,
+        longitude
+      );
+      if (quickDelta < 0.003) {
+        return;
+      }
+    }
+
     const newPoint: JogPoint = {
       lat: latitude,
       lng: longitude,
@@ -428,73 +511,37 @@ export default function JogTracker({
           longitude
         );
 
-        // Filter out small jitter (< 1.5 meters)
-        if (deltaKm <= 0.0015) {
+        // Filter out small jitter (< 3.0 meters or within 50% accuracy margin) when stationary
+        const accuracyMarginKm = ((accuracy || 8) / 1000) * 0.5;
+        const minStepKm = Math.max(0.003, accuracyMarginKm);
+        if (deltaKm < minStepKm) {
+          return prevPoints;
+        }
+
+        const timeDeltaSec = Math.max(0.5, (now - lastPoint.timestamp) / 1000);
+        const impliedSpeedKmH = deltaKm / (timeDeltaSec / 3600);
+
+        // Anomaly protection: filter impossible human speeds (walking > 22 km/h, jogging > 32 km/h)
+        const maxHumanSpeedKmH = activityType === 'fast_walk' ? 22 : 32;
+        if (impliedSpeedKmH > maxHumanSpeedKmH) {
           return prevPoints;
         }
 
         if (speed === null || speed === undefined || speed < 0) {
-          const timeDeltaSec = Math.max(1, (now - lastPoint.timestamp) / 1000);
-          const calcSpeed = deltaKm / (timeDeltaSec / 3600);
-          if (calcSpeed < 45) {
-            setCurrentSpeedKmH(calcSpeed);
+          if (impliedSpeedKmH < 25) {
+            setCurrentSpeedKmH(impliedSpeedKmH);
           }
         }
 
-        // If large gap (>= 40 meters, e.g. phone was locked in pocket or GPS signal paused)
-        if (deltaKm >= 0.04) {
-          const immediateUpdated = [...prevPoints, newPoint];
-          setDistanceKm((prevDist) => {
-            const newDist = prevDist + deltaKm;
-            syncToLocalStorage(true, false, newDist, immediateUpdated);
-            return newDist;
-          });
-
-          if (polylineRef.current) {
-            polylineRef.current.setLatLngs(immediateUpdated.map((p) => [p.lat, p.lng]));
-          }
-
-          // Asynchronously query pedestrian street route to snap to actual sidewalks/roads
-          fetchPedestrianRoute(lastPoint, newPoint)
-            .then((route) => {
-              if (route && route.coordinates.length > 1) {
-                const addedDistanceKm = Math.max(0, route.distanceKm - deltaKm);
-                const intermediate = route.coordinates.slice(1);
-                const timeSpan = Math.max(1000, newPoint.timestamp - lastPoint.timestamp);
-                const stepTime = timeSpan / intermediate.length;
-                const newIntermediatePoints: JogPoint[] = intermediate.map((coord, idx) => ({
-                  lat: coord.lat,
-                  lng: coord.lng,
-                  timestamp: Math.round(lastPoint.timestamp + stepTime * (idx + 1))
-                }));
-
-                setRoutePoints((currentPts) => {
-                  const base = currentPts.slice(0, currentPts.length - 1);
-                  const routed = [...base, ...newIntermediatePoints];
-                  if (polylineRef.current) {
-                    polylineRef.current.setLatLngs(routed.map((p) => [p.lat, p.lng]));
-                  }
-                  setDistanceKm((prevDist) => {
-                    const updatedDist = prevDist + addedDistanceKm;
-                    syncToLocalStorage(true, false, updatedDist, routed);
-                    return updatedDist;
-                  });
-                  return routed;
-                });
-              }
-            })
-            .catch(() => {});
-
-          return immediateUpdated;
-        }
-
-        // Normal continuous step (< 40m)
+        // Record real, continuous GPS waypoint directly with mathematically derived distance
         const updated = [...prevPoints, newPoint];
-        setDistanceKm((prevDist) => {
-          const newDist = prevDist + deltaKm;
-          syncToLocalStorage(true, false, newDist, updated);
-          return newDist;
-        });
+        const trueDistance = Number(calculateRouteDistanceKm(updated).toFixed(3));
+
+        setDistanceKm(trueDistance);
+        syncToLocalStorage(true, false, trueDistance, updated);
+
+        lastProcessedTimestampRef.current = now;
+        lastProcessedPointRef.current = { lat: latitude, lng: longitude };
 
         if (polylineRef.current) {
           polylineRef.current.setLatLngs(updated.map((p) => [p.lat, p.lng]));
@@ -505,7 +552,10 @@ export default function JogTracker({
         if (polylineRef.current) {
           polylineRef.current.setLatLngs(updated.map((p) => [p.lat, p.lng]));
         }
-        syncToLocalStorage(true, false, distanceKm, updated);
+        setDistanceKm(0);
+        syncToLocalStorage(true, false, 0, updated);
+        lastProcessedTimestampRef.current = now;
+        lastProcessedPointRef.current = { lat: latitude, lng: longitude };
         return updated;
       }
     });
@@ -518,7 +568,7 @@ export default function JogTracker({
         // Continuous watch
         watchIdRef.current = navigator.geolocation.watchPosition(
           (position) => {
-            processIncomingLocation(position.coords);
+            processIncomingLocation(position.coords, position.timestamp);
           },
           (error) => {
             console.warn('GPS watch error:', error.message);
@@ -526,16 +576,19 @@ export default function JogTracker({
           { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 }
         );
 
-        // Active periodic hardware polling (every 20s) to keep GPS hardware awake and log steady waypoints
+        // Active hardware wake polling (every 20s): ONLY executes if watchPosition has been idle > 18s
         gpsPollIntervalRef.current = setInterval(() => {
+          if (Date.now() - lastProcessedTimestampRef.current < 18000) {
+            return;
+          }
           navigator.geolocation.getCurrentPosition(
             (position) => {
-              processIncomingLocation(position.coords);
+              processIncomingLocation(position.coords, position.timestamp);
             },
             (error) => {
               console.warn('Periodic GPS ping error:', error.message);
             },
-            { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+            { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 }
           );
         }, 20000);
       }
@@ -601,14 +654,10 @@ export default function JogTracker({
 
         setRoutePoints((prev) => {
           if (prev.length > 0) {
-            const last = prev[prev.length - 1];
-            const delta = calculateHaversineDistanceKm(last.lat, last.lng, currentLat, currentLng);
             const updated = [...prev, newPoint];
-            setDistanceKm((d) => {
-              const newDist = d + delta;
-              syncToLocalStorage(true, false, newDist, updated);
-              return newDist;
-            });
+            const trueDist = Number(calculateRouteDistanceKm(updated).toFixed(3));
+            setDistanceKm(trueDist);
+            syncToLocalStorage(true, false, trueDist, updated);
             if (polylineRef.current) {
               polylineRef.current.setLatLngs(updated.map((p) => [p.lat, p.lng]));
             }
@@ -618,7 +667,8 @@ export default function JogTracker({
           if (polylineRef.current) {
             polylineRef.current.setLatLngs(updated.map((p) => [p.lat, p.lng]));
           }
-          syncToLocalStorage(true, false, distanceKm, updated);
+          setDistanceKm(0);
+          syncToLocalStorage(true, false, 0, updated);
           return updated;
         });
       }, 1000);
@@ -704,8 +754,8 @@ export default function JogTracker({
     }
   };
 
-  // Stop Session Handler
-  const handleStopActivity = () => {
+  // Stop Session Handler - Automatically cleans and aligns route to sidewalks with zero user friction
+  const handleStopActivity = async () => {
     const finalSeconds = getExactElapsedSeconds();
     setIsRunning(false);
     setIsPaused(false);
@@ -735,7 +785,29 @@ export default function JogTracker({
     backgroundKeepAlive.stop();
     syncToLocalStorage(false, false, 0, []);
 
-    const finalDistance = Number(distanceKm.toFixed(3));
+    // Automatically optimize route: clean jitter and auto-align straight gaps
+    let processedRoute = routePoints;
+    let processedDistance = distanceKm;
+
+    if (routePoints.length >= 2) {
+      const cleanResult = cleanAndRecalculateGpsRoute(routePoints);
+      processedRoute = cleanResult.cleanedPoints;
+      processedDistance = cleanResult.cleanedDistanceKm;
+
+      if (detectStraightLineGaps(processedRoute, 0.20)) {
+        try {
+          const snapResult = await snapRouteToPedestrianStreets(processedRoute, 0.20);
+          if (snapResult.snappedSegmentsCount > 0 && snapResult.snappedPoints.length >= processedRoute.length) {
+            processedRoute = snapResult.snappedPoints;
+            processedDistance = snapResult.totalDistanceKm;
+          }
+        } catch (err) {
+          console.warn('Auto-snap on finish skipped:', err);
+        }
+      }
+    }
+
+    const finalDistance = Number(processedDistance.toFixed(3));
     const finalDuration = Math.max(1, finalSeconds);
     const finalPace = finalDistance > 0.05 ? (finalDuration / 60) / finalDistance : 0;
     const finalCals = calculateCalories(finalDistance, finalDuration, activityType);
@@ -750,43 +822,79 @@ export default function JogTracker({
       distanceKm: finalDistance,
       caloriesBurned: finalCals,
       avgPaceMinPerKm: Number(finalPace.toFixed(2)),
-      route: routePoints,
+      route: processedRoute,
       completed: true
     };
 
     setCompletedSession(finalSession);
+    setDistanceKm(finalDistance);
+    setRoutePoints(processedRoute);
+    if (polylineRef.current) {
+      polylineRef.current.setLatLngs(processedRoute.map((p) => [p.lat, p.lng]));
+    }
     setManualDurationMins(Math.floor(finalDuration / 60));
     setManualDurationSecs(finalDuration % 60);
     setIsAdjustingSummaryTime(false);
     setShowSummaryModal(true);
   };
 
-  // Reconstruct route and snap all straight-line segments to real pedestrian sidewalks and streets
-  const handleSnapRouteToStreets = async () => {
-    if (isSnappingStreets || routePoints.length < 2) return;
-    setIsSnappingStreets(true);
-    try {
-      const result = await snapRouteToPedestrianStreets(routePoints);
-      if (result.snappedSegmentsCount > 0) {
-        setRoutePoints(result.snappedPoints);
-        setDistanceKm(result.totalDistanceKm);
-        if (polylineRef.current) {
-          polylineRef.current.setLatLngs(result.snappedPoints.map((p) => [p.lat, p.lng]));
-        }
-        syncToLocalStorage(isRunning, isPaused, result.totalDistanceKm, result.snappedPoints);
-        setSnapNotification(
-          `Route snapped to sidewalks: +${result.distanceDifferenceKm.toFixed(2)} km added (${result.totalDistanceKm.toFixed(2)} km total)`
-        );
-        setTimeout(() => setSnapNotification(null), 6000);
-      } else {
-        setSnapNotification('Route already follows streets accurately');
-        setTimeout(() => setSnapNotification(null), 4000);
-      }
-    } catch (err) {
-      console.warn('Snap route failed:', err);
-    } finally {
-      setIsSnappingStreets(false);
+  // Open Manual Log Modal
+  const handleOpenManualLog = () => {
+    setManualLogActivityType(activityType);
+    setManualLogDate(selectedDate);
+    setManualLogDistKm('1.50');
+    setManualLogMins('20');
+    setManualLogSecs('00');
+    const estimatedCals = calculateCalories(1.5, 20 * 60, activityType);
+    setManualLogCalories(estimatedCals.toString());
+    const now = new Date();
+    const hours = now.getHours().toString().padStart(2, '0');
+    const mins = now.getMinutes().toString().padStart(2, '0');
+    setManualLogTime(`${hours}:${mins}`);
+    setManualLogError('');
+    setShowManualLogModal(true);
+  };
+
+  // Save Manually Logged Session
+  const handleSaveManualLog = () => {
+    const distNum = parseFloat(manualLogDistKm);
+    const minsNum = parseInt(manualLogMins) || 0;
+    const secsNum = parseInt(manualLogSecs) || 0;
+    const totalSecs = minsNum * 60 + secsNum;
+
+    if (isNaN(distNum) || distNum <= 0) {
+      setManualLogError('Please enter a valid distance greater than 0 km.');
+      return;
     }
+    if (totalSecs <= 0) {
+      setManualLogError('Please enter a duration greater than 0.');
+      return;
+    }
+
+    const calculatedCals = calculateCalories(distNum, totalSecs, manualLogActivityType);
+    const finalCals = manualLogCalories.trim() !== '' && !isNaN(parseInt(manualLogCalories))
+      ? parseInt(manualLogCalories)
+      : calculatedCals;
+    const paceMinKm = distNum > 0.05 ? (totalSecs / 60) / distNum : 0;
+
+    const sessionDate = manualLogDate || selectedDate;
+    const isoStart = new Date(`${sessionDate}T${manualLogTime || '12:00'}:00`).toISOString();
+
+    const manualSession: JogSession = {
+      id: `manual-cardio-${Date.now()}`,
+      date: sessionDate,
+      activityType: manualLogActivityType,
+      startTime: isoStart,
+      endTime: isoStart,
+      durationSeconds: totalSecs,
+      distanceKm: Number(distNum.toFixed(3)),
+      caloriesBurned: Math.max(1, finalCals),
+      avgPaceMinPerKm: Number(paceMinKm.toFixed(2)),
+      completed: true
+    };
+
+    onSaveJog(manualSession);
+    setShowManualLogModal(false);
   };
 
   // Save Session & Return
@@ -862,13 +970,19 @@ export default function JogTracker({
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
                 {activityType === 'fast_walk' ? 'Outdoor Walk & GPS' : 'Outdoor Jog & GPS'}
               </h2>
               <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
                 {formatDateDDMMYYYY(selectedDate)}
               </span>
+              <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl" title="Total unique days where you completed a walk or jog">
+                <Footprints className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span className="text-xs font-black text-emerald-900">
+                  {activeDaysCount} Active Days
+                </span>
+              </div>
             </div>
             <p className="text-xs text-slate-500 font-medium mt-0.5">
               Live distance tracking, GPS route mapping, and wall-clock calorie calculation.
@@ -935,6 +1049,18 @@ export default function JogTracker({
             {isSimulating ? 'Simulating' : 'Simulate'}
           </button>
 
+          {/* Manual Entry Button */}
+          <button
+            type="button"
+            onClick={handleOpenManualLog}
+            className="px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer flex items-center justify-center text-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 shadow-2xs min-h-[44px]"
+            id="open-manual-log-btn"
+            title="Log a completed walk or jog manually"
+          >
+            <Plus className="w-4 h-4 text-indigo-600" />
+            <span>Log Manually</span>
+          </button>
+
           {/* GPS Signal Status Badge */}
           <div
             className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold ${
@@ -966,6 +1092,37 @@ export default function JogTracker({
                 : gpsStatus === 'acquiring'
                 ? 'Acquiring GPS'
                 : 'GPS Offline'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Active Walk & Jog Days Counter (Matching purple wrap-content style as workout session) */}
+      <div
+        className="w-full bg-linear-to-r from-indigo-500 to-violet-600 rounded-3xl p-6 sm:p-8 text-white shadow-lg shadow-indigo-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 h-auto"
+        id="jog-active-days-counter-hero"
+      >
+        <div className="space-y-2">
+          <span className="text-sm font-bold uppercase tracking-wider bg-white/20 text-white px-3.5 py-1 rounded-full border border-white/10 inline-block">
+            Walk & Jog Consistency
+          </span>
+          <h3 className="text-3xl font-black tracking-tight">
+            Day {activeDaysCount} Active
+          </h3>
+          <p className="text-indigo-100 text-sm font-semibold">
+            {firstJogDateFormatted
+              ? `Counted from your 1st walk or jog on ${firstJogDateFormatted} to now`
+              : 'Sums every unique calendar day you completed an outdoor walk or jog'}
+          </p>
+        </div>
+
+        <div className="shrink-0 bg-white/10 border border-white/15 px-4.5 py-3 rounded-2xl">
+          <div className="text-left md:text-right">
+            <span className="text-sm font-bold text-indigo-100 uppercase tracking-wider block mb-1">
+              1st Walk or Jog
+            </span>
+            <span className="font-mono text-sm font-black text-white bg-slate-950/30 px-3.5 py-1.5 rounded-xl inline-block">
+              {firstJogDateFormatted || 'No cardio logged yet'}
             </span>
           </div>
         </div>
@@ -1069,64 +1226,17 @@ export default function JogTracker({
             )}
           </div>
           <div className="flex items-center gap-2">
-            {hasStraightGaps && (
-              <button
-                type="button"
-                onClick={handleSnapRouteToStreets}
-                disabled={isSnappingStreets}
-                className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-sm font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
-                title="Recalculate path along street sidewalks"
-              >
-                <Route className={`w-4 h-4 text-indigo-600 ${isSnappingStreets ? 'animate-spin' : ''}`} />
-                {isSnappingStreets ? 'Snapping...' : 'Snap to Streets'}
-              </button>
-            )}
             <button
               type="button"
               onClick={handleRecenter}
-              className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
+              className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs min-h-[44px]"
               title="Center map on current GPS location"
             >
               <Navigation className="w-4 h-4 text-indigo-600" />
-              Recenter
+              <span>Recenter</span>
             </button>
           </div>
         </div>
-
-        {/* Snap Notification Toast */}
-        {snapNotification && (
-          <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-950 rounded-2xl text-sm font-semibold flex items-center justify-between gap-2 shadow-xs">
-            <div className="flex items-center gap-2.5">
-              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-              <span>{snapNotification}</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setSnapNotification(null)}
-              className="text-emerald-700 hover:text-emerald-950 font-bold p-1 cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        )}
-
-        {/* Gap Warning Banner when a straight segment exists */}
-        {hasStraightGaps && !snapNotification && (
-          <div className="p-3.5 bg-sky-50 border border-sky-200 text-sky-950 rounded-2xl text-sm font-medium flex flex-wrap items-center justify-between gap-3 shadow-xs">
-            <div className="flex items-center gap-2.5">
-              <Route className="w-5 h-5 text-sky-600 shrink-0" />
-              <span>Straight line gap detected. Snap route to sidewalks to calculate true street distance.</span>
-            </div>
-            <button
-              type="button"
-              onClick={handleSnapRouteToStreets}
-              disabled={isSnappingStreets}
-              className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-xl font-bold text-sm shrink-0 cursor-pointer shadow-xs transition-colors"
-            >
-              {isSnappingStreets ? 'Snapping...' : 'Snap Now'}
-            </button>
-          </div>
-        )}
 
         {/* Map Container Element */}
         <div className="relative w-full h-[380px] sm:h-[460px] rounded-2xl overflow-hidden border border-slate-200 z-0">
@@ -1158,10 +1268,11 @@ export default function JogTracker({
               </span>
             ) : existingJogs.length > 0 ? (
               <span className="text-slate-600 font-semibold">
-                You have {existingJogs.length} logged workout for {formatDateDDMMYYYY(selectedDate)}.
+                You have {existingJogs.length} logged workout for {formatDateDDMMYYYY(selectedDate)} &bull; {activeDaysCount} Total Active Days
               </span>
             ) : (
-              <span>
+              <span className="text-slate-600 font-medium">
+                {activeDaysCount > 0 ? `${activeDaysCount} active days recorded &bull; ` : ''}
                 Press <strong>{activityType === 'fast_walk' ? 'Start Fast Walk' : 'Start Jog'}</strong> to begin tracking
               </span>
             )}
@@ -1214,72 +1325,85 @@ export default function JogTracker({
       </div>
 
       {/* Previous Recorded Sessions for this Date */}
-      {existingJogs.length > 0 && (
+      {existingJogs.length > 0 ? (
         <div className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 shadow-xs space-y-4">
-          <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+          <div className="flex flex-wrap justify-between items-center gap-2 border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2">
               <Footprints className="w-4 h-4 text-indigo-600" />
               <h3 className="text-sm font-black text-slate-800">
                 Logged Cardio for {formatDateDDMMYYYY(selectedDate)}
               </h3>
             </div>
-            <span className="text-xs font-bold text-slate-500 font-mono">
-              {existingJogs.length} recorded
-            </span>
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={handleOpenManualLog}
+                className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 min-h-[38px]"
+                id="header-manual-log-btn"
+                title="Manually log another walk or jog for this date"
+              >
+                <Plus className="w-3.5 h-3.5 text-indigo-600" />
+                <span>+ Log Walk or Jog</span>
+              </button>
+              <span className="text-sm font-bold text-slate-500 font-mono">
+                {activeDaysCount} Active Days &bull; {existingJogs.length} Logged Today
+              </span>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {existingJogs.map((jog, idx) => (
               <div
                 key={jog.id || idx}
-                className="p-4 rounded-2xl border border-slate-200/80 bg-slate-50 flex items-center justify-between gap-3"
+                className="p-4 rounded-2xl border border-slate-200/80 bg-slate-50 flex flex-col space-y-3 shadow-2xs"
               >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-black shrink-0">
-                    <Footprints className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-black text-slate-800 font-mono">
-                        {jog.distanceKm.toFixed(2)} km
-                      </span>
-                      <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
-                        {jog.activityType === 'fast_walk' ? 'Fast Walk' : 'Outdoor Jog'}
-                      </span>
-                    </div>
-                    <div className="text-xs font-medium text-slate-500 flex items-center gap-2 mt-1">
-                      <span className="font-mono font-semibold">{formatDuration(jog.durationSeconds)}</span>
-                      <span>&bull;</span>
-                      <span className="text-amber-600 font-bold">{jog.caloriesBurned} kcal</span>
-                      {jog.avgPaceMinPerKm ? (
-                        <>
-                          <span>&bull;</span>
-                          <span className="font-mono">{formatPace(jog.avgPaceMinPerKm)}/km</span>
-                        </>
-                      ) : null}
-                    </div>
-                  </div>
+                {/* Activity Tag */}
+                <div>
+                  <span className="text-sm font-bold px-3 py-1 rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200 inline-block">
+                    {jog.activityType === 'fast_walk' ? 'Fast Walk' : 'Outdoor Jog'}
+                  </span>
                 </div>
 
-                <div className="flex items-center gap-1">
+                {/* Distance Title */}
+                <div>
+                  <h4 className="text-base font-black text-slate-900 font-mono">
+                    {jog.distanceKm.toFixed(2)} km
+                  </h4>
+                </div>
+
+                {/* Duration, calories, pace */}
+                <div className="text-sm font-medium text-slate-600 flex flex-wrap items-center gap-2">
+                  <span className="font-mono bg-white px-2.5 py-1 rounded-lg border border-slate-200 font-bold">{formatDuration(jog.durationSeconds)}</span>
+                  <span className="text-amber-800 font-bold bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">{jog.caloriesBurned} kcal</span>
+                  {jog.avgPaceMinPerKm ? (
+                    <span className="font-mono bg-white px-2.5 py-1 rounded-lg border border-slate-200 text-slate-700 font-bold">{formatPace(jog.avgPaceMinPerKm)}/km</span>
+                  ) : null}
+                </div>
+
+                {/* Actions in dedicated bottom row */}
+                <div className="pt-2 border-t border-slate-200/70 flex flex-wrap items-center gap-2">
                   {onUpdateJog && (
                     <button
                       type="button"
                       onClick={() => handleStartEditJog(jog)}
-                      className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors cursor-pointer"
+                      className="flex-1 min-h-[48px] px-4 py-2.5 flex items-center justify-center gap-2 rounded-xl text-slate-700 bg-white hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 shadow-2xs transition-colors cursor-pointer text-sm font-bold"
                       title="Edit duration or details"
+                      aria-label="Edit session"
                     >
                       <Pencil className="w-4 h-4" />
+                      <span>Edit</span>
                     </button>
                   )}
                   {onDeleteJog && (
                     <button
                       type="button"
-                      onClick={() => onDeleteJog(jog.id)}
-                      className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
+                      onClick={() => setDeleteJogConfirmId(jog.id)}
+                      className="flex-1 min-h-[48px] px-4 py-2.5 flex items-center justify-center gap-2 rounded-xl text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 shadow-2xs transition-colors cursor-pointer text-sm font-bold"
                       title="Delete session"
+                      aria-label="Delete session"
                     >
                       <Trash2 className="w-4 h-4" />
+                      <span>Delete</span>
                     </button>
                   )}
                 </div>
@@ -1287,232 +1411,450 @@ export default function JogTracker({
             ))}
           </div>
         </div>
+      ) : (
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-7 text-center shadow-xs space-y-3">
+          <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto">
+            <Footprints className="w-6 h-6" />
+          </div>
+          <div className="max-w-md mx-auto space-y-1">
+            <h3 className="text-base font-black text-slate-800">No Cardio Logged for This Date</h3>
+            <p className="text-xs text-slate-500 font-medium">
+              Start live GPS tracking above, or record a past walk or jog manually.
+            </p>
+          </div>
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={handleOpenManualLog}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer min-h-[44px]"
+            >
+              <Plus className="w-4 h-4 text-indigo-600" />
+              <span>Log Past Walk or Jog Manually</span>
+            </button>
+          </div>
+        </div>
       )}
 
-      {/* Completion Summary Modal */}
+      {/* Completion Summary Modal - Compact, Non-Cluttered & Guaranteed Scrollable with Sticky Footer */}
       {showSummaryModal && completedSession && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
-          <div className="bg-white border border-slate-200 rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl space-y-6 animate-scaleIn">
-            <div className="text-center space-y-2">
-              <div className="w-16 h-16 bg-emerald-100 text-emerald-700 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
-                <CheckCircle2 className="w-8 h-8" />
-              </div>
-              <h3 className="text-2xl font-black text-slate-900">
-                {completedSession.activityType === 'fast_walk' ? 'Walk Finished' : 'Jog Finished'}
-              </h3>
-              <p className="text-xs font-semibold text-slate-500">
-                Cardio workout summary for {formatDateDDMMYYYY(selectedDate)}
-              </p>
-            </div>
-
-            {/* Snap route to streets banner if gaps detected */}
-            {completedSession.route && detectStraightLineGaps(completedSession.route, 0.04) && (
-              <div className="p-3.5 bg-sky-50 border border-sky-200 text-sky-950 rounded-2xl text-sm font-medium flex flex-wrap items-center justify-between gap-2 shadow-xs">
-                <div className="flex items-center gap-2">
-                  <Route className="w-4 h-4 text-sky-600 shrink-0" />
-                  <span>Straight line gap detected. Snap path to sidewalks?</span>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-3xl max-w-md w-full shadow-2xl flex flex-col max-h-[90dvh] overflow-hidden my-auto animate-scaleIn">
+            {/* Header */}
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/70">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-emerald-100 text-emerald-700 rounded-xl flex items-center justify-center font-black shrink-0 shadow-inner">
+                  <CheckCircle2 className="w-6 h-6" />
                 </div>
-                <button
-                  type="button"
-                  disabled={isSnappingStreets}
-                  onClick={async () => {
-                    if (!completedSession.route) return;
-                    setIsSnappingStreets(true);
-                    try {
-                      const res = await snapRouteToPedestrianStreets(completedSession.route);
-                      const newDist = res.totalDistanceKm;
-                      const newPace =
-                        newDist > 0.05
-                          ? completedSession.durationSeconds / 60 / newDist
-                          : 0;
-                      const newCals = calculateCalories(
-                        newDist,
-                        completedSession.durationSeconds,
-                        completedSession.activityType || 'fast_walk'
-                      );
-                      setCompletedSession({
-                        ...completedSession,
-                        distanceKm: newDist,
-                        avgPaceMinPerKm: Number(newPace.toFixed(2)),
-                        caloriesBurned: newCals,
-                        route: res.snappedPoints
-                      });
-                      setDistanceKm(newDist);
-                      setRoutePoints(res.snappedPoints);
-                      if (polylineRef.current) {
-                        polylineRef.current.setLatLngs(res.snappedPoints.map((p) => [p.lat, p.lng]));
-                      }
-                    } catch (e) {
-                      console.warn('Modal snap error:', e);
-                    } finally {
-                      setIsSnappingStreets(false);
-                    }
-                  }}
-                  className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-sm font-bold shrink-0 cursor-pointer shadow-xs transition-colors"
-                >
-                  {isSnappingStreets ? 'Snapping...' : 'Snap to Streets'}
-                </button>
-              </div>
-            )}
-
-            {/* Summary Cards Grid */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-4 bg-indigo-50/70 border border-indigo-150 rounded-2xl text-center space-y-0.5">
-                <span className="text-xs font-black uppercase text-indigo-900 tracking-wider">
-                  Total Distance
-                </span>
-                <div className="text-2xl font-black text-indigo-950 font-mono">
-                  {completedSession.distanceKm.toFixed(2)} <span className="text-xs">KM</span>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 leading-tight">
+                    {completedSession.activityType === 'fast_walk' ? 'Walk Finished' : 'Jog Finished'}
+                  </h3>
+                  <p className="text-xs font-semibold text-slate-500">
+                    Cardio session for {formatDateDDMMYYYY(selectedDate)}
+                  </p>
                 </div>
-                <span className="text-xs text-indigo-600 font-medium">
-                  {(completedSession.distanceKm * 0.621371).toFixed(2)} miles
-                </span>
               </div>
-
-              <div className="p-4 bg-amber-50/70 border border-amber-150 rounded-2xl text-center space-y-0.5">
-                <span className="text-xs font-black uppercase text-amber-900 tracking-wider">
-                  Calories Burnt
-                </span>
-                <div className="text-2xl font-black text-amber-950 font-mono">
-                  {completedSession.caloriesBurned} <span className="text-xs">kcal</span>
-                </div>
-                <span className="text-xs text-amber-700 font-medium">
-                  Energy expenditure
-                </span>
-              </div>
-
-              <div className="p-4 bg-sky-50/70 border border-sky-150 rounded-2xl text-center space-y-1">
-                <span className="text-xs font-black uppercase text-sky-900 tracking-wider">
-                  Total Duration
-                </span>
-                {!isAdjustingSummaryTime ? (
-                  <>
-                    <div className="text-2xl font-black text-sky-950 font-mono">
-                      {formatDuration(completedSession.durationSeconds)}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setIsAdjustingSummaryTime(true)}
-                      className="text-xs font-bold text-sky-700 hover:text-sky-950 underline cursor-pointer"
-                    >
-                      Adjust Time
-                    </button>
-                  </>
-                ) : (
-                  <div className="space-y-2 pt-1">
-                    <div className="flex items-center justify-center gap-1.5 font-mono">
-                      <div className="flex flex-col items-center">
-                        <input
-                          type="number"
-                          min="0"
-                          max="300"
-                          value={manualDurationMins}
-                          onChange={(e) => {
-                            const mins = Math.max(0, parseInt(e.target.value) || 0);
-                            setManualDurationMins(mins);
-                            const newTotalSecs = mins * 60 + manualDurationSecs;
-                            const newPace =
-                              completedSession.distanceKm > 0.05
-                                ? (newTotalSecs / 60) / completedSession.distanceKm
-                                : 0;
-                            const newCals = calculateCalories(
-                              completedSession.distanceKm,
-                              newTotalSecs,
-                              completedSession.activityType || 'fast_walk'
-                            );
-                            setCompletedSession((prev) =>
-                              prev
-                                ? {
-                                    ...prev,
-                                    durationSeconds: Math.max(1, newTotalSecs),
-                                    avgPaceMinPerKm: Number(newPace.toFixed(2)),
-                                    caloriesBurned: newCals
-                                  }
-                                : null
-                            );
-                          }}
-                          className="w-16 px-2 py-1 bg-white border border-sky-300 rounded-lg text-center font-bold text-sm text-slate-800"
-                        />
-                        <span className="text-xs text-sky-700 font-semibold mt-0.5">mins</span>
-                      </div>
-                      <span className="font-bold text-sky-900">:</span>
-                      <div className="flex flex-col items-center">
-                        <input
-                          type="number"
-                          min="0"
-                          max="59"
-                          value={manualDurationSecs}
-                          onChange={(e) => {
-                            const secs = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
-                            setManualDurationSecs(secs);
-                            const newTotalSecs = manualDurationMins * 60 + secs;
-                            const newPace =
-                              completedSession.distanceKm > 0.05
-                                ? (newTotalSecs / 60) / completedSession.distanceKm
-                                : 0;
-                            const newCals = calculateCalories(
-                              completedSession.distanceKm,
-                              newTotalSecs,
-                              completedSession.activityType || 'fast_walk'
-                            );
-                            setCompletedSession((prev) =>
-                              prev
-                                ? {
-                                    ...prev,
-                                    durationSeconds: Math.max(1, newTotalSecs),
-                                    avgPaceMinPerKm: Number(newPace.toFixed(2)),
-                                    caloriesBurned: newCals
-                                  }
-                                : null
-                            );
-                          }}
-                          className="w-16 px-2 py-1 bg-white border border-sky-300 rounded-lg text-center font-bold text-sm text-slate-800"
-                        />
-                        <span className="text-xs text-sky-700 font-semibold mt-0.5">secs</span>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setIsAdjustingSummaryTime(false)}
-                      className="text-xs font-bold bg-sky-100 hover:bg-sky-200 text-sky-800 px-2.5 py-1 rounded cursor-pointer"
-                    >
-                      Done
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <div className="p-4 bg-emerald-50/70 border border-emerald-150 rounded-2xl text-center space-y-0.5">
-                <span className="text-xs font-black uppercase text-emerald-900 tracking-wider">
-                  Average Pace
-                </span>
-                <div className="text-2xl font-black text-emerald-950 font-mono">
-                  {formatPace(completedSession.avgPaceMinPerKm || 0)}
-                </div>
-                <span className="text-xs text-emerald-700 font-medium">
-                  min per kilometer
-                </span>
-              </div>
-            </div>
-
-            {/* Modal Actions */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 w-full">
               <button
                 type="button"
                 onClick={() => setShowDiscardConfirmModal(true)}
-                className="w-full py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold rounded-xl transition-colors cursor-pointer flex items-center justify-center text-center"
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer"
+                aria-label="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Scrollable Body */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+              {/* Subtle Route Optimization Confirmation */}
+              {completedSession.route && completedSession.route.length > 0 && (
+                <div className="p-3 bg-emerald-50 border border-emerald-150 rounded-xl flex items-center gap-2.5 text-xs font-semibold text-emerald-900">
+                  <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Route smoothed & snapped to walkways automatically</span>
+                </div>
+              )}
+
+              {/* Summary Metric Cards Grid */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3.5 bg-indigo-50/70 border border-indigo-100 rounded-2xl text-center space-y-0.5">
+                  <span className="text-xs font-black uppercase text-indigo-900 tracking-wider">
+                    Total Distance
+                  </span>
+                  <div className="text-2xl font-black text-indigo-950 font-mono">
+                    {completedSession.distanceKm.toFixed(2)} <span className="text-xs">KM</span>
+                  </div>
+                  <span className="text-xs text-indigo-600 font-semibold">
+                    {(completedSession.distanceKm * 0.621371).toFixed(2)} miles
+                  </span>
+                </div>
+
+                <div className="p-3.5 bg-amber-50/70 border border-amber-100 rounded-2xl text-center space-y-0.5">
+                  <span className="text-xs font-black uppercase text-amber-900 tracking-wider">
+                    Calories Burnt
+                  </span>
+                  <div className="text-2xl font-black text-amber-950 font-mono">
+                    {completedSession.caloriesBurned} <span className="text-xs">kcal</span>
+                  </div>
+                  <span className="text-xs text-amber-700 font-semibold">
+                    Energy expenditure
+                  </span>
+                </div>
+
+                <div className="p-3.5 bg-sky-50/70 border border-sky-100 rounded-2xl text-center space-y-1">
+                  <span className="text-xs font-black uppercase text-sky-900 tracking-wider">
+                    Total Duration
+                  </span>
+                  {!isAdjustingSummaryTime ? (
+                    <>
+                      <div className="text-2xl font-black text-sky-950 font-mono">
+                        {formatDuration(completedSession.durationSeconds)}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsAdjustingSummaryTime(true)}
+                        className="text-xs font-bold text-sky-700 hover:text-sky-950 underline cursor-pointer"
+                      >
+                        Adjust Time
+                      </button>
+                    </>
+                  ) : (
+                    <div className="space-y-2 pt-1">
+                      <div className="flex items-center justify-center gap-1 font-mono">
+                        <div className="flex flex-col items-center">
+                          <input
+                            type="number"
+                            min="0"
+                            max="300"
+                            value={manualDurationMins}
+                            onChange={(e) => {
+                              const mins = Math.max(0, parseInt(e.target.value) || 0);
+                              setManualDurationMins(mins);
+                              const newTotalSecs = mins * 60 + manualDurationSecs;
+                              const newPace =
+                                completedSession.distanceKm > 0.05
+                                  ? (newTotalSecs / 60) / completedSession.distanceKm
+                                  : 0;
+                              const newCals = calculateCalories(
+                                completedSession.distanceKm,
+                                newTotalSecs,
+                                completedSession.activityType || 'fast_walk'
+                              );
+                              setCompletedSession((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      durationSeconds: Math.max(1, newTotalSecs),
+                                      avgPaceMinPerKm: Number(newPace.toFixed(2)),
+                                      caloriesBurned: newCals
+                                    }
+                                  : null
+                              );
+                            }}
+                            className="w-14 px-1.5 py-1 bg-white border border-sky-300 rounded-lg text-center font-bold text-sm text-slate-800"
+                          />
+                          <span className="text-[11px] text-sky-700 font-semibold mt-0.5">mins</span>
+                        </div>
+                        <span className="font-bold text-sky-900">:</span>
+                        <div className="flex flex-col items-center">
+                          <input
+                            type="number"
+                            min="0"
+                            max="59"
+                            value={manualDurationSecs}
+                            onChange={(e) => {
+                              const secs = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
+                              setManualDurationSecs(secs);
+                              const newTotalSecs = manualDurationMins * 60 + secs;
+                              const newPace =
+                                completedSession.distanceKm > 0.05
+                                  ? (newTotalSecs / 60) / completedSession.distanceKm
+                                  : 0;
+                              const newCals = calculateCalories(
+                                completedSession.distanceKm,
+                                newTotalSecs,
+                                completedSession.activityType || 'fast_walk'
+                              );
+                              setCompletedSession((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      durationSeconds: Math.max(1, newTotalSecs),
+                                      avgPaceMinPerKm: Number(newPace.toFixed(2)),
+                                      caloriesBurned: newCals
+                                    }
+                                  : null
+                              );
+                            }}
+                            className="w-14 px-1.5 py-1 bg-white border border-sky-300 rounded-lg text-center font-bold text-sm text-slate-800"
+                          />
+                          <span className="text-[11px] text-sky-700 font-semibold mt-0.5">secs</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsAdjustingSummaryTime(false)}
+                        className="text-xs font-bold bg-sky-100 hover:bg-sky-200 text-sky-800 px-2.5 py-1 rounded cursor-pointer"
+                      >
+                        Done
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-3.5 bg-emerald-50/70 border border-emerald-100 rounded-2xl text-center space-y-0.5">
+                  <span className="text-xs font-black uppercase text-emerald-900 tracking-wider">
+                    Average Pace
+                  </span>
+                  <div className="text-2xl font-black text-emerald-950 font-mono">
+                    {formatPace(completedSession.avgPaceMinPerKm || 0)}
+                  </div>
+                  <span className="text-xs text-emerald-700 font-semibold">
+                    min per km
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Sticky Action Footer - Save is Primary and Guaranteed Reachable */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200 shrink-0 flex flex-col sm:flex-row gap-2.5 w-full">
+              <button
+                type="button"
+                onClick={handleConfirmSaveJog}
+                className="w-full sm:flex-1 py-3.5 px-4 bg-indigo-600 hover:bg-indigo-700 active:scale-98 text-white font-black text-sm rounded-xl transition-all shadow-md shadow-indigo-200 cursor-pointer flex items-center justify-center text-center gap-2 min-h-[48px]"
+                id="save-jog-summary-btn"
+              >
+                <CheckCircle2 className="w-5 h-5 shrink-0" />
+                <span>{completedSession.activityType === 'fast_walk' ? 'Save Walk to Records' : 'Save Jog to Records'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowDiscardConfirmModal(true)}
+                className="w-full sm:w-auto py-3.5 px-4 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-sm font-bold rounded-xl transition-colors cursor-pointer flex items-center justify-center text-center min-h-[48px]"
                 id="discard-jog-summary-btn"
               >
                 Discard
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Walk / Jog Log Modal */}
+      {showManualLogModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-3xl max-w-md w-full shadow-2xl flex flex-col max-h-[90dvh] overflow-hidden my-auto animate-scaleIn">
+            {/* Header */}
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/70">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-black shrink-0">
+                  <Footprints className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900">
+                    Log Walk or Jog Manually
+                  </h3>
+                  <p className="text-xs font-semibold text-slate-500">
+                    Record cardio completed earlier
+                  </p>
+                </div>
+              </div>
               <button
                 type="button"
-                onClick={handleConfirmSaveJog}
-                className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl transition-colors shadow-md shadow-indigo-200 cursor-pointer flex items-center justify-center text-center gap-2"
-                id="save-jog-summary-btn"
+                onClick={() => setShowManualLogModal(false)}
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer"
+                aria-label="Close"
               >
-                <CheckCircle2 className="w-4 h-4" />
-                {completedSession.activityType === 'fast_walk' ? 'Save Walk to Records' : 'Save Jog to Records'}
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Scrollable Form Body */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+              {manualLogError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-bold">
+                  {manualLogError}
+                </div>
+              )}
+
+              {/* Activity Type Toggle */}
+              <div>
+                <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
+                  Activity Type
+                </label>
+                <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setManualLogActivityType('fast_walk');
+                      const dist = parseFloat(manualLogDistKm) || 0;
+                      const secs = (parseInt(manualLogMins) || 0) * 60 + (parseInt(manualLogSecs) || 0);
+                      setManualLogCalories(calculateCalories(dist, secs, 'fast_walk').toString());
+                    }}
+                    className={`py-2.5 rounded-lg text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                      manualLogActivityType === 'fast_walk'
+                        ? 'bg-white text-indigo-700 shadow-xs'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <Footprints className="w-4 h-4" />
+                    <span>Fast Walk</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setManualLogActivityType('jog');
+                      const dist = parseFloat(manualLogDistKm) || 0;
+                      const secs = (parseInt(manualLogMins) || 0) * 60 + (parseInt(manualLogSecs) || 0);
+                      setManualLogCalories(calculateCalories(dist, secs, 'jog').toString());
+                    }}
+                    className={`py-2.5 rounded-lg text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                      manualLogActivityType === 'jog'
+                        ? 'bg-white text-indigo-700 shadow-xs'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <Flame className="w-4 h-4 text-amber-500" />
+                    <span>Outdoor Jog</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Date Input */}
+              <div>
+                <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
+                  Workout Date
+                </label>
+                <input
+                  type="date"
+                  value={manualLogDate}
+                  onChange={(e) => setManualLogDate(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 focus:bg-white focus:border-indigo-500 focus:outline-none min-h-[44px]"
+                />
+              </div>
+
+              {/* Distance Field */}
+              <div>
+                <div className="flex justify-between items-center mb-1.5">
+                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">
+                    Distance in KM
+                  </label>
+                  {parseFloat(manualLogDistKm) > 0 && (
+                    <span className="text-xs font-bold text-indigo-600">
+                      ≈ {(parseFloat(manualLogDistKm) * 0.621371).toFixed(2)} miles
+                    </span>
+                  )}
+                </div>
+                <input
+                  type="number"
+                  step="0.05"
+                  min="0.1"
+                  max="100"
+                  value={manualLogDistKm}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setManualLogDistKm(val);
+                    const dist = parseFloat(val) || 0;
+                    const secs = (parseInt(manualLogMins) || 0) * 60 + (parseInt(manualLogSecs) || 0);
+                    if (dist > 0 && secs > 0) {
+                      setManualLogCalories(calculateCalories(dist, secs, manualLogActivityType).toString());
+                    }
+                  }}
+                  placeholder="e.g. 2.5"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-base font-bold text-slate-800 font-mono focus:bg-white focus:border-indigo-500 focus:outline-none min-h-[44px]"
+                />
+              </div>
+
+              {/* Duration Inputs */}
+              <div>
+                <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
+                  Duration
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <input
+                      type="number"
+                      min="0"
+                      max="300"
+                      value={manualLogMins}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setManualLogMins(val);
+                        const mins = parseInt(val) || 0;
+                        const secs = mins * 60 + (parseInt(manualLogSecs) || 0);
+                        const dist = parseFloat(manualLogDistKm) || 0;
+                        if (dist > 0 && secs > 0) {
+                          setManualLogCalories(calculateCalories(dist, secs, manualLogActivityType).toString());
+                        }
+                      }}
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-base font-bold text-slate-800 font-mono focus:bg-white focus:border-indigo-500 focus:outline-none min-h-[44px]"
+                    />
+                    <span className="block text-xs text-slate-500 font-semibold mt-1">Minutes</span>
+                  </div>
+                  <div>
+                    <input
+                      type="number"
+                      min="0"
+                      max="59"
+                      value={manualLogSecs}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setManualLogSecs(val);
+                        const secs = (parseInt(manualLogMins) || 0) * 60 + (parseInt(val) || 0);
+                        const dist = parseFloat(manualLogDistKm) || 0;
+                        if (dist > 0 && secs > 0) {
+                          setManualLogCalories(calculateCalories(dist, secs, manualLogActivityType).toString());
+                        }
+                      }}
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-base font-bold text-slate-800 font-mono focus:bg-white focus:border-indigo-500 focus:outline-none min-h-[44px]"
+                    />
+                    <span className="block text-xs text-slate-500 font-semibold mt-1">Seconds</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Calculated Pace & Calories */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl grid grid-cols-2 gap-3 text-center">
+                <div>
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Calculated Pace</span>
+                  <span className="font-mono font-black text-emerald-600 text-sm">
+                    {(() => {
+                      const dist = parseFloat(manualLogDistKm) || 0;
+                      const secs = (parseInt(manualLogMins) || 0) * 60 + (parseInt(manualLogSecs) || 0);
+                      return dist > 0.05 ? `${formatPace((secs / 60) / dist)}/km` : '0:00/km';
+                    })()}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Estimated Burn</span>
+                  <span className="font-mono font-black text-amber-600 text-sm">
+                    {(() => {
+                      const dist = parseFloat(manualLogDistKm) || 0;
+                      const secs = (parseInt(manualLogMins) || 0) * 60 + (parseInt(manualLogSecs) || 0);
+                      const cals = manualLogCalories !== '' ? parseInt(manualLogCalories) : calculateCalories(dist, secs, manualLogActivityType);
+                      return `${cals || 0} kcal`;
+                    })()}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Sticky Footer */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200 shrink-0 flex flex-col sm:flex-row gap-2.5 w-full">
+              <button
+                type="button"
+                onClick={handleSaveManualLog}
+                className="w-full sm:flex-1 py-3.5 px-4 bg-indigo-600 hover:bg-indigo-700 active:scale-98 text-white font-black text-sm rounded-xl transition-all shadow-md shadow-indigo-200 cursor-pointer flex items-center justify-center text-center gap-2 min-h-[48px]"
+                id="save-manual-jog-btn"
+              >
+                <CheckCircle2 className="w-5 h-5 shrink-0" />
+                <span>Save {manualLogActivityType === 'fast_walk' ? 'Walk' : 'Jog'} to Records</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowManualLogModal(false)}
+                className="w-full sm:w-auto py-3.5 px-4 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-sm font-bold rounded-xl transition-colors cursor-pointer flex items-center justify-center text-center min-h-[48px]"
+              >
+                Cancel
               </button>
             </div>
           </div>
@@ -1521,11 +1863,11 @@ export default function JogTracker({
 
       {/* Edit Past Log Modal */}
       {editingJog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
-          <div className="bg-white border border-slate-200 rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl space-y-5 animate-scaleIn">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-3xl max-w-md w-full shadow-2xl flex flex-col max-h-[90dvh] overflow-hidden my-auto animate-scaleIn">
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/70">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
                   <Footprints className="w-4 h-4" />
                 </div>
                 <h3 className="text-base font-black text-slate-900">
@@ -1541,7 +1883,7 @@ export default function JogTracker({
               </button>
             </div>
 
-            <div className="space-y-4">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
               {/* Activity Type Toggle */}
               <div>
                 <label className="block text-xs font-bold text-slate-600 mb-1.5">
@@ -1587,38 +1929,11 @@ export default function JogTracker({
                   onChange={(e) => setEditDistanceKm(parseFloat(e.target.value) || 0)}
                   className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 font-mono focus:bg-white focus:border-indigo-500 focus:outline-none"
                 />
-                {editingJog.route && detectStraightLineGaps(editingJog.route, 0.04) && (
-                  <button
-                    type="button"
-                    disabled={isSnappingStreets}
-                    onClick={async () => {
-                      if (!editingJog.route) return;
-                      setIsSnappingStreets(true);
-                      try {
-                        const res = await snapRouteToPedestrianStreets(editingJog.route);
-                        setEditDistanceKm(res.totalDistanceKm);
-                        setEditingJog({
-                          ...editingJog,
-                          distanceKm: res.totalDistanceKm,
-                          route: res.snappedPoints
-                        });
-                      } catch (err) {
-                        console.warn('Edit snap error:', err);
-                      } finally {
-                        setIsSnappingStreets(false);
-                      }
-                    }}
-                    className="mt-2 text-sm font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Route className="w-4 h-4" />
-                    {isSnappingStreets ? 'Snapping to Sidewalks...' : 'Snap Route to Sidewalks'}
-                  </button>
-                )}
               </div>
 
               {/* Duration Fields */}
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1.5">
+                <label className="block text-sm font-bold text-slate-700 mb-1.5">
                   Actual Duration
                 </label>
                 <div className="grid grid-cols-2 gap-3">
@@ -1631,7 +1946,7 @@ export default function JogTracker({
                       onChange={(e) => setEditDurationMins(Math.max(0, parseInt(e.target.value) || 0))}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 font-mono focus:bg-white focus:border-indigo-500 focus:outline-none"
                     />
-                    <span className="block text-xs text-slate-400 font-semibold mt-1">Minutes</span>
+                    <span className="block text-sm text-slate-500 font-semibold mt-1">Minutes</span>
                   </div>
                   <div>
                     <input
@@ -1642,21 +1957,21 @@ export default function JogTracker({
                       onChange={(e) => setEditDurationSecs(Math.max(0, Math.min(59, parseInt(e.target.value) || 0)))}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 font-mono focus:bg-white focus:border-indigo-500 focus:outline-none"
                     />
-                    <span className="block text-xs text-slate-400 font-semibold mt-1">Seconds</span>
+                    <span className="block text-sm text-slate-500 font-semibold mt-1">Seconds</span>
                   </div>
                 </div>
               </div>
 
               {/* Calculated Preview */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 grid grid-cols-2 gap-2 text-center text-xs">
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 grid grid-cols-2 gap-2 text-center text-sm">
                 <div>
-                  <span className="text-slate-400 text-xs font-bold uppercase">Estimated Burn</span>
+                  <span className="text-slate-500 text-sm font-bold uppercase">Estimated Burn</span>
                   <p className="font-mono font-black text-amber-600 text-sm">
                     {calculateCalories(editDistanceKm, editDurationMins * 60 + editDurationSecs, editActivityType)} kcal
                   </p>
                 </div>
                 <div>
-                  <span className="text-slate-400 text-xs font-bold uppercase">Calculated Pace</span>
+                  <span className="text-slate-500 text-sm font-bold uppercase">Calculated Pace</span>
                   <p className="font-mono font-black text-emerald-600 text-sm">
                     {formatPace(editDistanceKm > 0.05 ? ((editDurationMins * 60 + editDurationSecs) / 60) / editDistanceKm : 0)}/km
                   </p>
@@ -1664,18 +1979,18 @@ export default function JogTracker({
               </div>
             </div>
 
-            <div className="flex gap-2.5 pt-2">
+            <div className="p-4 bg-slate-50 border-t border-slate-200 shrink-0 flex gap-3">
               <button
                 type="button"
                 onClick={() => setEditingJog(null)}
-                className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                className="flex-1 py-3 min-h-[48px] bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-sm font-bold rounded-xl transition-colors cursor-pointer flex items-center justify-center"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleSaveEditedJog}
-                className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-colors shadow-md shadow-indigo-150 cursor-pointer"
+                className="flex-1 py-3 min-h-[48px] bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl transition-colors shadow-md shadow-indigo-150 cursor-pointer flex items-center justify-center"
               >
                 Save Changes
               </button>
@@ -1683,6 +1998,7 @@ export default function JogTracker({
           </div>
         </div>
       )}
+
       {/* Confirmation Modal Before Discarding Completed Session */}
       <ConfirmModal
         isOpen={showDiscardConfirmModal}
@@ -1691,12 +2007,30 @@ export default function JogTracker({
         confirmText="Yes, Discard"
         cancelText="Keep Session"
         variant="danger"
-        zIndex="z-[70]"
+        zIndex="z-[90]"
         onConfirm={() => {
           setShowDiscardConfirmModal(false);
           handleDiscardJog();
         }}
         onCancel={() => setShowDiscardConfirmModal(false)}
+      />
+
+      {/* Confirmation Modal Before Deleting Recorded Session */}
+      <ConfirmModal
+        isOpen={deleteJogConfirmId !== null}
+        title="Delete Cardio Activity?"
+        message="Are you sure you want to delete this recorded session? This will remove the cardio log and its burned calories."
+        confirmText="Delete Activity"
+        cancelText="Cancel"
+        variant="danger"
+        zIndex="z-[90]"
+        onConfirm={() => {
+          if (deleteJogConfirmId && onDeleteJog) {
+            onDeleteJog(deleteJogConfirmId);
+          }
+          setDeleteJogConfirmId(null);
+        }}
+        onCancel={() => setDeleteJogConfirmId(null)}
       />
     </div>
   );

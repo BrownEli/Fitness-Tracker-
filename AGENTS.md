@@ -11,6 +11,15 @@ This file defines project-specific rules, conventions, and constraints for the A
   - **Minimum text size**: Keep all user-facing text size **at or above `14.sp` / `14px` (`text-sm`)** (never use tiny 8px–11px micro-copy).
   - **Maximum text size**: Keep large display text **below `64.sp` / `64px`**.
 - **Clean Badges**: Use clean badges/tags for item states, avoiding redundant manual switch clutter or micro-text.
+- **Card Nesting Limit**: Never embed 3 levels of cards (only 2 embeds are allowed). If there is a different section inside of a card, change the background of that section instead of putting it inside of another card.
+- **Vertical-First Column Alignment (Every Element in a Column, Not in a Row)**: Never put text in a horizontal row alongside other elements (such as action buttons, icons, badges, inputs, or metadata) inside an item, card, list entry, or log record. Every element inside of an item MUST be laid out in a column (`flex flex-col`), vertically aligned and vertically stacked, and NOT in a horizontal row where elements are horizontally aligned side by side. All items must stack elements vertically:
+  1. Top metadata / timestamp / type tag
+  2. Full-width item title / name (at least 14px / `text-sm`, bold, clean)
+  3. Secondary description / details / subtitle
+  4. Metrics, values, or macro badges in their own dedicated vertical section
+  5. Action buttons (edit, delete, favorite, log, view) in their own dedicated vertical action section (full width or dedicated row at bottom, with at least 48px touch targets)
+  No item should crush text horizontally next to buttons, icons, or controls.
+- **Deletion & Discard Confirmation Required**: Any delete, remove, discard, or clear button or action anywhere in the application must always present a confirmation pop-up dialog before executing. Never perform destructive removals without explicit user confirmation. All delete buttons must have at least 48px touch targets and safe spacing to prevent accidental taps during scrolling.
 
 ---
 

@@ -21,7 +21,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   confirmText = 'Confirm',
   cancelText = 'Cancel',
   variant = 'danger',
-  zIndex = 'z-50',
+  zIndex = 'z-[100]',
   onConfirm,
   onCancel
 }) => {
@@ -87,7 +87,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
               <button
                 type="button"
                 onClick={onCancel}
-                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-xl hover:bg-slate-100 transition-all cursor-pointer"
+                className="text-slate-400 hover:text-slate-600 p-2 min-w-[48px] min-h-[48px] flex items-center justify-center rounded-xl hover:bg-slate-100 transition-all cursor-pointer"
                 aria-label="Close modal"
               >
                 <X className="w-5 h-5" />
@@ -104,14 +104,14 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
               <button
                 type="button"
                 onClick={onCancel}
-                className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center text-center"
+                className="w-full py-3 min-h-[48px] bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center text-center"
               >
                 {cancelText}
               </button>
               <button
                 type="button"
                 onClick={onConfirm}
-                className={`w-full py-3 text-sm font-bold text-white rounded-xl transition-all shadow-md active:scale-95 cursor-pointer flex items-center justify-center text-center ${
+                className={`w-full py-3 min-h-[48px] text-sm font-bold text-white rounded-xl transition-all shadow-md active:scale-95 cursor-pointer flex items-center justify-center text-center ${
                   variant === 'danger'
                     ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-200'
                     : variant === 'warning'
